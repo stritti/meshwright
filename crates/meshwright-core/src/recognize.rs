@@ -1,23 +1,27 @@
 //! Feature recognition: finding the parametric part a mesh was made from.
 //!
-//! This is where mesh2cad's recognition is ported, step by step. The first step recognises only
-//! an axis-aligned block standing on the origin. Plates with holes, slots and fillets follow; the
-//! design they produce is already modelled by [`PlateSpec`], so the output side is fixed before
-//! the recognisers are written.
+//! meshwright follows mesh2cad's approach and parameter names, one family of parts at a time.
+//! Recognised so far: plates (a rectangle extruded along Z, optionally with one radius on its
+//! four vertical corners) with round through holes; see [`crate::plate`]. Slots, counterbores,
+//! chamfers and pockets follow; whatever is not recognised stays a mesh.
+
+use std::fmt::Write as _;
 
 use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, Plane, Profiles, fmt_number, rectangle_sketch,
 };
-use crate::mesh::{Mesh, cross, length, sub};
-
-/// Relative tolerance for comparing measured and expected sizes.
-pub const TOLERANCE: f64 = 1e-6;
+use crate::mesh::{Mesh, Vec3};
 
 /// What recognition found.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Recognition {
     /// A rectangular plate, possibly with holes and rounded corners.
-    Plate(PlateSpec),
+    Plate {
+        /// The plate, its corner at the origin.
+        plate: PlateSpec,
+        /// Where the plate's corner was in the file; the design puts it at the origin.
+        offset: Vec3,
+    },
     /// Nothing the recognisers know; the mesh is kept as it is.
     Unrecognized {
         /// Why, in the user's words.
@@ -113,36 +117,35 @@ impl PlateSpec {
     /// One line describing the plate, for the loss report.
     #[must_use]
     pub fn describe(&self) -> String {
-        let plate = format!("A {} x {} x {} mm plate", fmt_number(self.x), fmt_number(self.y), fmt_number(self.z));
+        let mut text = format!("A {} x {} x {} mm plate", fmt_number(self.x), fmt_number(self.y), fmt_number(self.z));
         match self.holes.len() {
-            0 => plate,
-            n => format!("{plate} with {n} hole(s)"),
+            0 => {}
+            1 => text.push_str(" with 1 hole"),
+            n => {
+                let _ = write!(text, " with {n} holes");
+            }
         }
+        if let Some(r) = self.outline_fillet_r {
+            text.push_str(if self.holes.is_empty() { " with " } else { " and " });
+            let _ = write!(text, "{} mm rounded corners", fmt_number(r));
+        }
+        text
+    }
+
+    /// The volume of the plate this spec describes, in mm³: what SolidCraft measures once it has
+    /// rebuilt the design.
+    #[must_use]
+    pub fn volume(&self) -> f64 {
+        let corners = self.outline_fillet_r.map_or(0.0, crate::plate::corner_loss);
+        let holes: f64 = self.holes.iter().map(|h| std::f64::consts::PI * h.d * h.d / 4.0).sum();
+        (self.x * self.y - corners - holes) * self.z
     }
 }
 
 /// Looks for a part the recognisers know in `mesh`.
 #[must_use]
 pub fn recognize(mesh: &Mesh) -> Recognition {
-    let Some(bounds) = mesh.bounds() else {
-        return Recognition::Unrecognized { reason: "the mesh has no triangles".into() };
-    };
-    let [x, y, z] = bounds.size();
-    let scale = x.max(y).max(z);
-    let on_origin = bounds.min.iter().all(|c| c.abs() <= TOLERANCE * scale);
-    let box_volume = x * y * z;
-    let axis_aligned = mesh.triangles.iter().all(|[a, b, c]| {
-        let n = cross(sub(*b, *a), sub(*c, *a));
-        let len = length(n);
-        len == 0.0 || n.iter().any(|component| (component.abs() / len - 1.0).abs() <= TOLERANCE)
-    });
-    if axis_aligned && box_volume > 0.0 && (mesh.volume() - box_volume).abs() <= TOLERANCE * box_volume {
-        if on_origin {
-            return Recognition::Plate(PlateSpec { x, y, z, holes: Vec::new(), outline_fillet_r: None });
-        }
-        return Recognition::Unrecognized { reason: "a block that does not stand on the origin (not supported yet)".into() };
-    }
-    Recognition::Unrecognized { reason: "no feature recogniser matched (only plain blocks are recognised so far)".into() }
+    crate::plate::recognize_plate(mesh).unwrap_or_else(|reason| Recognition::Unrecognized { reason })
 }
 
 #[cfg(test)]
@@ -173,12 +176,29 @@ mod tests {
     #[test]
     fn recognises_block_on_origin() {
         let found = recognize(&block(60.0, 40.0, 6.0, [0.0; 3]));
-        assert_eq!(found, Recognition::Plate(PlateSpec { x: 60.0, y: 40.0, z: 6.0, holes: vec![], outline_fillet_r: None }));
+        let plate = PlateSpec { x: 60.0, y: 40.0, z: 6.0, holes: vec![], outline_fillet_r: None };
+        assert_eq!(found, Recognition::Plate { plate, offset: [0.0; 3] });
     }
 
     #[test]
-    fn leaves_offset_block_alone() {
-        assert!(matches!(recognize(&block(1.0, 1.0, 1.0, [5.0, 0.0, 0.0])), Recognition::Unrecognized { .. }));
+    fn moves_offset_block_to_the_origin() {
+        let plate = PlateSpec { x: 1.0, y: 1.0, z: 1.0, holes: vec![], outline_fillet_r: None };
+        assert_eq!(recognize(&block(1.0, 1.0, 1.0, [5.0, 0.0, 0.0])), Recognition::Plate { plate, offset: [5.0, 0.0, 0.0] });
+    }
+
+    #[test]
+    fn describes_plates() {
+        let mut spec = PlateSpec { x: 70.0, y: 40.0, z: 6.0, holes: vec![], outline_fillet_r: Some(3.0) };
+        assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 3 mm rounded corners");
+        spec.holes = vec![HoleSpec { x: 1.0, y: 1.0, d: 1.0 }; 2];
+        assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 2 holes and 3 mm rounded corners");
+    }
+
+    /// The volume SolidCraft measured for the golden design (docs/design-format.md).
+    #[test]
+    fn plate_volume_matches_solidcraft() {
+        let spec = PlateSpec { x: 70.0, y: 40.0, z: 6.0, holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0 }], outline_fillet_r: Some(3.0) };
+        assert!((spec.volume() - 16_452.05).abs() < 0.01, "{}", spec.volume());
     }
 
     #[test]

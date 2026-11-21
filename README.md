@@ -10,13 +10,14 @@ the part was made of (plates, holes, slots, fillets, …) and writes a parametri
 a sketch, an extrusion, holes and fillets, driven by named parameters such as `base_x` or
 `hole_1_d`. Change a parameter and SolidCraft rebuilds the part.
 
-The recognition is a Rust port of [mesh2cad](https://github.com/emirmrkaljevic/mesh2cad)
-(MIT), so it runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascade.
+The recognition follows [mesh2cad](https://github.com/emirmrkaljevic/mesh2cad)
+(MIT): its approach, the parts it targets and its parameter names. It is written in Rust, so it
+runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascade.
 
 > **Status: early.** The plugin pipeline works end to end: STL in, design out, tested in
-> SolidCraft 0.45. Recognition currently finds plain blocks; everything else is imported as a
-> mesh body with a note in the import report. Porting mesh2cad's recognisers is the next step;
-> see the [roadmap](#roadmap).
+> SolidCraft 0.45. Recognition finds plates: a rectangle extruded along Z, its four vertical
+> corners sharp or rounded with one radius, with round through holes. Everything else is
+> imported as a mesh body, with the reason in the import report. See the [roadmap](#roadmap).
 
 ## Install
 
@@ -27,6 +28,20 @@ The recognition is a Rust port of [mesh2cad](https://github.com/emirmrkaljevic/m
 
 The import dialog offers **Import as**: `auto` (recognise features, keep the mesh where none are
 found) or `mesh` (keep the mesh as it is).
+
+### What `auto` recognises
+
+| In the STL | In SolidCraft | Parameters |
+|---|---|---|
+| A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY) and `Extrude1` | `base_x`, `base_y`, `base_z` |
+| Round vertical through holes (8 or more facets) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y`, `hole_<n>_d` |
+| All four vertical corners rounded with one radius | `Fillet1` | `outline_fillet_r` |
+
+The rebuilt part must match the mesh's volume within 1%, otherwise the mesh is kept. The import
+report notes when the plate was moved so that its corner sits at the origin, and how much the
+volume changed because round facets became true circles. Not recognised yet (kept as a mesh,
+with the reason): other outlines, slots, polygonal cut-outs, chamfers, steps, pockets, bosses,
+blind holes, and parts standing upright or rotated.
 
 ## How it works
 
@@ -62,8 +77,10 @@ cargo xtask plugin-test        # runs plugin/meshwright/tests in SolidCraft (set
 ## Roadmap
 
 1. **Skeleton** (done): plugin pipeline, document writer, mesh fallback, quality gates, releases.
-2. **Plates**: port mesh2cad's plate, through-hole and outline-fillet recognition.
-3. **More features**: slots, counterbores and countersinks, hole patterns, chamfers, pockets.
+2. **Plates** (done): plates with round through holes and rounded vertical corners, moved to
+   the origin when they sit elsewhere.
+3. **More features**: slots, counterbores and countersinks, hole patterns, chamfers, pockets,
+   other outlines, plates lying along X or Y.
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate`
    (volume and deviation), as mesh2cad does with CadQuery.
 

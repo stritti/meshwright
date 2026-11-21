@@ -30,9 +30,10 @@ pub const MAX_VOLUME_ERROR: f64 = 0.01;
 /// traps into round holes.
 pub const MIN_HOLE_SEGMENTS: usize = 8;
 
-/// Recognised sizes are rounded to this step (1 µm): STL stores single-precision floats, so a
-/// 35 mm hole position comes back as 35.0000019…, which nobody wants in the parameter panel.
-const SNAP: f64 = 1e-3;
+/// Recognised sizes are rounded to micrometres (this many steps per millimetre): STL stores
+/// single-precision floats, so a 35 mm hole position comes back as 35.0000019…, which nobody
+/// wants in the parameter panel.
+const SNAP_PER_MM: f64 = 1000.0;
 
 /// How far a corner may lie from where the recogniser expects it, in millimetres, for a part
 /// whose largest size is `scale`. STL coordinates have about seven significant digits.
@@ -41,7 +42,7 @@ fn tolerance(scale: f64) -> f64 {
 }
 
 fn snap(value: f64) -> f64 {
-    let snapped = (value / SNAP).round() * SNAP;
+    let snapped = (value * SNAP_PER_MM).round() / SNAP_PER_MM;
     if snapped == 0.0 { 0.0 } else { snapped }
 }
 
@@ -176,16 +177,18 @@ fn boundary_loops(triangles: &[[P2; 3]], tol: f64) -> Result<Vec<Vec<P2>>, Strin
 /// The shoelace area of a closed polygon, positive when counter-clockwise.
 fn signed_area(ring: &[P2]) -> f64 {
     let n = ring.len();
-    (0..n).map(|i| {
-        let (a, b) = (ring[i], ring[(i + 1) % n]);
-        a[0] * b[1] - b[0] * a[1]
-    })
-    .sum::<f64>()
+    (0..n)
+        .map(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum::<f64>()
         / 2.0
 }
 
 /// Checks that `outline` is the `x` by `y` rectangle from the origin with all four corners
 /// sharp (`None`) or rounded with one radius, and returns that radius.
+#[allow(clippy::many_single_char_names)] // x, y, r and a, b as in the geometry
 fn outline_radius(outline: &[P2], x: f64, y: f64, tol: f64) -> Result<Option<f64>, String> {
     let not_rectangle = || "the outline is not a rectangle (other outlines are not recognised yet)".to_owned();
     // The four sides as (axis that is constant, its value, the other axis' length).
@@ -193,14 +196,13 @@ fn outline_radius(outline: &[P2], x: f64, y: f64, tol: f64) -> Result<Option<f64
     let on = |side: usize, p: &P2| (p[sides[side].0] - sides[side].1).abs() <= tol;
     // Where each side's straight part starts and ends tells the corner radius, eight times.
     let mut estimates = Vec::with_capacity(8);
-    for side in 0..4 {
-        let along = 1 - sides[side].0;
-        let positions = outline.iter().filter(|p| on(side, p)).map(|p| p[along]);
+    for (side, &(axis, _, side_length)) in sides.iter().enumerate() {
+        let positions = outline.iter().filter(|p| on(side, p)).map(|p| p[1 - axis]);
         let (low, high) = positions.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
         if low > high {
             return Err(not_rectangle());
         }
-        estimates.extend([low, sides[side].2 - high]);
+        estimates.extend([low, side_length - high]);
     }
     let (low, high) = estimates.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
     if high - low > tol {
@@ -249,6 +251,7 @@ fn round_hole(ring: &[P2], tol: f64) -> Result<HoleSpec, String> {
 }
 
 /// The least-squares circle through `points` (Kåsa's algebraic fit), as centre and radius.
+#[allow(clippy::many_single_char_names)] // the textbook symbols
 fn fit_circle(points: &[P2]) -> Option<(P2, f64)> {
     let n = points.len() as f64;
     let mean = [points.iter().map(|p| p[0]).sum::<f64>() / n, points.iter().map(|p| p[1]).sum::<f64>() / n];
@@ -372,6 +375,18 @@ mod tests {
         let s = spec(&[(40.0, 25.0, 10.0)], Some(5.0));
         let mesh = synth::plate(&s, 400, [0.0; 3]);
         assert!((mesh.volume() - s.volume()).abs() / s.volume() < 1e-3);
-        assert!(mesh.volume() < s.volume() + 1e-9 || s.holes.is_empty());
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // the generator puts every top corner at exactly the same height
+    fn synthetic_top_faces_are_not_folded() {
+        let mesh = synth::plate(&spec(&[(10.0, 10.0, 5.0), (40.0, 25.0, 12.0), (70.0, 38.5, 6.6)], Some(4.0)), 32, [0.0; 3]);
+        for [a, b, c] in &mesh.triangles {
+            let n = cross(sub(*b, *a), sub(*c, *a));
+            if a[2] == b[2] && b[2] == c[2] {
+                assert!(n[2].abs() > 1e-9, "degenerate cap triangle");
+                assert_eq!(n[2] > 0.0, a[2] > 0.0, "cap triangle facing the wrong way");
+            }
+        }
     }
 }

@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use crate::mesh::{Mesh, Triangle, Vec3};
+use crate::mesh::{Mesh, Triangle, Vec3, cross, length, sub};
 
 /// Why an STL file could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +61,28 @@ pub fn parse(bytes: &[u8]) -> Result<Mesh, StlError> {
         return parse_ascii(&String::from_utf8_lossy(bytes));
     }
     Err(StlError::TooShort)
+}
+
+/// Writes `mesh` as binary STL, the facet normals computed from the corners.
+#[must_use]
+pub fn write_binary(mesh: &Mesh) -> Vec<u8> {
+    write_binary_with_header(mesh, b"binary STL written by meshwright")
+}
+
+fn write_binary_with_header(mesh: &Mesh, header: &[u8]) -> Vec<u8> {
+    let mut out = vec![0u8; HEADER];
+    out[..header.len().min(HEADER)].copy_from_slice(&header[..header.len().min(HEADER)]);
+    out.extend_from_slice(&(mesh.triangles.len() as u32).to_le_bytes());
+    for [a, b, c] in &mesh.triangles {
+        let normal = cross(sub(*b, *a), sub(*c, *a));
+        let len = length(normal);
+        let normal = if len > 0.0 { normal.map(|v| v / len) } else { [0.0; 3] };
+        for value in normal.iter().chain(a).chain(b).chain(c) {
+            out.extend_from_slice(&(*value as f32).to_le_bytes());
+        }
+        out.extend_from_slice(&[0u8; 2]);
+    }
+    out
 }
 
 fn binary_count(bytes: &[u8]) -> Option<u64> {
@@ -129,19 +151,7 @@ mod tests {
 
     /// Writes `mesh` as binary STL, with `header` as the first bytes of the header.
     pub(crate) fn to_binary(mesh: &Mesh, header: &[u8]) -> Vec<u8> {
-        let mut out = vec![0u8; HEADER];
-        out[..header.len()].copy_from_slice(header);
-        out.extend_from_slice(&(mesh.triangles.len() as u32).to_le_bytes());
-        for tri in &mesh.triangles {
-            out.extend_from_slice(&[0u8; 12]);
-            for corner in tri {
-                for value in corner {
-                    out.extend_from_slice(&(*value as f32).to_le_bytes());
-                }
-            }
-            out.extend_from_slice(&[0u8; 2]);
-        }
-        out
+        write_binary_with_header(mesh, header)
     }
 
     #[test]
@@ -175,6 +185,14 @@ mod tests {
     fn rejects_bad_ascii_vertex() {
         let text = "solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0\nendloop\nendfacet\nendsolid t\n";
         assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { line: 4, .. })));
+    }
+
+    #[test]
+    fn written_binary_reads_back() {
+        let mesh = tetrahedron(10.0);
+        let bytes = write_binary(&mesh);
+        assert_eq!(bytes.len(), HEADER + 4 + 4 * RECORD);
+        assert_eq!(parse(&bytes).expect("parses"), mesh);
     }
 
     #[test]

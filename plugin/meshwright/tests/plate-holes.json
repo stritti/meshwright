@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "plate-holes.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 6, "loss_report": {"summary": "A 70 x 40 x 6 mm plate with 3 holes and 3 mm rounded corners"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 16261.201355}},
+    "tolerance": 1e-4
+  }
+}
