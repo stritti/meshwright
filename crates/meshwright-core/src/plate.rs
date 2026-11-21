@@ -34,6 +34,10 @@ pub const MAX_VOLUME_ERROR: f64 = 0.01;
 /// traps into round holes.
 pub const MIN_HOLE_SEGMENTS: usize = 8;
 
+/// Largest turn between two facets of a rounded corner (50°): a quarter circle needs at least two
+/// facets, and a hexagon's corners (60°) stay corners.
+const MAX_FACET_TURN: f64 = 50.0 * PI / 180.0;
+
 /// Recognised sizes are rounded to micrometres (this many steps per millimetre): STL stores
 /// single-precision floats, so a 35 mm hole position comes back as 35.0000019…, which nobody
 /// wants in the parameter panel.
@@ -132,11 +136,16 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<(Vec<[P2;
             continue;
         }
         let nz = normal[2] / len;
+        // A sliver flatter than the tolerance can come out turned over once its corners are
+        // rounded to single precision; its corners still join its neighbours as they should, so
+        // only its direction is not trusted.
+        let longest = [length(sub(b, a)), length(sub(c, b)), length(sub(a, c))].into_iter().fold(0.0, f64::max);
+        let sliver = len / longest <= tol;
         match on_top {
-            3 if nz > 0.0 => top.push(triangle.map(|p| [p[0] - min[0], p[1] - min[1]])),
-            0 if nz < 0.0 => bottom_area += len / 2.0,
+            3 if nz > 0.0 || sliver => top.push(triangle.map(|p| [p[0] - min[0], p[1] - min[1]])),
+            0 if nz < 0.0 || sliver => bottom_area -= normal[2] / 2.0,
             0 | 3 => return Err("some faces point inwards".into()),
-            _ if nz.abs() > 1e-3 => {
+            _ if nz.abs() > 1e-3 && !sliver => {
                 return Err("some side walls are not vertical (drafts and chamfers are not recognised yet)".into());
             }
             _ => {}
@@ -211,71 +220,78 @@ fn signed_area(ring: &[P2]) -> f64 {
 /// sharp or all rounded with one radius. Returns the corners as if they were sharp, and the
 /// radius.
 fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), String> {
-    let v = merge_collinear(outline);
+    let mut v = merge_collinear(outline);
     let n = v.len();
     if n < 3 {
         return Err("the outline is degenerate".into());
     }
-    let at = |i: usize| v[i % n];
+    let len = |v: &[P2], i: usize| distance(v[i % n], v[(i + 1) % n]);
+    // Start right after the longest edge: it is a straight side, so no rounded corner runs across
+    // the start of the list.
+    let longest = (0..n).max_by(|&a, &b| len(&v, a).total_cmp(&len(&v, b))).unwrap_or(0);
+    v.rotate_left((longest + 1) % n);
+    let turn = |i: usize| {
+        let (a, b, c) = (v[(i + n - 1) % n], v[i % n], v[(i + 1) % n]);
+        let (u, w) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+        (u[0] * w[1] - u[1] * w[0]).atan2(u[0] * w[0] + u[1] * w[1])
+    };
 
-    // A rounded corner starts where a side touches the circle through the next three facet
-    // corners, runs on that circle and ends where a side leaves it tangentially again.
+    // A rounded corner is a run of facets of about equal length that each turn a little the
+    // same way, whose corners lie on one circle (fitted to all of them, which averages out the
+    // noise of single-precision files) and which meets the sides on either side tangentially.
     let mut arcs: Vec<(usize, usize, f64)> = Vec::new(); // first and last facet corner, radius
     let mut i = 0;
-    while i < n {
-        let found = circumcircle(at(i), at(i + 1), at(i + 2)).and_then(|(centre, rho)| {
-            if !tangent(at(i + n - 1), at(i), at(i + 1), centre) {
-                return None;
+    while i + 2 < n {
+        let first = len(&v, i);
+        let mut j = i + 1;
+        while j + 1 < n
+            && (len(&v, j) - first).abs() <= 0.25 * first
+            && turn(j).abs() <= MAX_FACET_TURN
+            && turn(j).signum() == turn(i + 1).signum()
+        {
+            j += 1;
+        }
+        let mut found = None;
+        let mut curved = false;
+        for end in (i + 2..=j).rev() {
+            let points = &v[i..=end];
+            let Some((centre, r)) = fit_circle(points) else { continue };
+            if points.iter().any(|p| (distance(*p, centre) - r).abs() > tol) {
+                continue;
             }
-            let mut j = i + 2;
-            while j < i + n - 1 && !tangent(at(j + 1), at(j), at(j - 1), centre) {
-                if (distance(at(j + 1), centre) - rho).abs() > tol {
-                    return None;
-                }
-                j += 1;
+            let before = v[(i + n - 1) % n];
+            let after = v[(end + 1) % n];
+            if tangent(before, v[i], centre, first / (2.0 * r)) && tangent(after, v[end], centre, len(&v, end - 1) / (2.0 * r)) {
+                found = Some((end, r));
+                break;
             }
-            tangent(at(j + 1), at(j), at(j - 1), centre).then_some((centre, j))
-        });
+            // Three or more short facets on one circle that no side touches: a curved side.
+            curved |= end == j && end - i >= 3 && first < 0.5 * r;
+        }
         match found {
-            Some((_, j)) => {
-                let points: Vec<P2> = (i..=j).map(at).collect();
-                let (_, r) = fit_circle(&points).ok_or("a rounded corner could not be measured")?;
-                arcs.push((i, j, r));
-                i = j;
+            Some((end, r)) => {
+                arcs.push((i, end, r));
+                i = end;
             }
-            None => i += 1,
-        }
-    }
-    let mut on_arc = vec![false; n];
-    for &(first, last, _) in &arcs {
-        for k in first..=last {
-            on_arc[k % n] = true;
-        }
-    }
-
-    // Short facets on one circle that are not a rounded corner make a curved side.
-    for k in 0..n {
-        if (0..4).all(|d| !on_arc[(k + d) % n]) {
-            let (one, two) = (circumcircle(at(k), at(k + 1), at(k + 2)), circumcircle(at(k + 1), at(k + 2), at(k + 3)));
-            if let (Some((c1, r1)), Some((c2, r2))) = (one, two)
-                && distance(c1, c2) <= tol
-                && (r1 - r2).abs() <= tol
-                && distance(at(k + 1), at(k + 2)) < 0.5 * r1
-            {
+            None if curved => {
                 return Err("the outline has curved sides (only straight sides and rounded corners are recognised so far)".into());
             }
+            None => i += 1,
         }
     }
 
     // A rounded corner becomes the point where its two sides meet; sharp corners stay.
     let mut corners = Vec::new();
-    for k in 0..n {
+    let mut k = 0;
+    while k < n {
         if let Some(&(first, last, _)) = arcs.iter().find(|a| a.0 == k) {
-            let corner = intersect(at(first + n - 1), at(first), at(last), at(last + 1))
+            let corner = intersect(v[(first + n - 1) % n], v[first], v[last], v[(last + 1) % n])
                 .ok_or("a corner is rounded all the way round (slot-shaped ends are not recognised yet)")?;
             corners.push(corner);
-        } else if !on_arc[k] {
+            k = last + 1;
+        } else {
             corners.push(v[k]);
+            k += 1;
         }
     }
     if corners.len() < 3 {
@@ -312,28 +328,14 @@ fn distance(a: P2, b: P2) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
 
-/// Whether the side from `from` to `at` touches the circle around `centre` at `at`, where
-/// `next` is the neighbouring facet corner on the circle. The allowance shrinks with the facets,
-/// so that a finely faceted arc's own corners are not taken for its ends.
-fn tangent(from: P2, at: P2, next: P2, centre: P2) -> bool {
+/// Whether the side from `from` to `at` touches the circle around `centre` at `at`. A facet of
+/// the circle turns away from the tangent by half its angle, whose sine is `sin_half`; half of
+/// that is the allowance, so an arc's own corners are never taken for its ends.
+fn tangent(from: P2, at: P2, centre: P2, sin_half: f64) -> bool {
     let side = [at[0] - from[0], at[1] - from[1]];
     let radius = [at[0] - centre[0], at[1] - centre[1]];
-    let (side_len, radius_len) = (side[0].hypot(side[1]), radius[0].hypot(radius[1]));
-    let cos = (side[0] * radius[0] + side[1] * radius[1]) / (side_len * radius_len);
-    cos.abs() <= 2e-3_f64.min(0.25 * distance(at, next) / (2.0 * radius_len))
-}
-
-/// The circle through three points, as centre and radius; `None` when they are in a line.
-fn circumcircle(a: P2, b: P2, c: P2) -> Option<(P2, f64)> {
-    let d = 2.0 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
-    let scale = distance(a, b).max(distance(b, c)).max(distance(c, a));
-    if d.abs() <= 1e-12 * scale * scale {
-        return None;
-    }
-    let (a2, b2, c2) = (a[0] * a[0] + a[1] * a[1], b[0] * b[0] + b[1] * b[1], c[0] * c[0] + c[1] * c[1]);
-    let x = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
-    let y = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
-    Some(([x, y], distance([x, y], a)))
+    let cos = (side[0] * radius[0] + side[1] * radius[1]) / (side[0].hypot(side[1]) * radius[0].hypot(radius[1]));
+    cos.abs() <= (0.5 * sin_half).min(0.05)
 }
 
 /// Where the line through `a` and `b` meets the line through `c` and `d`.
@@ -486,6 +488,22 @@ mod tests {
     fn recognises_finely_faceted_corners() {
         let expected = spec(&[(40.0, 25.0, 10.0)], Some(0.5));
         assert_eq!(found(&synth::plate(&expected, 720, [0.0; 3])).0, expected);
+    }
+
+    /// Single-precision coordinates (binary STL) put noise on finely faceted corners that a
+    /// circle through three neighbouring corners magnifies; the whole arc must be fitted.
+    #[test]
+    fn recognises_fine_corners_from_single_precision_files() {
+        for (r, segments) in [(2.0, 128), (2.0, 256), (0.5, 128), (5.0, 720)] {
+            let expected = spec(&[(40.0, 25.0, 10.0)], Some(r));
+            let mesh = synth::plate(&expected, segments, [0.0; 3]);
+            let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+            assert_eq!(found(&reread).0, expected, "radius {r}, {segments} segments");
+            let l = ell(Some(r));
+            let mesh = synth::profile(&l, segments, [12.5, 7.0, 0.0]);
+            let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+            assert_eq!(found_profile(&reread).0, l, "L, radius {r}, {segments} segments");
+        }
     }
 
     #[test]
