@@ -73,10 +73,14 @@ minor version while meshwright is below 1.0.
 
 meshwright is in its beta phase: releases are pre-releases, versioned `0.1.0-beta.1`,
 `0.1.0-beta.2`, … (`versioning: prerelease` with `prerelease-type: beta` in
-`release-please-config.json`), and GitHub marks them as pre-releases. To make the first stable
-release, either set `"prerelease": false` in `release-please-config.json` or merge a commit whose
-message ends with the footer `Release-As: 0.1.0` (any version you choose); a `Release-As` footer
-also starts the next beta line, e.g. `Release-As: 0.2.0-beta.1`.
+`release-please-config.json`), and GitHub marks them as pre-releases.
+
+To leave the beta phase, set `"prerelease": false` in `release-please-config.json`; this is
+required, because while it is `true` release-please marks every 0.x release as a pre-release and
+keeps numbering betas. The next release is then the stable version (`0.1.0` after
+`0.1.0-beta.N`). To pick a different version, add the footer `Release-As: 0.2.0` to a commit
+message as well; on its own, `Release-As` only overrides the next version number, for example to
+start a new beta line with `Release-As: 0.2.0-beta.1`.
 
 ## Licence of contributions
 
