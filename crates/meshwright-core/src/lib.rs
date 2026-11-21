@@ -27,4 +27,4 @@ pub mod report;
 pub mod stl;
 pub mod synth;
 
-pub use import::{ImportOptions, ImportResult, import};
+pub use import::{ImportOptions, ImportResult, import, import_mesh};

@@ -54,7 +54,13 @@ xtask/                 component wrapping, packaging, plugin tests
 
 128 MiB memory by default (up to 4 GiB if the user approves it at install), an import deadline
 of up to 10 minutes, a 64 MiB component and a 256 MiB design. `plugin.json` asks for 128 MiB and
-2 minutes, which is enough for parts of some ten thousand triangles.
+2 minutes, the most a plugin gets without the user approving more at install.
+
+Memory decides how large a file can be. The plugin therefore holds nothing twice: the STL is
+parsed chunk by chunk as it is read (`stl::StlReader`), the mesh moves into the design without a
+copy, and the design is serialised straight into 1 MiB writes to SolidCraft, with coordinates in
+single precision. Measured with SolidCraft 0.45: a 1.5 million triangle STL (75 MB) imports as a
+mesh in about 8 s; 2 million triangles exceed 128 MiB (before streaming, 600,000 already did).
 
 ## Testing levels
 

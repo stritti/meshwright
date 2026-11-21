@@ -48,7 +48,13 @@ pub struct ImportResult {
 
 /// Imports the STL file `file_name` whose content is `bytes`.
 pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<ImportResult, StlError> {
-    let mesh = stl::parse(bytes)?;
+    Ok(import_mesh(stl::parse(bytes)?, file_name, options))
+}
+
+/// Imports a mesh already read from the STL file `file_name` (see [`stl::StlReader`]). The mesh
+/// moves into the design when it is kept as a mesh body, so it is never copied.
+#[must_use]
+pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> ImportResult {
     let body = body_name(file_name);
     if options.mode == Mode::Auto {
         let recognised = match recognize(&mesh) {
@@ -82,10 +88,10 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
                         code: "meshwright.smoothed",
                     });
                 }
-                return Ok(ImportResult { design, report });
+                return ImportResult { design, report };
             }
             Err(reason) => {
-                let mut result = mesh_import(&mesh, file_name, &body);
+                let mut result = mesh_import(mesh, file_name, &body);
                 result.report.push(LossItem {
                     severity: Severity::Degraded,
                     title: "Kept as a mesh".into(),
@@ -93,21 +99,17 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
                     message: format!("No parametric features were recognised: {reason}."),
                     code: "meshwright.unrecognized",
                 });
-                return Ok(result);
+                return result;
             }
         }
     }
-    Ok(mesh_import(&mesh, file_name, &body))
+    mesh_import(mesh, file_name, &body)
 }
 
-fn mesh_import(mesh: &Mesh, file_name: &str, body: &str) -> ImportResult {
-    let mut b = DesignBuilder::new("");
-    b.feature(
-        body,
-        vec![body.to_owned()],
-        FeatureKind::MeshImport { file: file_name.to_owned(), meshes: vec![MeshData::from_mesh(body, mesh)] },
-    );
+fn mesh_import(mesh: Mesh, file_name: &str, body: &str) -> ImportResult {
     let report = LossReport::new(format!("A mesh of {} triangles", mesh.triangles.len()));
+    let mut b = DesignBuilder::new("");
+    b.feature(body, vec![body.to_owned()], FeatureKind::MeshImport { file: file_name.to_owned(), meshes: vec![MeshData::new(body, mesh)] });
     ImportResult { design: b.build(), report }
 }
 
@@ -175,6 +177,24 @@ mod tests {
         assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));
         let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
         assert!((plate.volume() - volume).abs() < 1e-6 * volume, "{} vs {volume}", plate.volume());
+    }
+
+    #[test]
+    fn streamed_design_matches_and_writes_single_precision() {
+        let result = import(TETRA, "tetra.stl", &ImportOptions { mode: Mode::Mesh }).expect("imports");
+        let mut streamed = Vec::new();
+        result.design.write_json(&mut streamed).expect("writes");
+        assert_eq!(String::from_utf8(streamed).expect("utf-8"), result.design.to_json());
+
+        let mesh = Mesh::new(vec![[[0.1, 0.0, 0.0], [0.0, 0.2, 0.0], [0.0, 0.0, 0.3]]]);
+        let json = import_mesh(mesh, "t.stl", &ImportOptions { mode: Mode::Mesh }).design.to_json();
+        assert!(json.contains(r#""positions":[0.1,0.0,0.0,0.0,0.2,0.0,0.0,0.0,0.3]"#), "{json}");
+        assert!(json.contains(r#""triangles":[0,1,2]"#), "{json}");
+    }
+
+    #[test]
+    fn broken_files_are_errors() {
+        assert_eq!(import(b"solid e\nendsolid e\n", "e.stl", &ImportOptions::default()), Err(StlError::Empty));
     }
 
     #[test]

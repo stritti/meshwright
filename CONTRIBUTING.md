@@ -67,7 +67,8 @@ docs: explain the loss report
 `feat` and `fix` appear in the changelog. [release-please](https://github.com/googleapis/release-please)
 turns them into a release pull request; merging it tags the version, and CI attaches the plugin
 zip to the GitHub release. Breaking changes (`feat!:` or a `BREAKING CHANGE:` footer) bump the
-minor version while meshwright is below 1.0.
+minor version while meshwright is below 1.0. Maintainers: the setup is in
+[docs/releasing.md](docs/releasing.md).
 
 ### Beta phase
 

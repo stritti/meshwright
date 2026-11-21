@@ -43,6 +43,12 @@ impl Design {
         serde_json::to_string(self).expect("a design always serialises")
     }
 
+    /// Writes the design as JSON to `writer` as it is serialised, without building it in memory
+    /// first. The plugin writes large mesh designs this way.
+    pub fn write_json<W: std::io::Write>(&self, writer: W) -> std::io::Result<()> {
+        serde_json::to_writer(writer, self).map_err(std::io::Error::other)
+    }
+
     /// The design as indented JSON, for golden files and reading by eye.
     ///
     /// # Panics
@@ -152,24 +158,58 @@ pub enum FeatureKind {
     },
 }
 
-/// Mesh data in SolidCraft's layout: flat coordinates and flat corner indices.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// A mesh body, serialised in SolidCraft's layout: `positions` (flat `x, y, z` per vertex) and
+/// `triangles` (three vertex indices each), one vertex per triangle corner as STL has them.
+///
+/// The mesh is kept as it is and laid out only while the design is written, so a large mesh is
+/// never held twice. Coordinates are written as single-precision numbers, the precision STL
+/// stores them in, which keeps the design small (`0.1` rather than `0.10000000149011612`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct MeshData {
     /// The body's name.
     pub name: String,
-    /// `x, y, z` per vertex.
-    pub positions: Vec<f64>,
-    /// Three vertex indices per triangle.
-    pub triangles: Vec<u32>,
+    /// The mesh.
+    pub mesh: Mesh,
 }
 
 impl MeshData {
-    /// The mesh as SolidCraft stores it, one vertex per triangle corner (as STL has them).
+    /// The body `name` made of `mesh`.
     #[must_use]
-    pub fn from_mesh(name: impl Into<String>, mesh: &Mesh) -> Self {
-        let positions = mesh.triangles.iter().flatten().flatten().copied().collect();
-        let triangles = (0..(mesh.triangles.len() * 3) as u32).collect();
-        Self { name: name.into(), positions, triangles }
+    pub fn new(name: impl Into<String>, mesh: Mesh) -> Self {
+        Self { name: name.into(), mesh }
+    }
+}
+
+impl Serialize for MeshData {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeSeq, SerializeStruct};
+
+        struct Positions<'a>(&'a Mesh);
+        impl Serialize for Positions<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut seq = serializer.serialize_seq(Some(self.0.triangles.len() * 9))?;
+                for value in self.0.triangles.iter().flatten().flatten() {
+                    seq.serialize_element(&(*value as f32))?;
+                }
+                seq.end()
+            }
+        }
+        struct Indices(usize);
+        impl Serialize for Indices {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut seq = serializer.serialize_seq(Some(self.0))?;
+                for index in 0..self.0 {
+                    seq.serialize_element(&index)?;
+                }
+                seq.end()
+            }
+        }
+
+        let mut out = serializer.serialize_struct("MeshData", 3)?;
+        out.serialize_field("name", &self.name)?;
+        out.serialize_field("positions", &Positions(&self.mesh))?;
+        out.serialize_field("triangles", &Indices(self.mesh.triangles.len() * 3))?;
+        out.end()
     }
 }
 
