@@ -74,6 +74,13 @@ in `solidcraft-cli 0.45.0` to 6,118.29 mm³ as computed; setting `outline_fillet
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
 9,461.81 mm³, again as computed.
 
+In a polygon outline the fillet comes before the holes: an inside corner's rounding adds
+material, and a hole drilled before it would drill empty space. `l-inside-hole.stl` (5 mm
+corners, a 0.4 mm hole at (16, 16) inside that material) rebuilds in `solidcraft-cli 0.45.0` to
+6,267.07 mm³ as computed, with 7 cylindrical faces (six roundings and the hole) and no feature
+errors. The rectangle's history keeps its verified order (holes, then fillet): its corners are
+all outside corners, which only take material away.
+
 `solidcraft-cli eval design.sc` measures a design file directly (bodies, volume, face types and
 each timeline feature's error), and `eval script.json --in design.sc` measures it after a script
 such as `{"commands": [{"command": "parameters.change", "params": {"changes": {...}}}]}`.

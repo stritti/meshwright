@@ -36,16 +36,16 @@ found) or `mesh` (keep the mesh as it is).
 |---|---|---|
 | A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY) and `Extrude1` | `base_x`, `base_y`, `base_z` |
 | A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical) and `Extrude1` | `base_z` |
-| Round vertical through holes (8 or more facets) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y`, `hole_<n>_d` |
-| Every vertical corner rounded with one radius, inside and outside corners alike | `Fillet1` | `outline_fillet_r` |
+| Round vertical through holes (8 or more facets going evenly round the circle) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y`, `hole_<n>_d` |
+| Every vertical corner rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes in a non-rectangular outline, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 
 A chamfered corner is simply one more straight side, so it comes over exactly. The rebuilt part
 must match the mesh's volume within 1%, otherwise the mesh is kept. The import report notes when
 the plate was moved so that its bounding box's corner sits at the origin, and how much the volume
 changed because round facets became true circles. Not recognised yet (kept as a mesh, with the
 reason): curved sides and round outlines, corners with different radii or only some rounded,
-slots, polygonal cut-outs, steps, pockets, bosses, blind holes, and parts standing upright or
-rotated.
+slots, D-shaped and polygonal cut-outs, corners rounded almost all the way along their sides,
+steps, pockets, bosses, blind holes, and parts standing upright or rotated.
 
 ## How it works
 

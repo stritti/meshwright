@@ -120,6 +120,12 @@ fn crosses(a: P2, b: P2, ring: &[P2]) -> bool {
 
 /// Ear clipping, after bridging each hole into the outline from its rightmost corner.
 fn triangulate(outline: &[P2], holes: &[Vec<P2>]) -> Vec<[P2; 3]> {
+    let n = outline.len();
+    if holes.is_empty() && (0..n).all(|i| orient(outline[(i + n - 1) % n], outline[i], outline[(i + 1) % n]) > 0.0) {
+        // A convex outline: a fan from its first corner (and no cubic ear search for test
+        // outlines of thousands of corners).
+        return (1..n - 1).map(|i| [outline[0], outline[i], outline[i + 1]]).collect();
+    }
     let max_x = |ring: &[P2]| ring.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max);
     let mut holes: Vec<Vec<P2>> = holes.iter().map(|h| h.iter().rev().copied().collect()).collect();
     holes.sort_by(|a, b| max_x(b).total_cmp(&max_x(a)));

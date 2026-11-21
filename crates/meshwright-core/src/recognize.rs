@@ -135,7 +135,8 @@ pub struct ProfileSpec {
 impl ProfileSpec {
     /// The plate as a parametric history: parameters `base_z`, `hole_<n>_x/_y/_d` and
     /// `outline_fillet_r`, a sketch of the outline (see [`polygon_sketch`]), an extrusion, a
-    /// hole per hole and a fillet of every vertical corner.
+    /// fillet of every vertical corner and a hole per hole. The fillet comes before the holes:
+    /// an inside corner's rounding adds material, and a hole may lie in it.
     #[must_use]
     pub fn to_design(&self, name: &str) -> Design {
         let mut b = DesignBuilder::new(name);
@@ -151,7 +152,6 @@ impl ProfileSpec {
             vec!["Body1".into()],
             FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::positive("base_z"), operation: Operation::NewBody },
         );
-        hole_features(&mut b, &self.holes, self.z);
         if self.outline_fillet_r.is_some() {
             let n = self.corners.len();
             // Corner i joins line l<i> (ending there) and line l<i+1> (starting there).
@@ -165,6 +165,7 @@ impl ProfileSpec {
             let edges = self.corners.iter().map(|c| [c[0], c[1], self.z / 2.0]).collect();
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
         }
+        hole_features(&mut b, &self.holes, self.z);
         b.build()
     }
 
@@ -348,6 +349,21 @@ mod tests {
         let corner = (4.0 - std::f64::consts::PI) / 4.0 * 4.0;
         let expected = (60.0 * 15.0 + 15.0 * 25.0 - 5.0 * corner + corner - std::f64::consts::PI * 6.25) * 5.0;
         assert!((spec.volume() - expected).abs() < 1e-9, "{} vs {expected}", spec.volume());
+    }
+
+    /// A hole in the material an inside-corner rounding adds only exists once the fillet is
+    /// there, so the fillet comes first in the history.
+    #[test]
+    fn profile_fillet_comes_before_the_holes() {
+        let spec = ProfileSpec {
+            corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+            z: 5.0,
+            holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4 }],
+            outline_fillet_r: Some(5.0),
+        };
+        let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+        let types: Vec<&str> = json["features"].as_array().expect("features").iter().filter_map(|f| f["type"].as_str()).collect();
+        assert_eq!(types, ["sketch", "extrude", "fillet", "hole"]);
     }
 
     #[test]

@@ -4,11 +4,14 @@
 //! - `plate` (default): `plugin/meshwright/tests/plate-holes.stl`, a 70 x 40 x 6 mm plate with
 //!   three through holes and 3 mm rounded corners;
 //! - `bracket`: `plugin/meshwright/tests/l-bracket.stl`, an L-shaped plate with two holes and
-//!   2 mm rounded inside and outside corners, placed away from the origin.
+//!   2 mm rounded inside and outside corners, placed away from the origin;
+//! - `inside-hole`: `plugin/meshwright/tests/l-inside-hole.stl`, an L with 5 mm rounded corners
+//!   and a 0.4 mm hole in the material the inside corner's rounding adds.
 //!
 //! ```sh
 //! cargo run -p meshwright-core --example plate_stl > plugin/meshwright/tests/plate-holes.stl
 //! cargo run -p meshwright-core --example plate_stl -- bracket > plugin/meshwright/tests/l-bracket.stl
+//! cargo run -p meshwright-core --example plate_stl -- inside-hole > plugin/meshwright/tests/l-inside-hole.stl
 //! ```
 
 use std::io::Write as _;
@@ -37,10 +40,20 @@ fn bracket() -> ProfileSpec {
     }
 }
 
+/// The L in `l-inside-hole.stl`.
+fn inside_hole() -> ProfileSpec {
+    ProfileSpec { holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4 }], outline_fillet_r: Some(5.0), ..bracket() }
+}
+
 fn main() -> std::io::Result<()> {
-    let (mesh, describe, volume) = if std::env::args().nth(1).as_deref() == Some("bracket") {
-        let spec = bracket();
-        (synth::profile(&spec, 48, [20.0, 10.0, 0.0]), spec.describe(), spec.volume())
+    let which = std::env::args().nth(1);
+    let profile = match which.as_deref() {
+        Some("bracket") => Some((bracket(), [20.0, 10.0, 0.0])),
+        Some("inside-hole") => Some((inside_hole(), [0.0; 3])),
+        _ => None,
+    };
+    let (mesh, describe, volume) = if let Some((spec, offset)) = profile {
+        (synth::profile(&spec, 48, offset), spec.describe(), spec.volume())
     } else {
         let spec = plate();
         (synth::plate(&spec, 48, [0.0; 3]), spec.describe(), spec.volume())
