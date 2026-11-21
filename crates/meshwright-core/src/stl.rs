@@ -35,6 +35,12 @@ pub enum StlError {
         /// 1-based number of the triangle.
         triangle: usize,
     },
+    /// A corner coordinate is finite but too large for a single-precision float, the precision
+    /// meshes are written in (an ASCII file can hold `1e39`; binary files cannot).
+    OutOfRange {
+        /// 1-based number of the triangle.
+        triangle: usize,
+    },
     /// The file holds no triangles.
     Empty,
 }
@@ -48,6 +54,9 @@ impl fmt::Display for StlError {
             }
             Self::Syntax { line, reason } => write!(f, "ASCII STL, line {line}: {reason}"),
             Self::NonFinite { triangle } => write!(f, "triangle {triangle} has a corner that is not a finite number (nan or inf)"),
+            Self::OutOfRange { triangle } => {
+                write!(f, "triangle {triangle} has a coordinate too large for an STL mesh (beyond about 3.4e38)")
+            }
             Self::Empty => write!(f, "the file holds no triangles"),
         }
     }
@@ -84,8 +93,14 @@ pub struct StlReader {
 
 #[derive(Debug)]
 enum Format {
-    Binary,
-    Ascii { line: usize, corners: Vec<Vec3> },
+    /// Binary, with the triangle count its header announces.
+    Binary {
+        triangles: u64,
+    },
+    Ascii {
+        line: usize,
+        corners: Vec<Vec3>,
+    },
 }
 
 impl StlReader {
@@ -100,7 +115,7 @@ impl StlReader {
                 // The size check bounds the count by the file size, so this allocation is not
                 // driven by the header alone.
                 let triangles = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
-                return Ok(Self { format: Format::Binary, offset: 0, pending: Vec::with_capacity(RECORD), triangles });
+                return Ok(Self { format: Format::Binary { triangles: count }, offset: 0, pending: Vec::with_capacity(RECORD), triangles });
             }
             if !looks_ascii(head) {
                 return Err(StlError::Truncated { expected: count, actual: size });
@@ -122,7 +137,7 @@ impl StlReader {
         let start = self.offset;
         self.offset += chunk.len() as u64;
         match &mut self.format {
-            Format::Binary => {
+            Format::Binary { .. } => {
                 if start < PREAMBLE as u64 {
                     let skip = (PREAMBLE as u64 - start).min(chunk.len() as u64) as usize;
                     chunk = &chunk[skip..];
@@ -165,9 +180,10 @@ impl StlReader {
     /// The mesh, once every byte has been pushed.
     pub fn finish(mut self) -> Result<Mesh, StlError> {
         match &mut self.format {
-            Format::Binary => {
-                if !self.pending.is_empty() || self.offset < PREAMBLE as u64 {
-                    return Err(StlError::Truncated { expected: self.triangles.capacity() as u64, actual: self.offset });
+            Format::Binary { triangles: expected } => {
+                // Ending early at a record boundary leaves no partial record, so the count decides.
+                if !self.pending.is_empty() || self.triangles.len() as u64 != *expected {
+                    return Err(StlError::Truncated { expected: *expected, actual: self.offset });
                 }
             }
             Format::Ascii { line, corners } => {
@@ -191,6 +207,9 @@ impl StlReader {
 fn push_checked(triangles: &mut Vec<Triangle>, triangle: Triangle) -> Result<(), StlError> {
     if triangle.iter().flatten().any(|v| !v.is_finite()) {
         return Err(StlError::NonFinite { triangle: triangles.len() + 1 });
+    }
+    if triangle.iter().flatten().any(|v| v.abs() > f64::from(f32::MAX)) {
+        return Err(StlError::OutOfRange { triangle: triangles.len() + 1 });
     }
     triangles.push(triangle);
     Ok(())
@@ -355,6 +374,23 @@ mod tests {
         let mut mesh = tetrahedron(1.0);
         mesh.triangles[2][1][0] = f64::NAN;
         assert_eq!(parse(&to_binary(&mesh, b"x")), Err(StlError::NonFinite { triangle: 3 }));
+    }
+
+    #[test]
+    fn rejects_binary_that_ends_early_at_a_record_boundary() {
+        let bytes = to_binary(&tetrahedron(1.0), b"x");
+        // The reader is told the full size, but the source stops after two of four records.
+        let mut reader = StlReader::new(&bytes, bytes.len() as u64).expect("binary");
+        reader.push(&bytes[..PREAMBLE + 2 * RECORD]).expect("pushes");
+        assert!(matches!(reader.finish(), Err(StlError::Truncated { expected: 4, .. })));
+    }
+
+    #[test]
+    fn rejects_coordinates_beyond_single_precision() {
+        let text = TETRA.replacen("vertex 0 10 0", "vertex 0 1e39 0", 1);
+        assert_eq!(parse(text.as_bytes()), Err(StlError::OutOfRange { triangle: 1 }));
+        let text = TETRA.replacen("vertex 0 10 0", "vertex 0 3e38 0", 1);
+        assert!(parse(text.as_bytes()).is_ok(), "within f32 range");
     }
 
     #[test]
