@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # The SolidCraft release whose plugin interface and test runner the plugin is checked against.
+  SOLIDCRAFT_VERSION: 0.45.0
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup component add rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (native, all targets)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: clippy (wasm32, plugin)
+        run: cargo clippy -p meshwright-plugin -p meshwright-core --target wasm32-unknown-unknown --locked -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal --target wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +${{ steps.msrv.outputs.version }} check -p meshwright-core --locked
+      - run: cargo +${{ steps.msrv.outputs.version }} check -p meshwright-plugin --target wasm32-unknown-unknown --locked
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc -p meshwright-core --no-deps --locked
+
+  deny:
+    name: cargo-deny (licences, advisories, bans, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check all
+
+  component:
+    name: wasm component and package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask dist
+      - name: Component size
+        run: |
+          size=$(stat -c %s plugin/meshwright/meshwright.wasm)
+          echo "meshwright.wasm: $size bytes" >> "$GITHUB_STEP_SUMMARY"
+          # SolidCraft refuses importer components above 64 MiB.
+          test "$size" -lt 67108864
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meshwright-plugin
+          path: target/dist/*.zip
+          if-no-files-found: error
+
+  plugin-test:
+    name: SolidCraft plugin tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Download solidcraft-cli ${{ env.SOLIDCRAFT_VERSION }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$SOLIDCRAFT_VERSION" -R tangency-labs/solidcraft \
+            -p "solidcraft-$SOLIDCRAFT_VERSION-linux-x86_64.tar.gz" -O "$RUNNER_TEMP/solidcraft.tar.gz"
+          tar xzf "$RUNNER_TEMP/solidcraft.tar.gz" -C "$RUNNER_TEMP"
+          echo "SOLIDCRAFT_CLI=$RUNNER_TEMP/solidcraft-$SOLIDCRAFT_VERSION-linux-x86_64/bin/solidcraft-cli" >> "$GITHUB_ENV"
+      - run: cargo xtask plugin-test
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup component add llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo llvm-cov -p meshwright-core --lcov --output-path lcov.info
+      - run: cargo llvm-cov report -p meshwright-core --summary-only >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+  # One required check for branch protection: green only when every gate above is green.
+  ci-ok:
+    name: CI ok
+    if: always()
+    needs: [fmt, clippy, test, msrv, docs, deny, component, plugin-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: A gate failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: exit 1
+      - run: echo "All gates passed"

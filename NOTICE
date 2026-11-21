@@ -1,0 +1,23 @@
+meshwright
+Copyright (c) 2026 Stephan Strittmatter and the meshwright contributors
+
+This product is licensed under the MIT License (see LICENSE).
+
+-------------------------------------------------------------------------------
+Third-party material
+-------------------------------------------------------------------------------
+
+mesh2cad (https://github.com/emirmrkaljevic/mesh2cad)
+Copyright (c) 2026 Emir Mrkaljevic
+Licensed under the MIT License (see LICENSES/mesh2cad-MIT.txt).
+
+  The feature recognition in crates/meshwright-core is a Rust port of mesh2cad's
+  recognition algorithms and follows its parameter naming (base_x, hole_1_d, ...).
+  Files that contain ported code say so in their header and name the mesh2cad
+  module they are derived from.
+
+SolidCraft plugin interface (crates/meshwright-plugin/wit/plugin.wit)
+Copyright the SolidCraft authors (https://github.com/tangency-labs/solidcraft)
+Licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).
+  Vendored unchanged from SolidCraft v0.45.0, crates/craft-plugin/wit/plugin.wit.

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.stl binary
+*.wasm binary
+*.wit text eol=lf linguist-language=WebAssembly

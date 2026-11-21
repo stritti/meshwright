@@ -1,0 +1,429 @@
+//! The SolidCraft design document an importer writes.
+//!
+//! SolidCraft's document format is internal and has no published schema. What is modelled here
+//! is the subset meshwright writes, taken from designs SolidCraft itself saved as JSON (see
+//! `docs/design-format.md`). SolidCraft upgrades older format versions when it opens a file, so
+//! the importer pins one version, [`FORMAT`], and is tested against each SolidCraft release.
+//!
+//! Fields SolidCraft derives on its own (`param_names`, `face_names`, `edge_refs`) are left out.
+//! `edge_names` are written: without them SolidCraft re-finds fillet edges only by their pick
+//! points, which can snap to the wrong edge once a parameter moves the geometry.
+
+use serde::Serialize;
+
+use crate::mesh::Mesh;
+
+/// The document format version meshwright writes (SolidCraft 0.45 saves `solidcraft/63`).
+pub const FORMAT: &str = "solidcraft/63";
+
+/// A complete SolidCraft design.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Design {
+    format: &'static str,
+    /// The design's name; empty names it after the imported file.
+    pub name: String,
+    units: &'static str,
+    /// User and model parameters, in the order the parameter panel lists them.
+    pub params: Vec<Param>,
+    /// The timeline.
+    pub features: Vec<Feature>,
+    next_id: u32,
+    reserved_body_names: Vec<String>,
+    next_component_color_index: u32,
+}
+
+impl Design {
+    /// The design as the JSON SolidCraft opens.
+    ///
+    /// # Panics
+    ///
+    /// Never: every field serialises (no maps with non-string keys, no failing `Serialize`).
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("a design always serialises")
+    }
+
+    /// The design as indented JSON, for golden files and reading by eye.
+    ///
+    /// # Panics
+    ///
+    /// Never, as [`Design::to_json`].
+    #[must_use]
+    pub fn to_json_pretty(&self) -> String {
+        serde_json::to_string_pretty(self).expect("a design always serialises")
+    }
+}
+
+/// A named parameter.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Param {
+    /// The name expressions refer to, such as `base_x`.
+    pub name: String,
+    /// Its expression, such as `"60 mm"` or `"base_x / 2"`.
+    pub expr: String,
+    unit: &'static str,
+    /// `true` for a parameter that belongs to a feature (a sketch dimension), `false` for one the
+    /// user sees in the parameter panel.
+    pub model: bool,
+}
+
+impl Param {
+    /// A user parameter in millimetres.
+    #[must_use]
+    pub fn user(name: impl Into<String>, millimetres: f64) -> Self {
+        Self { name: name.into(), expr: format!("{} mm", fmt_number(millimetres)), unit: "mm", model: false }
+    }
+
+    /// A model parameter (a sketch dimension) driven by `expr`.
+    #[must_use]
+    pub fn model(name: impl Into<String>, expr: impl Into<String>) -> Self {
+        Self { name: name.into(), expr: expr.into(), unit: "mm", model: true }
+    }
+}
+
+/// One timeline entry.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Feature {
+    /// Unique within the design; later features refer to earlier ones by it.
+    pub id: u32,
+    /// The name shown in the timeline.
+    pub name: String,
+    suppressed: bool,
+    /// Bodies this feature creates.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub body_names: Vec<String>,
+    /// What the feature is.
+    #[serde(flatten)]
+    pub kind: FeatureKind,
+}
+
+/// The kinds of feature meshwright writes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FeatureKind {
+    /// A mesh body, as SolidCraft's own STL import makes it.
+    MeshImport {
+        /// The file it came from.
+        file: String,
+        /// The meshes, one body each.
+        meshes: Vec<MeshData>,
+    },
+    /// A sketch on an origin plane.
+    Sketch {
+        /// The plane.
+        plane: Plane,
+        /// Its geometry and constraints.
+        sketch: Sketch,
+    },
+    /// An extrusion of every profile of a sketch.
+    Extrude {
+        /// The sketch feature's id.
+        sketch: u32,
+        /// Which profiles.
+        profiles: Profiles,
+        /// How far.
+        extent: Extent,
+        /// What it does to existing bodies.
+        operation: Operation,
+    },
+    /// A hole drilled from a face.
+    Hole {
+        /// The entry point as numbers, a pick SolidCraft uses to find the face.
+        position: [f64; 3],
+        /// The entry point as expressions, which follow parameters.
+        at: [String; 3],
+        /// The drilling direction.
+        direction: [f64; 3],
+        /// The diameter expression.
+        diameter: String,
+        /// The hole's kind.
+        hole: HoleKind,
+    },
+    /// A constant-radius fillet.
+    Fillet {
+        /// Topological names of the edges, which keep the fillet on the right edges when
+        /// parameters change. `F<id>:side:<line>` is the side face an extrusion `<id>` made from
+        /// sketch line `<line>`; an edge is two faces joined by `|`.
+        edge_names: Vec<String>,
+        /// A point on each edge, in the same order.
+        edges: Vec<[f64; 3]>,
+        /// The radius expression.
+        radius: String,
+    },
+}
+
+/// Mesh data in SolidCraft's layout: flat coordinates and flat corner indices.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MeshData {
+    /// The body's name.
+    pub name: String,
+    /// `x, y, z` per vertex.
+    pub positions: Vec<f64>,
+    /// Three vertex indices per triangle.
+    pub triangles: Vec<u32>,
+}
+
+impl MeshData {
+    /// The mesh as SolidCraft stores it, one vertex per triangle corner (as STL has them).
+    #[must_use]
+    pub fn from_mesh(name: impl Into<String>, mesh: &Mesh) -> Self {
+        let positions = mesh.triangles.iter().flatten().flatten().copied().collect();
+        let triangles = (0..(mesh.triangles.len() * 3) as u32).collect();
+        Self { name: name.into(), positions, triangles }
+    }
+}
+
+/// A sketch plane.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Plane {
+    /// One of the origin planes: `XY`, `XZ` or `YZ`.
+    Origin {
+        /// The plane's name.
+        name: &'static str,
+    },
+}
+
+/// A sketch: points, curves between them, and constraints on both.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Sketch {
+    /// Points; index 0 is the fixed origin.
+    pub points: Vec<SketchPoint>,
+    /// Curves, referring to points by index.
+    pub curves: Vec<SketchCurve>,
+    /// Constraints, referring to points and curves by index.
+    pub constraints: Vec<Constraint>,
+    counters: Counters,
+}
+
+/// A sketch point.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SketchPoint {
+    /// `origin`, or `p<n>`.
+    pub id: String,
+    /// Position in sketch coordinates.
+    pub pos: [f64; 2],
+    /// Whether the solver may move it.
+    pub fixed: bool,
+}
+
+/// A sketch curve.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SketchCurve {
+    /// A line between two points.
+    Line {
+        /// `l<n>`.
+        id: String,
+        /// Start point index.
+        a: usize,
+        /// End point index.
+        b: usize,
+        /// Construction geometry makes no profile.
+        construction: bool,
+    },
+}
+
+/// A sketch constraint.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Constraint {
+    /// Line `l` is horizontal.
+    Horizontal {
+        /// `k<n>`.
+        id: String,
+        /// Curve index.
+        l: usize,
+    },
+    /// Line `l` is vertical.
+    Vertical {
+        /// `k<n>`.
+        id: String,
+        /// Curve index.
+        l: usize,
+    },
+    /// Points `p` and `q` coincide.
+    Coincident {
+        /// `k<n>`.
+        id: String,
+        /// Point index.
+        p: usize,
+        /// Point index.
+        q: usize,
+    },
+    /// Line `l` has a length driven by the model parameter `param`.
+    Length {
+        /// `k<n>`.
+        id: String,
+        /// Curve index.
+        l: usize,
+        /// The length now.
+        value: f64,
+        /// The model parameter that drives it.
+        param: String,
+        /// Where the dimension text sits, relative to the line.
+        text: [f64; 2],
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct Counters {
+    k: usize,
+    l: usize,
+    p: usize,
+}
+
+/// Which profiles of a sketch an extrusion uses.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Profiles {
+    /// Every profile.
+    All,
+}
+
+/// How far an extrusion goes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Extent {
+    /// The distance expression.
+    pub distance: String,
+    convention: &'static str,
+    direction: &'static str,
+}
+
+impl Extent {
+    /// `distance` along the sketch normal.
+    #[must_use]
+    pub fn positive(distance: impl Into<String>) -> Self {
+        Self { distance: distance.into(), convention: "total_distance", direction: "positive" }
+    }
+}
+
+/// What a feature does to existing bodies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Operation {
+    /// Makes a new body.
+    NewBody,
+}
+
+/// A hole's kind.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum HoleKind {
+    /// A plain through hole.
+    Simple,
+}
+
+/// Builds a [`Design`], handing out feature ids and body names in order.
+#[derive(Debug, Default)]
+pub struct DesignBuilder {
+    name: String,
+    params: Vec<Param>,
+    features: Vec<Feature>,
+    bodies: Vec<String>,
+}
+
+impl DesignBuilder {
+    /// An empty design called `name` (empty: named after the imported file).
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into(), ..Self::default() }
+    }
+
+    /// Adds a parameter.
+    pub fn param(&mut self, param: Param) -> &mut Self {
+        self.params.push(param);
+        self
+    }
+
+    /// Appends a feature and returns its id.
+    pub fn feature(&mut self, name: impl Into<String>, body_names: Vec<String>, kind: FeatureKind) -> u32 {
+        let id = self.features.last().map_or(1, |f| f.id + 1);
+        self.bodies.extend(body_names.iter().cloned());
+        self.features.push(Feature { id, name: name.into(), suppressed: false, body_names, kind });
+        id
+    }
+
+    /// The finished design.
+    #[must_use]
+    pub fn build(self) -> Design {
+        let next_id = self.features.last().map_or(1, |f| f.id + 1);
+        Design {
+            format: FORMAT,
+            name: self.name,
+            units: "mm",
+            params: self.params,
+            features: self.features,
+            next_id,
+            reserved_body_names: self.bodies,
+            next_component_color_index: 0,
+        }
+    }
+}
+
+/// A rectangle from the origin to `(width, height)` on the XY plane, its sides driven by the
+/// model parameters `d1` (along X) and `d2` (along Y). Lines are `l1` (bottom), `l2` (right),
+/// `l3` (top) and `l4` (left).
+#[must_use]
+pub fn rectangle_sketch(width: f64, height: f64) -> Sketch {
+    let point = |id: &str, pos: [f64; 2], fixed: bool| SketchPoint { id: id.into(), pos, fixed };
+    let line = |n: usize, a: usize, b: usize| SketchCurve::Line { id: format!("l{n}"), a, b, construction: false };
+    Sketch {
+        points: vec![
+            point("origin", [0.0, 0.0], true),
+            point("p1", [0.0, 0.0], false),
+            point("p2", [width, 0.0], false),
+            point("p3", [width, height], false),
+            point("p4", [0.0, height], false),
+        ],
+        curves: vec![line(1, 1, 2), line(2, 2, 3), line(3, 3, 4), line(4, 4, 1)],
+        constraints: vec![
+            Constraint::Horizontal { id: "k1".into(), l: 0 },
+            Constraint::Horizontal { id: "k2".into(), l: 2 },
+            Constraint::Vertical { id: "k3".into(), l: 1 },
+            Constraint::Vertical { id: "k4".into(), l: 3 },
+            Constraint::Coincident { id: "k5".into(), p: 0, q: 1 },
+            Constraint::Length { id: "k6".into(), l: 0, value: width, param: "d1".into(), text: [0.0, -5.0] },
+            Constraint::Length { id: "k7".into(), l: 1, value: height, param: "d2".into(), text: [0.0, -5.0] },
+        ],
+        counters: Counters { k: 7, l: 4, p: 4 },
+    }
+}
+
+/// A number as SolidCraft writes it in an expression: no trailing `.0`.
+#[must_use]
+pub fn fmt_number(value: f64) -> String {
+    let text = format!("{value}");
+    text.strip_suffix(".0").map_or(text.clone(), str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn numbers_drop_trailing_zero() {
+        assert_eq!(fmt_number(60.0), "60");
+        assert_eq!(fmt_number(2.5), "2.5");
+    }
+
+    #[test]
+    fn builder_numbers_features_and_reserves_bodies() {
+        let mut b = DesignBuilder::new("t");
+        let first =
+            b.feature("Sketch1", vec![], FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: rectangle_sketch(1.0, 1.0) });
+        let second = b.feature(
+            "Extrude1",
+            vec!["Body1".into()],
+            FeatureKind::Extrude { sketch: first, profiles: Profiles::All, extent: Extent::positive("1"), operation: Operation::NewBody },
+        );
+        let design = b.build();
+        assert_eq!((first, second, design.next_id), (1, 2, 3));
+        assert_eq!(design.reserved_body_names, ["Body1"]);
+        let json: serde_json::Value = serde_json::from_str(&design.to_json()).expect("valid JSON");
+        assert_eq!(json["format"], FORMAT);
+        assert_eq!(json["features"][1]["type"], "extrude");
+        assert_eq!(json["features"][1]["profiles"]["type"], "all");
+        assert!(json["features"][0].get("body_names").is_none());
+    }
+}

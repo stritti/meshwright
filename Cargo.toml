@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/meshwright-core", "crates/meshwright-plugin", "xtask"]
+default-members = ["crates/meshwright-core", "crates/meshwright-plugin"]
+
+[workspace.package]
+version = "0.0.0" # x-release-please-version
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/stritti/meshwright"
+authors = ["meshwright contributors"]
+keywords = ["stl", "cad", "solidcraft", "mesh", "reverse-engineering"]
+categories = ["graphics", "parsing"]
+
+[workspace.dependencies]
+meshwright-core = { path = "crates/meshwright-core", version = "0.0.0" } # x-release-please-version
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wit-bindgen = "0.63"
+wit-component = "0.263"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Geometry code converts between integer counts and floats on purpose.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+unwrap_used = "warn"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1

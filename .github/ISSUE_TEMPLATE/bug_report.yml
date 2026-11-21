@@ -1,0 +1,45 @@
+name: Bug report
+description: An STL imports wrongly, the plugin fails, or something else does not work.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time! An STL file that shows the problem helps most.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what did you get?
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: STL file
+      description: Drag the STL here (zip it if GitHub refuses it). Only share files you may share.
+  - type: textarea
+    id: report
+    attributes:
+      label: Import report or error message
+      description: The text SolidCraft showed after the import, if any.
+      render: text
+  - type: input
+    id: meshwright
+    attributes:
+      label: meshwright version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: solidcraft
+    attributes:
+      label: SolidCraft version
+      description: Help › About, or `solidcraft-cli --version`.
+      placeholder: "0.45.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux, Other]

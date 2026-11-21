@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+# Built component; `cargo xtask component` makes it.
+/plugin/meshwright/*.wasm
+# Output of `solidcraft-cli plugin test --out`
+/plugin/out/
+.DS_Store
+.idea/
+.vscode/
+*.swp

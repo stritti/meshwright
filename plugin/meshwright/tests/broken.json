@@ -1,0 +1,5 @@
+{
+  "entry": "stl",
+  "file": "broken.stl",
+  "expect": {"error": "invalid_input", "message": "too short to be an STL file"}
+}

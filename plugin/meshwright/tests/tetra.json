@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "tetra.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 1, "loss_report": {"summary": "A mesh of 4 triangles"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 166.6666667}},
+    "tolerance": 1e-6
+  }
+}

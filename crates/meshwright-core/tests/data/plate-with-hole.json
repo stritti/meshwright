@@ -1,0 +1,286 @@
+{
+  "format": "solidcraft/63",
+  "name": "plate-with-hole",
+  "units": "mm",
+  "params": [
+    {
+      "name": "base_x",
+      "expr": "70 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "base_y",
+      "expr": "40 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "base_z",
+      "expr": "6 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "hole_1_x",
+      "expr": "35 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "hole_1_y",
+      "expr": "20 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "hole_1_d",
+      "expr": "8 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "outline_fillet_r",
+      "expr": "3 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "base_x",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d2",
+      "expr": "base_y",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Sketch1",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              70.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p3",
+            "pos": [
+              70.0,
+              40.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p4",
+            "pos": [
+              0.0,
+              40.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "type": "line",
+            "id": "l1",
+            "a": 1,
+            "b": 2,
+            "construction": false
+          },
+          {
+            "type": "line",
+            "id": "l2",
+            "a": 2,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "type": "line",
+            "id": "l3",
+            "a": 3,
+            "b": 4,
+            "construction": false
+          },
+          {
+            "type": "line",
+            "id": "l4",
+            "a": 4,
+            "b": 1,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "type": "horizontal",
+            "id": "k1",
+            "l": 0
+          },
+          {
+            "type": "horizontal",
+            "id": "k2",
+            "l": 2
+          },
+          {
+            "type": "vertical",
+            "id": "k3",
+            "l": 1
+          },
+          {
+            "type": "vertical",
+            "id": "k4",
+            "l": 3
+          },
+          {
+            "type": "coincident",
+            "id": "k5",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "type": "length",
+            "id": "k6",
+            "l": 0,
+            "value": 70.0,
+            "param": "d1",
+            "text": [
+              0.0,
+              -5.0
+            ]
+          },
+          {
+            "type": "length",
+            "id": "k7",
+            "l": 1,
+            "value": 40.0,
+            "param": "d2",
+            "text": [
+              0.0,
+              -5.0
+            ]
+          }
+        ],
+        "counters": {
+          "k": 7,
+          "l": 4,
+          "p": 4
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Extrude1",
+      "suppressed": false,
+      "body_names": [
+        "Body1"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "base_z",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Hole1",
+      "suppressed": false,
+      "type": "hole",
+      "position": [
+        35.0,
+        20.0,
+        6.0
+      ],
+      "at": [
+        "hole_1_x",
+        "hole_1_y",
+        "base_z"
+      ],
+      "direction": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "diameter": "hole_1_d",
+      "hole": {
+        "type": "simple"
+      }
+    },
+    {
+      "id": 4,
+      "name": "Fillet1",
+      "suppressed": false,
+      "type": "fillet",
+      "edge_names": [
+        "F2:side:l1|F2:side:l4",
+        "F2:side:l1|F2:side:l2",
+        "F2:side:l2|F2:side:l3",
+        "F2:side:l3|F2:side:l4"
+      ],
+      "edges": [
+        [
+          0.0,
+          0.0,
+          3.0
+        ],
+        [
+          70.0,
+          0.0,
+          3.0
+        ],
+        [
+          70.0,
+          40.0,
+          3.0
+        ],
+        [
+          0.0,
+          40.0,
+          3.0
+        ]
+      ],
+      "radius": "outline_fillet_r"
+    }
+  ],
+  "next_id": 5,
+  "reserved_body_names": [
+    "Body1"
+  ],
+  "next_component_color_index": 0
+}
