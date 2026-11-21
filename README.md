@@ -74,8 +74,9 @@ steps, pockets, bosses, blind holes, and parts standing upright or rotated.
 | [`xtask`](xtask) | Builds the component and the installable zip, and runs SolidCraft's plugin tests. |
 | [`plugin/meshwright`](plugin/meshwright) | The plugin package: `plugin.json` and the test cases SolidCraft runs. |
 
-More in [docs/architecture.md](docs/architecture.md) and, for the document format the importer
-writes, [docs/design-format.md](docs/design-format.md).
+More in [docs/architecture.md](docs/architecture.md), for the document format the importer
+writes in [docs/design-format.md](docs/design-format.md), and for comparing a recogniser with
+mesh2cad in [docs/development.md](docs/development.md).
 
 ## Build from source
 
@@ -95,8 +96,15 @@ cargo xtask plugin-test        # runs plugin/meshwright/tests in SolidCraft (set
 1. **Skeleton** (done): plugin pipeline, document writer, mesh fallback, quality gates, releases.
 2. **Plates** (done): any outline of straight sides with round through holes and rounded
    vertical corners, moved to the origin when it sits elsewhere.
-3. **More features**: slots, counterbores and countersinks, hole patterns and bolt circles,
-   bosses, pockets, curved sides, plates lying along X or Y.
+3. **Parity with mesh2cad**, one recogniser per pull request, each compared with mesh2cad's
+   output (`scripts/compare-mesh2cad.sh`):
+   1. parameter names as mesh2cad writes them (`base_t`, `fillet_r`, `extrude_len`, …), and
+      the part kept where it is in the file;
+   2. hole rows, grids and bolt circles as SolidCraft patterns;
+   3. counterbored and countersunk holes; 4. blind holes; 5. slots; 6. bosses on the top face;
+   7. polygonal cut-outs; 8. steps, pockets and shallow recesses; 9. extrusions along X and Y;
+   10. boxes with every edge rounded, holes and bosses on side faces; 11. chamfers, drafts
+   and the rounds at a boss's foot or a hole's rim; 12. combined extrusions.
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate`
    (volume and deviation), as mesh2cad does with CadQuery.
 
