@@ -390,6 +390,30 @@ pub fn rectangle_sketch(width: f64, height: f64) -> Sketch {
     }
 }
 
+/// A closed polygon through `corners` (counter-clockwise) on the XY plane. Line `l<k>` runs from
+/// corner `k - 1` to corner `k` (wrapping round), point `p<k>` is corner `k - 1`. Lines along X or
+/// Y are constrained horizontal or vertical; the corners are otherwise free, as drawn.
+#[must_use]
+pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
+    let n = corners.len();
+    let mut points = vec![SketchPoint { id: "origin".into(), pos: [0.0, 0.0], fixed: true }];
+    points.extend(corners.iter().enumerate().map(|(i, c)| SketchPoint { id: format!("p{}", i + 1), pos: *c, fixed: false }));
+    let curves =
+        (0..n).map(|i| SketchCurve::Line { id: format!("l{}", i + 1), a: i + 1, b: (i + 1) % n + 1, construction: false }).collect();
+    let mut constraints = Vec::new();
+    for i in 0..n {
+        let (a, b) = (corners[i], corners[(i + 1) % n]);
+        let id = format!("k{}", constraints.len() + 1);
+        if (a[1] - b[1]).abs() < 1e-9 {
+            constraints.push(Constraint::Horizontal { id, l: i });
+        } else if (a[0] - b[0]).abs() < 1e-9 {
+            constraints.push(Constraint::Vertical { id, l: i });
+        }
+    }
+    let counters = Counters { k: constraints.len(), l: n, p: n };
+    Sketch { points, curves, constraints, counters }
+}
+
 /// A number as SolidCraft writes it in an expression: no trailing `.0`.
 #[must_use]
 pub fn fmt_number(value: f64) -> String {

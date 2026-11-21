@@ -15,9 +15,10 @@ The recognition follows [mesh2cad](https://github.com/emirmrkaljevic/mesh2cad)
 runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascade.
 
 > **Status: early.** The plugin pipeline works end to end: STL in, design out, tested in
-> SolidCraft 0.45. Recognition finds plates: a rectangle extruded along Z, its four vertical
-> corners sharp or rounded with one radius, with round through holes. Everything else is
-> imported as a mesh body, with the reason in the import report. See the [roadmap](#roadmap).
+> SolidCraft 0.45. Recognition finds plates: any outline of straight sides (rectangles,
+> L-shapes, brackets, chamfered or slanted sides) extruded along Z, its vertical corners sharp
+> or all rounded with one radius, with round through holes. Everything else is imported as a
+> mesh body, with the reason in the import report. See the [roadmap](#roadmap).
 
 ## Install
 
@@ -34,14 +35,17 @@ found) or `mesh` (keep the mesh as it is).
 | In the STL | In SolidCraft | Parameters |
 |---|---|---|
 | A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY) and `Extrude1` | `base_x`, `base_y`, `base_z` |
+| A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical) and `Extrude1` | `base_z` |
 | Round vertical through holes (8 or more facets) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y`, `hole_<n>_d` |
-| All four vertical corners rounded with one radius | `Fillet1` | `outline_fillet_r` |
+| Every vertical corner rounded with one radius, inside and outside corners alike | `Fillet1` | `outline_fillet_r` |
 
-The rebuilt part must match the mesh's volume within 1%, otherwise the mesh is kept. The import
-report notes when the plate was moved so that its corner sits at the origin, and how much the
-volume changed because round facets became true circles. Not recognised yet (kept as a mesh,
-with the reason): other outlines, slots, polygonal cut-outs, chamfers, steps, pockets, bosses,
-blind holes, and parts standing upright or rotated.
+A chamfered corner is simply one more straight side, so it comes over exactly. The rebuilt part
+must match the mesh's volume within 1%, otherwise the mesh is kept. The import report notes when
+the plate was moved so that its bounding box's corner sits at the origin, and how much the volume
+changed because round facets became true circles. Not recognised yet (kept as a mesh, with the
+reason): curved sides and round outlines, corners with different radii or only some rounded,
+slots, polygonal cut-outs, steps, pockets, bosses, blind holes, and parts standing upright or
+rotated.
 
 ## How it works
 
@@ -77,10 +81,10 @@ cargo xtask plugin-test        # runs plugin/meshwright/tests in SolidCraft (set
 ## Roadmap
 
 1. **Skeleton** (done): plugin pipeline, document writer, mesh fallback, quality gates, releases.
-2. **Plates** (done): plates with round through holes and rounded vertical corners, moved to
-   the origin when they sit elsewhere.
-3. **More features**: slots, counterbores and countersinks, hole patterns, chamfers, pockets,
-   other outlines, plates lying along X or Y.
+2. **Plates** (done): any outline of straight sides with round through holes and rounded
+   vertical corners, moved to the origin when it sits elsewhere.
+3. **More features**: slots, counterbores and countersinks, hole patterns and bolt circles,
+   bosses, pockets, curved sides, plates lying along X or Y.
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate`
    (volume and deviation), as mesh2cad does with CadQuery.
 

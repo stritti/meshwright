@@ -20,7 +20,8 @@ crates/
     src/stl.rs         binary and ASCII STL
     src/mesh.rs        triangle soup, bounds, volume, area
     src/recognize.rs   what recognition finds, and PlateSpec → Design
-    src/plate.rs       the plate recogniser: prism check, top-face loops, outline, round holes
+    src/plate.rs       the plate recogniser: prism check, top-face loops, outline and rounded
+                       corners, round holes
     src/synth.rs       synthetic meshes of known parts, for tests and STL fixtures
     src/design.rs      the SolidCraft document model (the subset meshwright writes)
     src/report.rs      the loss report SolidCraft shows after an import

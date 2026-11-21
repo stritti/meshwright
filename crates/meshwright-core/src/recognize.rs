@@ -1,14 +1,15 @@
 //! Feature recognition: finding the parametric part a mesh was made from.
 //!
 //! meshwright follows mesh2cad's approach and parameter names, one family of parts at a time.
-//! Recognised so far: plates (a rectangle extruded along Z, optionally with one radius on its
-//! four vertical corners) with round through holes; see [`crate::plate`]. Slots, counterbores,
-//! chamfers and pockets follow; whatever is not recognised stays a mesh.
+//! Recognised so far: plates, an outline of straight sides extruded along Z, optionally with one
+//! radius on every vertical corner, with round through holes; see [`crate::plate`]. A
+//! rectangular outline becomes a [`PlateSpec`], driven by its sizes; any other a [`ProfileSpec`].
+//! Slots, counterbores and pockets follow; whatever is not recognised stays a mesh.
 
 use std::fmt::Write as _;
 
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, Plane, Profiles, fmt_number, rectangle_sketch,
+    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, Plane, Profiles, fmt_number, polygon_sketch, rectangle_sketch,
 };
 use crate::mesh::{Mesh, Vec3};
 
@@ -20,6 +21,13 @@ pub enum Recognition {
         /// The plate, its corner at the origin.
         plate: PlateSpec,
         /// Where the plate's corner was in the file; the design puts it at the origin.
+        offset: Vec3,
+    },
+    /// A plate with any outline of straight sides, possibly with holes and rounded corners.
+    Profile {
+        /// The plate, its bounding box's corner at the origin.
+        profile: ProfileSpec,
+        /// Where that corner was in the file; the design puts it at the origin.
         offset: Vec3,
     },
     /// Nothing the recognisers know; the mesh is kept as it is.
@@ -63,15 +71,7 @@ impl PlateSpec {
     pub fn to_design(&self, name: &str) -> Design {
         let mut b = DesignBuilder::new(name);
         b.param(Param::user("base_x", self.x)).param(Param::user("base_y", self.y)).param(Param::user("base_z", self.z));
-        for (i, hole) in self.holes.iter().enumerate() {
-            let n = i + 1;
-            b.param(Param::user(format!("hole_{n}_x"), hole.x))
-                .param(Param::user(format!("hole_{n}_y"), hole.y))
-                .param(Param::user(format!("hole_{n}_d"), hole.d));
-        }
-        if let Some(r) = self.outline_fillet_r {
-            b.param(Param::user("outline_fillet_r", r));
-        }
+        hole_params(&mut b, &self.holes, self.outline_fillet_r);
         b.param(Param::model("d1", "base_x")).param(Param::model("d2", "base_y"));
 
         let sketch = b.feature(
@@ -84,20 +84,7 @@ impl PlateSpec {
             vec!["Body1".into()],
             FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::positive("base_z"), operation: Operation::NewBody },
         );
-        for (i, hole) in self.holes.iter().enumerate() {
-            let n = i + 1;
-            b.feature(
-                format!("Hole{n}"),
-                vec![],
-                FeatureKind::Hole {
-                    position: [hole.x, hole.y, self.z],
-                    at: [format!("hole_{n}_x"), format!("hole_{n}_y"), "base_z".into()],
-                    direction: [0.0, 0.0, -1.0],
-                    diameter: format!("hole_{n}_d"),
-                    hole: HoleKind::Simple,
-                },
-            );
-        }
+        hole_features(&mut b, &self.holes, self.z);
         if self.outline_fillet_r.is_some() {
             let mid = self.z / 2.0;
             let side = |a: u32, b: u32| format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}");
@@ -117,19 +104,7 @@ impl PlateSpec {
     /// One line describing the plate, for the loss report.
     #[must_use]
     pub fn describe(&self) -> String {
-        let mut text = format!("A {} x {} x {} mm plate", fmt_number(self.x), fmt_number(self.y), fmt_number(self.z));
-        match self.holes.len() {
-            0 => {}
-            1 => text.push_str(" with 1 hole"),
-            n => {
-                let _ = write!(text, " with {n} holes");
-            }
-        }
-        if let Some(r) = self.outline_fillet_r {
-            text.push_str(if self.holes.is_empty() { " with " } else { " and " });
-            let _ = write!(text, "{} mm rounded corners", fmt_number(r));
-        }
-        text
+        describe([self.x, self.y, self.z], None, self.holes.len(), self.outline_fillet_r)
     }
 
     /// The volume of the plate this spec describes, in mm³: what SolidCraft measures once it has
@@ -140,6 +115,148 @@ impl PlateSpec {
         let holes: f64 = self.holes.iter().map(|h| std::f64::consts::PI * h.d * h.d / 4.0).sum();
         (self.x * self.y - corners - holes) * self.z
     }
+}
+
+/// A plate whose outline is any polygon of straight sides (counter-clockwise, in the first
+/// quadrant), extruded up from the XY plane, with vertical through holes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProfileSpec {
+    /// The outline's corners as if they were sharp, counter-clockwise.
+    pub corners: Vec<[f64; 2]>,
+    /// Thickness along Z.
+    pub z: f64,
+    /// Through holes.
+    pub holes: Vec<HoleSpec>,
+    /// The radius of every vertical corner edge, inside and outside corners alike, if they are
+    /// rounded.
+    pub outline_fillet_r: Option<f64>,
+}
+
+impl ProfileSpec {
+    /// The plate as a parametric history: parameters `base_z`, `hole_<n>_x/_y/_d` and
+    /// `outline_fillet_r`, a sketch of the outline (see [`polygon_sketch`]), an extrusion, a
+    /// hole per hole and a fillet of every vertical corner.
+    #[must_use]
+    pub fn to_design(&self, name: &str) -> Design {
+        let mut b = DesignBuilder::new(name);
+        b.param(Param::user("base_z", self.z));
+        hole_params(&mut b, &self.holes, self.outline_fillet_r);
+        let sketch = b.feature(
+            "Sketch1",
+            vec![],
+            FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: polygon_sketch(&self.corners) },
+        );
+        let extrude = b.feature(
+            "Extrude1",
+            vec!["Body1".into()],
+            FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::positive("base_z"), operation: Operation::NewBody },
+        );
+        hole_features(&mut b, &self.holes, self.z);
+        if self.outline_fillet_r.is_some() {
+            let n = self.corners.len();
+            // Corner i joins line l<i> (ending there) and line l<i+1> (starting there).
+            let edge_names = (0..n)
+                .map(|i| {
+                    let (a, b) = (if i == 0 { n } else { i }, i + 1);
+                    let (a, b) = (a.min(b), a.max(b));
+                    format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}")
+                })
+                .collect();
+            let edges = self.corners.iter().map(|c| [c[0], c[1], self.z / 2.0]).collect();
+            b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
+        }
+        b.build()
+    }
+
+    /// One line describing the plate, for the loss report.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let size = self.size();
+        describe([size[0], size[1], self.z], Some(self.corners.len()), self.holes.len(), self.outline_fillet_r)
+    }
+
+    /// The size of the outline's bounding box along X and Y.
+    #[must_use]
+    pub fn size(&self) -> [f64; 2] {
+        let max = |axis: usize| self.corners.iter().map(|c| c[axis]).fold(0.0, f64::max);
+        [max(0), max(1)]
+    }
+
+    /// The volume of the plate this spec describes, in mm³.
+    #[must_use]
+    pub fn volume(&self) -> f64 {
+        let n = self.corners.len();
+        let mut area = (0..n)
+            .map(|i| {
+                let (a, b) = (self.corners[i], self.corners[(i + 1) % n]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum::<f64>()
+            / 2.0;
+        if let Some(r) = self.outline_fillet_r {
+            for i in 0..n {
+                let (a, c, b) = (self.corners[(i + n - 1) % n], self.corners[i], self.corners[(i + 1) % n]);
+                area -= crate::plate::fillet_loss(a, c, b, r);
+            }
+        }
+        let holes: f64 = self.holes.iter().map(|h| std::f64::consts::PI * h.d * h.d / 4.0).sum();
+        (area - holes) * self.z
+    }
+}
+
+fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], fillet_r: Option<f64>) {
+    for (i, hole) in holes.iter().enumerate() {
+        let n = i + 1;
+        b.param(Param::user(format!("hole_{n}_x"), hole.x))
+            .param(Param::user(format!("hole_{n}_y"), hole.y))
+            .param(Param::user(format!("hole_{n}_d"), hole.d));
+    }
+    if let Some(r) = fillet_r {
+        b.param(Param::user("outline_fillet_r", r));
+    }
+}
+
+fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], z: f64) {
+    for (i, hole) in holes.iter().enumerate() {
+        let n = i + 1;
+        b.feature(
+            format!("Hole{n}"),
+            vec![],
+            FeatureKind::Hole {
+                position: [hole.x, hole.y, z],
+                at: [format!("hole_{n}_x"), format!("hole_{n}_y"), "base_z".into()],
+                direction: [0.0, 0.0, -1.0],
+                diameter: format!("hole_{n}_d"),
+                hole: HoleKind::Simple,
+            },
+        );
+    }
+}
+
+/// "A 70 x 40 x 6 mm plate with a 6-sided outline, 2 holes and 3 mm rounded corners".
+fn describe(size: [f64; 3], sides: Option<usize>, holes: usize, fillet_r: Option<f64>) -> String {
+    let [x, y, z] = size.map(fmt_number);
+    let mut parts = Vec::new();
+    if let Some(n) = sides {
+        parts.push(format!("a {n}-sided outline"));
+    }
+    match holes {
+        0 => {}
+        1 => parts.push("1 hole".to_owned()),
+        n => parts.push(format!("{n} holes")),
+    }
+    if let Some(r) = fillet_r {
+        parts.push(format!("{} mm rounded corners", fmt_number(r)));
+    }
+    let mut text = format!("A {x} x {y} x {z} mm plate");
+    if let Some((last, rest)) = parts.split_last() {
+        text.push_str(" with ");
+        if !rest.is_empty() {
+            let _ = write!(text, "{} and ", rest.join(", "));
+        }
+        text.push_str(last);
+    }
+    text
 }
 
 /// Looks for a part the recognisers know in `mesh`.
@@ -199,6 +316,38 @@ mod tests {
     fn plate_volume_matches_solidcraft() {
         let spec = PlateSpec { x: 70.0, y: 40.0, z: 6.0, holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0 }], outline_fillet_r: Some(3.0) };
         assert!((spec.volume() - 16_452.05).abs() < 0.01, "{}", spec.volume());
+    }
+
+    #[test]
+    fn describes_profiles() {
+        let spec = ProfileSpec {
+            corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+            z: 5.0,
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0 }],
+            outline_fillet_r: Some(2.0),
+        };
+        assert_eq!(spec.describe(), "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 2 mm rounded corners");
+        let names = |d: &Design| -> Vec<String> {
+            let json: serde_json::Value = serde_json::from_str(&d.to_json()).expect("valid");
+            json["features"][2]["edge_names"].as_array().expect("names").iter().filter_map(|n| n.as_str().map(String::from)).collect()
+        };
+        let mut no_hole = spec.clone();
+        no_hole.holes.clear();
+        assert_eq!(names(&no_hole.to_design(""))[..2], ["F2:side:l1|F2:side:l6".to_owned(), "F2:side:l1|F2:side:l2".to_owned()]);
+    }
+
+    /// An L of 60 x 15 plus 15 x 25, minus a hole, with five convex corners and one concave.
+    #[test]
+    fn profile_volume_counts_inside_and_outside_corners() {
+        let spec = ProfileSpec {
+            corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+            z: 5.0,
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0 }],
+            outline_fillet_r: Some(2.0),
+        };
+        let corner = (4.0 - std::f64::consts::PI) / 4.0 * 4.0;
+        let expected = (60.0 * 15.0 + 15.0 * 25.0 - 5.0 * corner + corner - std::f64::consts::PI * 6.25) * 5.0;
+        assert!((spec.volume() - expected).abs() < 1e-9, "{} vs {expected}", spec.volume());
     }
 
     #[test]

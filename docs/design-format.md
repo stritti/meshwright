@@ -66,3 +66,14 @@ opened in SolidCraft 0.45.0 with no errors: volume 16,452.05 mm³ as computed by
 (70 × 40 × 6 minus an 8 mm hole minus four 3 mm corner fillets). Setting `base_x = 100`,
 `hole_1_x = 50` and `hole_1_d = 12` rebuilt to 23,275.06 mm³, again as computed, with no
 warnings.
+
+A polygon outline (`ProfileSpec::to_design`: free sketch points, horizontal and vertical
+constraints only, a fillet on every corner named `F2:side:l<i>|F2:side:l<i+1>`) works the same
+way, inside corners included. The L-bracket of `plugin/meshwright/tests/l-bracket.stl` imports
+in `solidcraft-cli 0.45.0` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
+`hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
+9,461.81 mm³, again as computed.
+
+`solidcraft-cli eval design.sc` measures a design file directly (bodies, volume, face types and
+each timeline feature's error), and `eval script.json --in design.sc` measures it after a script
+such as `{"commands": [{"command": "parameters.change", "params": {"changes": {...}}}]}`.

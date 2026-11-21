@@ -51,9 +51,14 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
     let mesh = stl::parse(bytes)?;
     let body = body_name(file_name);
     if options.mode == Mode::Auto {
-        match recognize(&mesh) {
-            Recognition::Plate { plate, offset } => {
-                let mut report = LossReport::new(plate.describe());
+        let recognised = match recognize(&mesh) {
+            Recognition::Plate { plate, offset } => Ok((plate.to_design(""), plate.describe(), plate.volume(), offset)),
+            Recognition::Profile { profile, offset } => Ok((profile.to_design(""), profile.describe(), profile.volume(), offset)),
+            Recognition::Unrecognized { reason } => Err(reason),
+        };
+        match recognised {
+            Ok((design, summary, volume, offset)) => {
+                let mut report = LossReport::new(summary);
                 if offset.iter().any(|c| *c != 0.0) {
                     let [x, y, z] = offset.map(fmt_number);
                     report.push(LossItem {
@@ -64,7 +69,7 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
                         code: "meshwright.moved",
                     });
                 }
-                let change = plate.volume() / mesh.volume() - 1.0;
+                let change = volume / mesh.volume() - 1.0;
                 if change.abs() > SMOOTHING_NOTE {
                     report.push(LossItem {
                         severity: Severity::Info,
@@ -77,9 +82,9 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
                         code: "meshwright.smoothed",
                     });
                 }
-                return Ok(ImportResult { design: plate.to_design(""), report });
+                return Ok(ImportResult { design, report });
             }
-            Recognition::Unrecognized { reason } => {
+            Err(reason) => {
                 let mut result = mesh_import(&mesh, file_name, &body);
                 result.report.push(LossItem {
                     severity: Severity::Degraded,
