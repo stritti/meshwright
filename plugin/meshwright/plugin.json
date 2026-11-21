@@ -1,26 +1,42 @@
 {
   "id": "meshwright",
   "name": "meshwright",
-  "version": "0.0.0",
+  "version": "0.1.0-beta.1",
   "description": "Opens STL meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history.",
-  "capabilities": ["formats@0.2"],
+  "capabilities": [
+    "formats@0.2"
+  ],
   "runtime": {
     "module": "meshwright.wasm",
     "commands": [],
-    "entries": [{
-      "name": "stl",
-      "kind": "importer",
-      "extensions": ["stl"],
-      "input_schema": {"type": "object", "properties": {
-        "mode": {
-          "type": "string",
-          "title": "Import as",
-          "enum": ["auto", "mesh"],
-          "default": "auto",
-          "description": "auto: recognise features and keep the mesh where none are found; mesh: keep the mesh as it is"
+    "entries": [
+      {
+        "name": "stl",
+        "kind": "importer",
+        "extensions": [
+          "stl"
+        ],
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "title": "Import as",
+              "enum": [
+                "auto",
+                "mesh"
+              ],
+              "default": "auto",
+              "description": "auto: recognise features and keep the mesh where none are found; mesh: keep the mesh as it is"
+            }
+          }
         }
-      }}
-    }],
-    "limits": {"fuel": 100000000000, "memory_mib": 128, "deadline_ms": 120000}
+      }
+    ],
+    "limits": {
+      "fuel": 100000000000,
+      "memory_mib": 128,
+      "deadline_ms": 120000
+    }
   }
 }
