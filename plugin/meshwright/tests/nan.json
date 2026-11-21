@@ -1,0 +1,5 @@
+{
+  "entry": "stl",
+  "file": "nan.stl",
+  "expect": {"error": "invalid_input", "message": "not a finite number"}
+}

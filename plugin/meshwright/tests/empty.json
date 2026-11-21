@@ -1,0 +1,5 @@
+{
+  "entry": "stl",
+  "file": "empty.stl",
+  "expect": {"error": "invalid_input", "message": "holds no triangles"}
+}
