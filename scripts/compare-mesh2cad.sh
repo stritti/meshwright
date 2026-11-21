@@ -22,14 +22,19 @@ fi
 command -v "$MESH2CAD" >/dev/null || { echo "mesh2cad not found; set MESH2CAD" >&2; exit 2; }
 cargo build -q --manifest-path "$root/Cargo.toml" -p meshwright-core --example params
 
+i=0
 for stl in "$@"; do
   base=$(basename "$stl" .stl)
+  # A folder of its own per input, so a failed conversion never finds an earlier file's script.
+  i=$((i + 1))
+  out="$work/$i"
+  mkdir "$out"
   echo "### $base"
   echo
-  m2c_verdict=$("$MESH2CAD" convert "$stl" --cadquery "$work/$base.py" 2>&1 | tail -1 || true)
+  m2c_verdict=$("$MESH2CAD" convert "$stl" --cadquery "$out/$base.py" 2>&1 | tail -1 || true)
   : > "$work/m2c.txt"
-  if [ -f "$work/$base.py" ]; then
-    "$MESH2CAD" params "$work/$base.py" | tail -n +2 | awk '{print $1, $2}' | sort > "$work/m2c.txt"
+  if [ -f "$out/$base.py" ]; then
+    "$MESH2CAD" params "$out/$base.py" | tail -n +2 | awk '{print $1, $2}' | sort > "$work/m2c.txt"
   fi
   mw_summary=$("$root/target/debug/examples/params" "$stl" 2>"$work/mw-report.txt" | sort > "$work/mw.txt"; head -1 "$work/mw-report.txt")
   echo "| parameter | mesh2cad | meshwright | |"
