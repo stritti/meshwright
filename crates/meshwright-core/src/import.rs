@@ -2,11 +2,14 @@
 
 use serde::Deserialize;
 
-use crate::design::{Design, DesignBuilder, FeatureKind, MeshData};
+use crate::design::{Design, DesignBuilder, FeatureKind, MeshData, fmt_number};
 use crate::mesh::Mesh;
 use crate::recognize::{Recognition, recognize};
 use crate::report::{LossItem, LossReport, Severity};
 use crate::stl::{self, StlError};
+
+/// Volume changes from smoothing facets below this fraction are not worth a line in the report.
+const SMOOTHING_NOTE: f64 = 1e-4;
 
 /// What the user chose in the import dialog (the entry's `input_schema` in `plugin.json`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -48,11 +51,40 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
     let mesh = stl::parse(bytes)?;
     let body = body_name(file_name);
     if options.mode == Mode::Auto {
-        match recognize(&mesh) {
-            Recognition::Plate(spec) => {
-                return Ok(ImportResult { design: spec.to_design(""), report: LossReport::new(spec.describe()) });
+        let recognised = match recognize(&mesh) {
+            Recognition::Plate { plate, offset } => Ok((plate.to_design(""), plate.describe(), plate.volume(), offset)),
+            Recognition::Profile { profile, offset } => Ok((profile.to_design(""), profile.describe(), profile.volume(), offset)),
+            Recognition::Unrecognized { reason } => Err(reason),
+        };
+        match recognised {
+            Ok((design, summary, volume, offset)) => {
+                let mut report = LossReport::new(summary);
+                if offset.iter().any(|c| *c != 0.0) {
+                    let [x, y, z] = offset.map(fmt_number);
+                    report.push(LossItem {
+                        severity: Severity::Info,
+                        title: "Moved to the origin".into(),
+                        subject: body.clone(),
+                        message: format!("The plate's corner was at ({x}, {y}, {z}) mm in the file; the design starts it at the origin."),
+                        code: "meshwright.moved",
+                    });
+                }
+                let change = volume / mesh.volume() - 1.0;
+                if change.abs() > SMOOTHING_NOTE {
+                    report.push(LossItem {
+                        severity: Severity::Info,
+                        title: "Facets smoothed".into(),
+                        subject: body,
+                        message: format!(
+                            "Holes and rounded corners are rebuilt as true circles, so the volume changes by {:+.2}% from the mesh's facets.",
+                            change * 100.0
+                        ),
+                        code: "meshwright.smoothed",
+                    });
+                }
+                return Ok(ImportResult { design, report });
             }
-            Recognition::Unrecognized { reason } => {
+            Err(reason) => {
                 let mut result = mesh_import(&mesh, file_name, &body);
                 result.report.push(LossItem {
                     severity: Severity::Degraded,
@@ -113,6 +145,36 @@ mod tests {
     fn mesh_mode_reports_nothing_lost() {
         let result = import(TETRA, "tetra.stl", &ImportOptions { mode: Mode::Mesh }).expect("imports");
         assert_eq!(result.report.items, []);
+    }
+
+    #[test]
+    fn plate_import_writes_history_and_notes() {
+        use crate::recognize::{HoleSpec, PlateSpec};
+        let spec = PlateSpec { x: 60.0, y: 40.0, z: 5.0, holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 10.0 }], outline_fillet_r: Some(4.0) };
+        let bytes = stl::write_binary(&crate::synth::plate(&spec, 24, [-30.0, -20.0, 0.0]));
+        let result = import(&bytes, "bracket.stl", &ImportOptions::default()).expect("imports");
+        let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
+        let types: Vec<&str> = json["features"].as_array().expect("features").iter().filter_map(|f| f["type"].as_str()).collect();
+        assert_eq!(types, ["sketch", "extrude", "hole", "fillet"]);
+        assert_eq!(result.report.summary, "A 60 x 40 x 5 mm plate with 1 hole and 4 mm rounded corners");
+        let codes: Vec<&str> = result.report.items.iter().map(|i| i.code).collect();
+        assert_eq!(codes, ["meshwright.moved", "meshwright.smoothed"]);
+        assert!(result.report.items[0].message.contains("(-30, -20, 0)"), "{}", result.report.items[0].message);
+    }
+
+    /// Keeps the STL fixture of SolidCraft's plugin test and its expectations in step.
+    #[test]
+    fn plugin_test_plate_fixture() {
+        let case: serde_json::Value =
+            serde_json::from_str(include_str!("../../../plugin/meshwright/tests/plate-holes.json")).expect("valid case");
+        let bytes = include_bytes!("../../../plugin/meshwright/tests/plate-holes.stl");
+        let result = import(bytes, "plate-holes.stl", &ImportOptions::default()).expect("imports");
+        let Recognition::Plate { plate, .. } = recognize(&stl::parse(bytes).expect("parses")) else { panic!("not a plate") };
+        let expect = &case["expect"];
+        assert_eq!(result.design.features.len() as u64, expect["reply"]["features"].as_u64().expect("count"));
+        assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));
+        let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
+        assert!((plate.volume() - volume).abs() < 1e-6 * volume, "{} vs {volume}", plate.volume());
     }
 
     #[test]

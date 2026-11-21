@@ -5,7 +5,8 @@
 //! - `dist`: `component`, then zips the package (without its tests) to
 //!   `target/dist/meshwright-<version>.zip`, ready for Preferences › Plugins › Install plugin….
 //! - `plugin-test`: `component`, then runs `solidcraft-cli plugin test --require-cases` on the
-//!   package. The CLI is taken from `$SOLIDCRAFT_CLI`, else from `PATH`.
+//!   package. The CLI is taken from `$SOLIDCRAFT_CLI`, else from `PATH`, else from the default
+//!   Windows install (`C:\Program Files\SolidCraft`, also found from WSL).
 
 use std::fs;
 use std::io::Write as _;
@@ -85,13 +86,24 @@ fn dist(root: &Path) -> Result<PathBuf, String> {
 
 /// Runs SolidCraft's own plugin test runner on the package folder.
 fn plugin_test(root: &Path) -> Result<(), String> {
-    let cli = std::env::var("SOLIDCRAFT_CLI").unwrap_or_else(|_| "solidcraft-cli".into());
+    let cli = std::env::var("SOLIDCRAFT_CLI").unwrap_or_else(|_| default_cli());
     let status = Command::new(&cli)
         .current_dir(root.join("plugin"))
         .args(["plugin", "test", "--require-cases", "meshwright"])
         .status()
         .map_err(|e| format!("running {cli} (set SOLIDCRAFT_CLI to its path): {e}"))?;
     if status.success() { Ok(()) } else { Err("solidcraft-cli plugin test failed".into()) }
+}
+
+/// `solidcraft-cli` from `PATH`, else from SolidCraft's default Windows install (seen natively
+/// or from WSL).
+fn default_cli() -> String {
+    let on_path = Command::new("solidcraft-cli").arg("--version").output().is_ok_and(|o| o.status.success());
+    let installed = ["C:\\Program Files\\SolidCraft\\solidcraft-cli.exe", "/mnt/c/Program Files/SolidCraft/solidcraft-cli.exe"];
+    match installed.iter().find(|p| !on_path && Path::new(p).is_file()) {
+        Some(path) => (*path).to_owned(),
+        None => "solidcraft-cli".into(),
+    }
 }
 
 fn manifest(root: &Path) -> Result<serde_json::Value, String> {

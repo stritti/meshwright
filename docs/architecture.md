@@ -19,7 +19,10 @@ crates/
   meshwright-core/     host-independent: STL → Mesh → Recognition → Design + LossReport
     src/stl.rs         binary and ASCII STL
     src/mesh.rs        triangle soup, bounds, volume, area
-    src/recognize.rs   recognisers (ported from mesh2cad) and PlateSpec → Design
+    src/recognize.rs   what recognition finds, and PlateSpec → Design
+    src/plate.rs       the plate recogniser: prism check, top-face loops, outline and rounded
+                       corners, round holes
+    src/synth.rs       synthetic meshes of known parts, for tests and STL fixtures
     src/design.rs      the SolidCraft document model (the subset meshwright writes)
     src/report.rs      the loss report SolidCraft shows after an import
     src/import.rs      the whole pipeline, and the import options
@@ -40,6 +43,10 @@ xtask/                 component wrapping, packaging, plugin tests
   SolidCraft. A recogniser's job is only to fill in a `PlateSpec` (and its successors).
 - **Never lose the user's part.** Whatever is not recognised is imported as a mesh body, with an
   entry in the loss report.
+- **Recognise exactly or not at all.** A recogniser measures the mesh as a CAD exporter wrote it
+  (facet corners on the true surfaces), within 1 µm or 10⁻⁵ of the part's size, whichever is
+  larger, and the rebuilt part must match the mesh's volume within 1%. Anything less certain
+  stays a mesh, with the reason in the loss report.
 - **Deterministic numerics.** No threads and no system randomness in the sandbox: algorithms
   such as RANSAC use a fixed seed.
 

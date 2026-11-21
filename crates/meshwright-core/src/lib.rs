@@ -21,8 +21,10 @@
 pub mod design;
 pub mod import;
 pub mod mesh;
+pub mod plate;
 pub mod recognize;
 pub mod report;
 pub mod stl;
+pub mod synth;
 
 pub use import::{ImportOptions, ImportResult, import};

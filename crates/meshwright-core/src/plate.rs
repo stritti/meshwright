@@ -1,5 +1,5 @@
-//! Recognising a plate: a rectangular outline, optionally with one radius on all four vertical
-//! corners, extruded along Z, with round vertical through holes.
+//! Recognising a plate: an outline of straight sides, optionally with one radius on every
+//! vertical corner, extruded along Z, with round vertical through holes.
 //!
 //! Written independently from mesh2cad's published description (a Z extrusion with one radius on
 //! every vertical corner of the outline, through holes, the parameter names `base_x`,
@@ -12,16 +12,20 @@
 //!    and bottom faces have the same area as the volume demands: the mesh is a straight prism.
 //! 2. The boundary of the top face is split into closed loops. The one loop running
 //!    counter-clockwise is the outline, the clockwise ones are holes.
-//! 3. The outline must be the bounding rectangle, its corners all sharp or all rounded with the
-//!    same radius; each hole must be round.
+//! 3. The outline must be made of straight sides, its corners all sharp or all rounded with the
+//!    same radius (a rounded corner is a run of facet corners on one circle that meets the sides
+//!    on either side of it tangentially); each hole must be round. A rectangular outline becomes
+//!    a [`PlateSpec`], any other a [`ProfileSpec`].
 //! 4. The plate rebuilt from those numbers must have the mesh's volume within 1%, the check
 //!    mesh2cad documents for its scripts; otherwise the mesh is kept.
+
+#![allow(clippy::many_single_char_names)] // points a, b, c, sizes x, y, z and radii r, as in the geometry
 
 use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 
 use crate::mesh::{Mesh, Vec3, cross, length, sub};
-use crate::recognize::{HoleSpec, PlateSpec, Recognition};
+use crate::recognize::{HoleSpec, PlateSpec, ProfileSpec, Recognition};
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
 pub const MAX_VOLUME_ERROR: f64 = 0.01;
@@ -30,9 +34,21 @@ pub const MAX_VOLUME_ERROR: f64 = 0.01;
 /// traps into round holes.
 pub const MIN_HOLE_SEGMENTS: usize = 8;
 
-/// Recognised sizes are rounded to this step (1 µm): STL stores single-precision floats, so a
-/// 35 mm hole position comes back as 35.0000019…, which nobody wants in the parameter panel.
-const SNAP: f64 = 1e-3;
+/// Largest share of its circle one facet of a round hole may span (50°): eight facets are the
+/// fewest, and the flat side of a D-shaped cut-out spans far more.
+const MAX_HOLE_STEP: f64 = 50.0 * PI / 180.0;
+
+/// Largest turn between two facets of a rounded corner (50°): a quarter circle needs at least two
+/// facets, and a hexagon's corners (60°) stay corners.
+const MAX_FACET_TURN: f64 = 50.0 * PI / 180.0;
+
+/// Largest turn between facets of a curved side (30°): finer than a twelve-sided outline.
+const MAX_CURVE_TURN: f64 = 30.0 * PI / 180.0;
+
+/// Recognised sizes are rounded to micrometres (this many steps per millimetre): STL stores
+/// single-precision floats, so a 35 mm hole position comes back as 35.0000019…, which nobody
+/// wants in the parameter panel.
+const SNAP_PER_MM: f64 = 1000.0;
 
 /// How far a corner may lie from where the recogniser expects it, in millimetres, for a part
 /// whose largest size is `scale`. STL coordinates have about seven significant digits.
@@ -41,7 +57,7 @@ fn tolerance(scale: f64) -> f64 {
 }
 
 fn snap(value: f64) -> f64 {
-    let snapped = (value / SNAP).round() * SNAP;
+    let snapped = (value * SNAP_PER_MM).round() / SNAP_PER_MM;
     if snapped == 0.0 { 0.0 } else { snapped }
 }
 
@@ -74,17 +90,34 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     if outlines.next().is_some() {
         return Err("the top face has more than one outline (several separate parts are not recognised yet)".into());
     }
-    let radius = outline_radius(outline, size[0], size[1], tol)?;
+    let (corners, radius) = outline_shape(outline, tol)?;
     let mut holes = loops.iter().filter(|l| signed_area(l) < 0.0).map(|l| round_hole(l, tol)).collect::<Result<Vec<_>, _>>()?;
     holes.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
 
-    let plate = PlateSpec { x: snap(size[0]), y: snap(size[1]), z: snap(size[2]), holes, outline_fillet_r: radius.map(snap) };
-    let error = (plate.volume() - mesh_volume) / mesh_volume;
+    let offset = bounds.min.map(|c| if c.abs() <= tol { 0.0 } else { snap(c) });
+    let (z, outline_fillet_r) = (snap(size[2]), radius.map(snap));
+    let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
+    let rectangle =
+        corners.len() == 4 && box_corners.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol));
+    let (found, volume) = if rectangle {
+        let plate = PlateSpec { x: snap(size[0]), y: snap(size[1]), z, holes, outline_fillet_r };
+        let volume = plate.volume();
+        (Recognition::Plate { plate, offset }, volume)
+    } else {
+        let mut corners: Vec<P2> = corners.iter().map(|c| c.map(snap)).collect();
+        // Start at the lowest corner, the leftmost of those, so that line l1 is predictable.
+        let first =
+            (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
+        corners.rotate_left(first.unwrap_or(0));
+        let profile = ProfileSpec { corners, z, holes, outline_fillet_r };
+        let volume = profile.volume();
+        (Recognition::Profile { profile, offset }, volume)
+    };
+    let error = (volume - mesh_volume) / mesh_volume;
     if error.abs() > MAX_VOLUME_ERROR {
         return Err(format!("the rebuilt plate would differ from the mesh by {:.1}% in volume", error.abs() * 100.0));
     }
-    let offset = bounds.min.map(|c| if c.abs() <= tol { 0.0 } else { snap(c) });
-    Ok(Recognition::Plate { plate, offset })
+    Ok(found)
 }
 
 /// Sorts the triangles into the top face (returned in 2D, relative to `min`), the bottom face
@@ -110,11 +143,16 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<(Vec<[P2;
             continue;
         }
         let nz = normal[2] / len;
+        // A sliver flatter than the tolerance can come out turned over once its corners are
+        // rounded to single precision; its corners still join its neighbours as they should, so
+        // only its direction is not trusted.
+        let longest = [length(sub(b, a)), length(sub(c, b)), length(sub(a, c))].into_iter().fold(0.0, f64::max);
+        let sliver = len / longest <= tol;
         match on_top {
-            3 if nz > 0.0 => top.push(triangle.map(|p| [p[0] - min[0], p[1] - min[1]])),
-            0 if nz < 0.0 => bottom_area += len / 2.0,
+            3 if nz > 0.0 || sliver => top.push(triangle.map(|p| [p[0] - min[0], p[1] - min[1]])),
+            0 if nz < 0.0 || sliver => bottom_area -= normal[2] / 2.0,
             0 | 3 => return Err("some faces point inwards".into()),
-            _ if nz.abs() > 1e-3 => {
+            _ if nz.abs() > 1e-3 && !sliver => {
                 return Err("some side walls are not vertical (drafts and chamfers are not recognised yet)".into());
             }
             _ => {}
@@ -176,61 +214,216 @@ fn boundary_loops(triangles: &[[P2; 3]], tol: f64) -> Result<Vec<Vec<P2>>, Strin
 /// The shoelace area of a closed polygon, positive when counter-clockwise.
 fn signed_area(ring: &[P2]) -> f64 {
     let n = ring.len();
-    (0..n).map(|i| {
-        let (a, b) = (ring[i], ring[(i + 1) % n]);
-        a[0] * b[1] - b[0] * a[1]
-    })
-    .sum::<f64>()
+    (0..n)
+        .map(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum::<f64>()
         / 2.0
 }
 
-/// Checks that `outline` is the `x` by `y` rectangle from the origin with all four corners
-/// sharp (`None`) or rounded with one radius, and returns that radius.
-fn outline_radius(outline: &[P2], x: f64, y: f64, tol: f64) -> Result<Option<f64>, String> {
-    let not_rectangle = || "the outline is not a rectangle (other outlines are not recognised yet)".to_owned();
-    // The four sides as (axis that is constant, its value, the other axis' length).
-    let sides = [(1, 0.0, x), (0, x, y), (1, y, x), (0, 0.0, y)];
-    let on = |side: usize, p: &P2| (p[sides[side].0] - sides[side].1).abs() <= tol;
-    // Where each side's straight part starts and ends tells the corner radius, eight times.
-    let mut estimates = Vec::with_capacity(8);
-    for side in 0..4 {
-        let along = 1 - sides[side].0;
-        let positions = outline.iter().filter(|p| on(side, p)).map(|p| p[along]);
-        let (low, high) = positions.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
-        if low > high {
-            return Err(not_rectangle());
-        }
-        estimates.extend([low, sides[side].2 - high]);
+/// Reads `outline` (counter-clockwise) as a polygon of straight sides whose corners are all
+/// sharp or all rounded with one radius. Returns the corners as if they were sharp, and the
+/// radius.
+fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), String> {
+    let mut v = merge_collinear(outline);
+    let n = v.len();
+    if n < 3 {
+        return Err("the outline is degenerate".into());
     }
-    let (low, high) = estimates.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
-    if high - low > tol {
-        return Err("the corners are not rounded alike (different radii, chamfers or notches are not recognised yet)".into());
-    }
-    let r = estimates.iter().sum::<f64>() / 8.0;
-    let r = if r <= tol { 0.0 } else { r };
-    if r > 0.0 && 2.0 * r >= x.min(y) - tol {
-        return Err("the outline is rounded all the way (slot-shaped plates are not recognised yet)".into());
-    }
-
-    let centres = [[x - r, r], [x - r, y - r], [r, y - r], [r, r]];
-    let quadrants = [[1.0, -1.0], [1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0]];
-    let on_arc = |corner: usize, p: &P2| {
-        let d = [p[0] - centres[corner][0], p[1] - centres[corner][1]];
-        (d[0].hypot(d[1]) - r).abs() <= tol && (0..2).all(|i| d[i] * quadrants[corner][i] >= -tol)
+    // Start right after the longest edge: it is a straight side, so no rounded corner runs across
+    // the start of the list.
+    let longest = (0..n).max_by(|&a, &b| distance(v[a], v[(a + 1) % n]).total_cmp(&distance(v[b], v[(b + 1) % n]))).unwrap_or(0);
+    v.rotate_left((longest + 1) % n);
+    let len = |i: usize| distance(v[i % n], v[(i + 1) % n]);
+    let turns: Vec<f64> = (0..n)
+        .map(|i| {
+            let (a, b, c) = (v[(i + n - 1) % n], v[i], v[(i + 1) % n]);
+            let (u, w) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+            (u[0] * w[1] - u[1] * w[0]).atan2(u[0] * w[0] + u[1] * w[1])
+        })
+        .collect();
+    let turn = |i: usize| turns[i % n];
+    // Facet `j` carries on a run of facets that started with facet `first`: about as long, and
+    // turning the same small way as the run's first turn, at corner `first + 1`.
+    let carries_on = |first: usize, j: usize| {
+        (len(j) - len(first)).abs() <= 0.25 * len(first) && turn(j).abs() <= MAX_FACET_TURN && turn(j) * turn(first + 1) > 0.0
     };
-    let mut arc_edges = [0_usize; 4];
-    for i in 0..outline.len() {
-        let (a, b) = (&outline[i], &outline[(i + 1) % outline.len()]);
-        if (0..4).any(|side| on(side, a) && on(side, b)) {
+
+    // A rounded corner is a run of facets of about equal length that each turn a little the
+    // same way, whose corners lie on one circle (fitted to all of them, which averages out the
+    // noise of single-precision files) and which meets the sides on either side tangentially.
+    // It can only start where a side ends, never inside a run, so a long curve is scanned once.
+    let mut arcs: Vec<(usize, usize, f64)> = Vec::new(); // first and last facet corner, radius
+    let mut i = 0;
+    while i + 2 < n {
+        if i > 0 && carries_on(i - 1, i) && turn(i).abs() >= 0.75 * turn(i + 1).abs() {
+            i += 1;
             continue;
         }
-        let corner = (0..4).find(|&c| r > 0.0 && on_arc(c, a) && on_arc(c, b)).ok_or_else(not_rectangle)?;
-        arc_edges[corner] += 1;
+        let before = v[(i + n - 1) % n];
+        let mut fit = CircleSums::new(v[i]);
+        fit.add(v[i]);
+        fit.add(v[i + 1]);
+        let mut found = None;
+        let mut end = i + 1;
+        while end + 1 < n && carries_on(i, end) {
+            end += 1;
+            fit.add(v[end]);
+            let Some((centre, r)) = fit.circle() else { continue };
+            if tangent(before, v[i], centre, len(i) / (2.0 * r))
+                && tangent(v[(end + 1) % n], v[end], centre, len(end - 1) / (2.0 * r))
+                && v[i..=end].iter().all(|p| (distance(*p, centre) - r).abs() <= tol)
+            {
+                found = Some((end, r));
+                break;
+            }
+        }
+        match found {
+            Some((last, r)) => {
+                arcs.push((i, last, r));
+                i = last;
+            }
+            None => i += 1,
+        }
     }
-    if r > 0.0 && arc_edges.iter().any(|n| *n < 2) {
-        return Err("a corner is cut straight rather than rounded (chamfers are not recognised yet)".into());
+    let mut on_arc = vec![false; n];
+    for &(first, last, _) in &arcs {
+        on_arc[first..=last].iter_mut().for_each(|c| *c = true);
     }
-    Ok((r > 0.0).then_some(r))
+
+    // Four or more short facets in a row, of one length and each turning a little the same way,
+    // that are no rounded corner make a curved side (or a round outline).
+    let mut run = 0;
+    for j in 1..=n {
+        let gentle = !on_arc[j % n] && !on_arc[j - 1] && turn(j).abs() <= MAX_CURVE_TURN && carries_on(j - 1, j);
+        run = if gentle { run + 1 } else { 0 };
+        if run >= 3 {
+            return Err("the outline has curved sides (only straight sides and rounded corners are recognised so far)".into());
+        }
+    }
+
+    // A rounded corner becomes the point where its two sides meet; sharp corners stay.
+    let mut corners = Vec::new();
+    let mut k = 0;
+    while k < n {
+        if let Some(&(first, last, _)) = arcs.iter().find(|a| a.0 == k) {
+            let corner = intersect(v[(first + n - 1) % n], v[first], v[last], v[(last + 1) % n])
+                .ok_or("a corner is rounded all the way round (slot-shaped ends are not recognised yet)")?;
+            corners.push(corner);
+            k = last + 1;
+        } else {
+            corners.push(v[k]);
+            k += 1;
+        }
+    }
+    if corners.len() < 3 {
+        return Err("the outline is degenerate".into());
+    }
+    if arcs.is_empty() {
+        return Ok((corners, None));
+    }
+    if arcs.len() != corners.len() {
+        return Err("only some corners of the outline are rounded (mixed corners are not recognised yet)".into());
+    }
+    let (low, high) = arcs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), a| (lo.min(a.2), hi.max(a.2)));
+    if high - low > tol {
+        return Err("the corners are rounded with different radii (mixed radii are not recognised yet)".into());
+    }
+    Ok((corners, Some(arcs.iter().map(|a| a.2).sum::<f64>() / arcs.len() as f64)))
+}
+
+/// Running sums for a least-squares circle (Kåsa's algebraic fit) through points added one at a
+/// time, around a nearby origin to keep the sums small.
+struct CircleSums {
+    origin: P2,
+    n: f64,
+    x: f64,
+    y: f64,
+    xx: f64,
+    xy: f64,
+    yy: f64,
+    xz: f64,
+    yz: f64,
+    z: f64,
+}
+
+impl CircleSums {
+    fn new(origin: P2) -> Self {
+        Self { origin, n: 0.0, x: 0.0, y: 0.0, xx: 0.0, xy: 0.0, yy: 0.0, xz: 0.0, yz: 0.0, z: 0.0 }
+    }
+
+    fn add(&mut self, p: P2) {
+        let (x, y) = (p[0] - self.origin[0], p[1] - self.origin[1]);
+        let z = x * x + y * y;
+        self.n += 1.0;
+        self.x += x;
+        self.y += y;
+        self.xx += x * x;
+        self.xy += x * y;
+        self.yy += y * y;
+        self.xz += x * z;
+        self.yz += y * z;
+        self.z += z;
+    }
+
+    /// The circle x² + y² + D x + E y + F = 0 closest to the points, as centre and radius.
+    fn circle(&self) -> Option<(P2, f64)> {
+        // Around the points' mean the system splits: F follows from D and E.
+        let (mx, my) = (self.x / self.n, self.y / self.n);
+        let (sxx, sxy, syy) = (self.xx - self.n * mx * mx, self.xy - self.n * mx * my, self.yy - self.n * my * my);
+        let (rx, ry) = (self.xz - mx * self.z, self.yz - my * self.z);
+        let det = sxx * syy - sxy * sxy;
+        if det.abs() <= f64::EPSILON * (sxx * syy).max(f64::MIN_POSITIVE) {
+            return None;
+        }
+        let d = (-rx * syy + ry * sxy) / det;
+        let e = (-ry * sxx + rx * sxy) / det;
+        let f = -(self.z + d * self.x + e * self.y) / self.n;
+        let (cx, cy) = (-d / 2.0, -e / 2.0);
+        let r2 = cx * cx + cy * cy - f;
+        (r2 > 0.0).then(|| ([self.origin[0] + cx, self.origin[1] + cy], r2.sqrt()))
+    }
+}
+
+/// Drops facet corners that lie on a straight line between their neighbours.
+fn merge_collinear(ring: &[P2]) -> Vec<P2> {
+    let n = ring.len();
+    (0..n)
+        .filter(|&i| {
+            let (a, b, c) = (ring[(i + n - 1) % n], ring[i], ring[(i + 1) % n]);
+            let (u, w) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+            let sin = (u[0] * w[1] - u[1] * w[0]) / (u[0].hypot(u[1]) * w[0].hypot(w[1]));
+            !(sin.abs() <= 1e-4 && u[0] * w[0] + u[1] * w[1] > 0.0)
+        })
+        .map(|i| ring[i])
+        .collect()
+}
+
+fn distance(a: P2, b: P2) -> f64 {
+    (a[0] - b[0]).hypot(a[1] - b[1])
+}
+
+/// Whether the side from `from` to `at` touches the circle around `centre` at `at`. A facet of
+/// the circle turns away from the tangent by half its angle, whose sine is `sin_half`; half of
+/// that is the allowance, so an arc's own corners are never taken for its ends.
+fn tangent(from: P2, at: P2, centre: P2, sin_half: f64) -> bool {
+    let side = [at[0] - from[0], at[1] - from[1]];
+    let radius = [at[0] - centre[0], at[1] - centre[1]];
+    let cos = (side[0] * radius[0] + side[1] * radius[1]) / (side[0].hypot(side[1]) * radius[0].hypot(radius[1]));
+    cos.abs() <= (0.5 * sin_half).min(0.05)
+}
+
+/// Where the line through `a` and `b` meets the line through `c` and `d`.
+fn intersect(a: P2, b: P2, c: P2, d: P2) -> Option<P2> {
+    let (u, w) = ([b[0] - a[0], b[1] - a[1]], [d[0] - c[0], d[1] - c[1]]);
+    let den = u[0] * w[1] - u[1] * w[0];
+    if den.abs() <= 1e-9 * u[0].hypot(u[1]) * w[0].hypot(w[1]) {
+        return None;
+    }
+    let t = ((c[0] - a[0]) * w[1] - (c[1] - a[1]) * w[0]) / den;
+    Some([a[0] + t * u[0], a[1] + t * u[1]])
 }
 
 /// Fits a circle to a hole's corners and checks that they all lie on it.
@@ -241,14 +434,36 @@ fn round_hole(ring: &[P2], tol: f64) -> Result<HoleSpec, String> {
             ring.len()
         ));
     }
-    let ([cx, cy], r) = fit_circle(ring).ok_or("a cut-out is not round")?;
+    let not_round = || "a cut-out is not round (slots, D-shapes and other cut-outs are not recognised yet)".to_owned();
+    let ([cx, cy], r) = fit_circle(ring).ok_or_else(not_round)?;
     if ring.iter().any(|p| ((p[0] - cx).hypot(p[1] - cy) - r).abs() > tol) {
-        return Err("a cut-out is not round (slots and other cut-outs are not recognised yet)".into());
+        return Err(not_round());
+    }
+    // Corners on a circle are not enough: a D-shaped cut-out has them too. Its facets must go
+    // once round the circle in small, even steps; a flat side is one long step.
+    let n = ring.len();
+    let mut steps: Vec<f64> = (0..n)
+        .map(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            let step = (b[1] - cy).atan2(b[0] - cx) - (a[1] - cy).atan2(a[0] - cx);
+            (step + PI).rem_euclid(2.0 * PI) - PI
+        })
+        .collect();
+    let around: f64 = steps.iter().sum();
+    for step in &mut steps {
+        *step = step.abs();
+    }
+    let mut sorted = steps.clone();
+    sorted.sort_by(f64::total_cmp);
+    let median = sorted[n / 2];
+    if (around.abs() - 2.0 * PI).abs() > 1e-6 || steps.iter().any(|s| *s > MAX_HOLE_STEP || *s > 1.5 * median) {
+        return Err(not_round());
     }
     Ok(HoleSpec { x: snap(cx), y: snap(cy), d: snap(2.0 * r) })
 }
 
 /// The least-squares circle through `points` (Kåsa's algebraic fit), as centre and radius.
+#[allow(clippy::many_single_char_names)] // the textbook symbols
 fn fit_circle(points: &[P2]) -> Option<(P2, f64)> {
     let n = points.len() as f64;
     let mean = [points.iter().map(|p| p[0]).sum::<f64>() / n, points.iter().map(|p| p[1]).sum::<f64>() / n];
@@ -276,9 +491,17 @@ fn fit_circle(points: &[P2]) -> Option<(P2, f64)> {
     (r2 > 0.0).then(|| ([mean[0] + u, mean[1] + v], r2.sqrt()))
 }
 
-/// The area a plate's corner loses to a rounding of radius `r`.
+/// The area the four corners of a rectangle lose to roundings of radius `r`.
 pub(crate) fn corner_loss(r: f64) -> f64 {
     (4.0 - PI) * r * r
+}
+
+/// The area the corner `c` of a counter-clockwise outline (coming from `a`, going on to `b`)
+/// loses to a rounding of radius `r`; negative for an inside corner, which gains it.
+pub(crate) fn fillet_loss(a: P2, c: P2, b: P2, r: f64) -> f64 {
+    let (u, w) = ([c[0] - a[0], c[1] - a[1]], [b[0] - c[0], b[1] - c[1]]);
+    let turn = (u[0] * w[1] - u[1] * w[0]).atan2(u[0] * w[0] + u[1] * w[1]);
+    turn.signum() * r * r * ((turn.abs() / 2.0).tan() - turn.abs() / 2.0)
 }
 
 #[cfg(test)]
@@ -291,17 +514,34 @@ mod tests {
         PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: holes.iter().map(|&(x, y, d)| HoleSpec { x, y, d }).collect(), outline_fillet_r: r }
     }
 
+    /// An L: 60 along X and 15 deep, with a 15 wide leg up to 40, one hole in each arm.
+    fn ell(r: Option<f64>) -> ProfileSpec {
+        ProfileSpec {
+            corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+            z: 5.0,
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0 }, HoleSpec { x: 45.0, y: 7.5, d: 6.0 }],
+            outline_fillet_r: r,
+        }
+    }
+
     fn found(mesh: &Mesh) -> (PlateSpec, Vec3) {
         match recognize(mesh) {
             Recognition::Plate { plate, offset } => (plate, offset),
-            Recognition::Unrecognized { reason } => panic!("not recognised: {reason}"),
+            other => panic!("not recognised as a rectangular plate: {other:?}"),
+        }
+    }
+
+    fn found_profile(mesh: &Mesh) -> (ProfileSpec, Vec3) {
+        match recognize(mesh) {
+            Recognition::Profile { profile, offset } => (profile, offset),
+            other => panic!("not recognised as a profile: {other:?}"),
         }
     }
 
     fn reason(mesh: &Mesh) -> String {
         match recognize(mesh) {
             Recognition::Unrecognized { reason } => reason,
-            Recognition::Plate { plate, .. } => panic!("unexpectedly recognised {plate:?}"),
+            other => panic!("unexpectedly recognised {other:?}"),
         }
     }
 
@@ -343,14 +583,108 @@ mod tests {
     }
 
     #[test]
-    fn hexagonal_cut_out_is_not_a_hole() {
-        assert!(reason(&synth::plate(&spec(&[(40.0, 25.0, 10.0)], None), 6, [0.0; 3])).contains("6 corners"));
+    fn recognises_finely_faceted_corners() {
+        let expected = spec(&[(40.0, 25.0, 10.0)], Some(0.5));
+        assert_eq!(found(&synth::plate(&expected, 720, [0.0; 3])).0, expected);
+    }
+
+    /// Single-precision coordinates (binary STL) put noise on finely faceted corners that a
+    /// circle through three neighbouring corners magnifies; the whole arc must be fitted.
+    #[test]
+    fn recognises_fine_corners_from_single_precision_files() {
+        for (r, segments) in [(2.0, 128), (2.0, 256), (0.5, 128), (5.0, 720)] {
+            let expected = spec(&[(40.0, 25.0, 10.0)], Some(r));
+            let mesh = synth::plate(&expected, segments, [0.0; 3]);
+            let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+            assert_eq!(found(&reread).0, expected, "radius {r}, {segments} segments");
+            let l = ell(Some(r));
+            let mesh = synth::profile(&l, segments, [12.5, 7.0, 0.0]);
+            let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+            assert_eq!(found_profile(&reread).0, l, "L, radius {r}, {segments} segments");
+        }
     }
 
     #[test]
-    fn chamfered_corners_are_not_fillets() {
-        // One segment per quarter circle is a 45° chamfer.
-        assert!(reason(&synth::plate(&spec(&[], Some(5.0)), 4, [0.0; 3])).contains("chamfers"));
+    fn recognises_an_l_shaped_outline_with_inside_and_outside_corners() {
+        for r in [None, Some(2.0)] {
+            let expected = ell(r);
+            let (profile, offset) = found_profile(&synth::profile(&expected, 32, [0.0; 3]));
+            assert_eq!(profile, expected, "radius {r:?}");
+            assert_eq!(offset, [0.0; 3]);
+        }
+    }
+
+    #[test]
+    fn recognises_an_offset_l_from_a_single_precision_file() {
+        let expected = ell(Some(3.0));
+        let mesh = synth::profile(&expected, 48, [100.0, -20.0, 0.0]);
+        let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+        let (profile, offset) = found_profile(&reread);
+        assert_eq!(profile, expected);
+        assert_eq!(offset, [100.0, -20.0, 0.0]);
+    }
+
+    #[test]
+    fn recognises_slanted_sides() {
+        let expected = ProfileSpec {
+            corners: vec![[0.0, 0.0], [50.0, 0.0], [60.0, 20.0], [25.0, 35.0], [0.0, 20.0]],
+            z: 4.0,
+            holes: vec![HoleSpec { x: 25.0, y: 15.0, d: 8.0 }],
+            outline_fillet_r: Some(3.0),
+        };
+        let mesh = synth::profile(&expected, 64, [0.0; 3]);
+        let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+        assert_eq!(found_profile(&reread).0, expected);
+    }
+
+    #[test]
+    fn chamfered_corners_make_an_eight_sided_outline() {
+        // One facet per quarter circle is a 45° chamfer: an exact eight-sided outline.
+        let (profile, _) = found_profile(&synth::plate(&spec(&[], Some(5.0)), 4, [0.0; 3]));
+        let corners = vec![[5.0, 0.0], [75.0, 0.0], [80.0, 5.0], [80.0, 45.0], [75.0, 50.0], [5.0, 50.0], [0.0, 45.0], [0.0, 5.0]];
+        assert_eq!(profile, ProfileSpec { corners, z: 5.0, holes: vec![], outline_fillet_r: None });
+    }
+
+    #[test]
+    fn round_outline_is_not_a_polygon() {
+        let circle: Vec<P2> = (0..64).map(|i| f64::from(i) * PI / 32.0).map(|a| [30.0 + 30.0 * a.cos(), 30.0 + 30.0 * a.sin()]).collect();
+        assert!(reason(&synth::prism(&circle, &[], 5.0, [0.0; 3])).contains("curved sides"));
+    }
+
+    /// A D-shaped cut-out (half a circle closed by its diameter) has every corner on a circle;
+    /// it must not become a round hole.
+    #[test]
+    fn d_shaped_cut_out_is_not_a_hole() {
+        let outline = [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]];
+        let half: Vec<P2> = (0..=32).map(|i| f64::from(i) * PI / 32.0).map(|a| [40.0 + 2.0 * a.cos(), 25.0 + 2.0 * a.sin()]).collect();
+        assert!(reason(&synth::prism(&outline, &[half], 5.0, [0.0; 3])).contains("not round"));
+        // A shaft's D-hole: a full circle with a flat cutting off a 74° arc.
+        let flat = (0.8_f64).acos();
+        let mut shaft: Vec<P2> = (0..=27)
+            .map(|i| -PI + flat + f64::from(i) * (2.0 * PI - 2.0 * flat) / 27.0)
+            .map(|a| [40.0 + 2.5 * a.cos(), 25.0 + 2.5 * a.sin()])
+            .collect();
+        shaft.rotate_left(14);
+        assert!(reason(&synth::prism(&outline, &[shaft], 5.0, [0.0; 3])).contains("not round"));
+    }
+
+    /// An outline that is one long curve must be refused quickly, however finely it is faceted.
+    #[test]
+    fn long_curves_are_refused_quickly() {
+        let started = std::time::Instant::now();
+        for corners in [2_000, 8_000] {
+            let ellipse: Vec<P2> = (0..corners)
+                .map(|i| 2.0 * PI * f64::from(i) / f64::from(corners))
+                .map(|a| [50.0 + 50.0 * a.cos(), 25.0 + 25.0 * a.sin()])
+                .collect();
+            assert!(reason(&synth::prism(&ellipse, &[], 5.0, [0.0; 3])).contains("curved sides"), "{corners} corners");
+        }
+        assert!(started.elapsed().as_secs_f64() < 5.0, "took {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn hexagonal_cut_out_is_not_a_hole() {
+        assert!(reason(&synth::plate(&spec(&[(40.0, 25.0, 10.0)], None), 6, [0.0; 3])).contains("6 corners"));
     }
 
     #[test]
@@ -368,10 +702,28 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_plate_volume_matches_the_polygon() {
+    fn synthetic_volumes_match_the_specs() {
         let s = spec(&[(40.0, 25.0, 10.0)], Some(5.0));
-        let mesh = synth::plate(&s, 400, [0.0; 3]);
+        let mesh = synth::plate(&s, 128, [0.0; 3]);
         assert!((mesh.volume() - s.volume()).abs() / s.volume() < 1e-3);
-        assert!(mesh.volume() < s.volume() + 1e-9 || s.holes.is_empty());
+        let l = ell(Some(2.0));
+        let mesh = synth::profile(&l, 128, [0.0; 3]);
+        assert!((mesh.volume() - l.volume()).abs() / l.volume() < 1e-3);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // the generator puts every top corner at exactly the same height
+    fn synthetic_top_faces_are_not_folded() {
+        let plate = synth::plate(&spec(&[(10.0, 10.0, 5.0), (40.0, 25.0, 12.0), (70.0, 38.5, 6.6)], Some(4.0)), 32, [0.0; 3]);
+        let profile = synth::profile(&ell(Some(2.0)), 32, [0.0; 3]);
+        for mesh in [plate, profile] {
+            for [a, b, c] in &mesh.triangles {
+                let n = cross(sub(*b, *a), sub(*c, *a));
+                if a[2] == b[2] && b[2] == c[2] {
+                    assert!(n[2].abs() > 1e-9, "degenerate cap triangle");
+                    assert_eq!(n[2] > 0.0, a[2] > 0.0, "cap triangle facing the wrong way");
+                }
+            }
+        }
     }
 }
