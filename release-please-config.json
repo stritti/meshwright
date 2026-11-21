@@ -19,6 +19,10 @@
   "packages": {
     ".": {
       "package-name": "meshwright",
+      "initial-version": "0.1.0-beta.1",
+      "versioning": "prerelease",
+      "prerelease": true,
+      "prerelease-type": "beta",
       "extra-files": [
         {"type": "generic", "path": "Cargo.toml"},
         {"type": "json", "path": "plugin/meshwright/plugin.json", "jsonpath": "$.version"}

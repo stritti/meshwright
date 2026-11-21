@@ -69,6 +69,15 @@ turns them into a release pull request; merging it tags the version, and CI atta
 zip to the GitHub release. Breaking changes (`feat!:` or a `BREAKING CHANGE:` footer) bump the
 minor version while meshwright is below 1.0.
 
+### Beta phase
+
+meshwright is in its beta phase: releases are pre-releases, versioned `0.1.0-beta.1`,
+`0.1.0-beta.2`, … (`versioning: prerelease` with `prerelease-type: beta` in
+`release-please-config.json`), and GitHub marks them as pre-releases. To make the first stable
+release, either set `"prerelease": false` in `release-please-config.json` or merge a commit whose
+message ends with the footer `Release-As: 0.1.0` (any version you choose); a `Release-As` footer
+also starts the next beta line, e.g. `Release-As: 0.2.0-beta.1`.
+
 ## Licence of contributions
 
 meshwright is licensed under the MIT License. By submitting a contribution you agree that it is
