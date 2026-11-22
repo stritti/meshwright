@@ -95,11 +95,16 @@ struct Faces {
 
 /// A hole whose mouth is wider than its bore, at the top or the bottom face, in coordinates
 /// relative to the plate's lowest corner.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Stepped {
     centre: P2,
     bore_r: f64,
     head_r: f64,
+    /// The bore's and the mouth's loops as meshed where they meet a face. Their walls follow
+    /// these chords, not the circles: a corner an exporter adds within a wall facet lies on a
+    /// chord, up to its sagitta inside the circle.
+    bore: Vec<P2>,
+    mouth: Vec<P2>,
     /// The face the mouth opens on, and which way is into the plate from it (-1 down from the
     /// top, +1 up from the bottom).
     face_z: f64,
@@ -115,19 +120,31 @@ impl Stepped {
         distance(p, self.centre) <= self.head_r + tol
     }
 
+    /// Whether `p` lies on the wall standing on `wall`, a loop meshed round a circle of radius
+    /// `radius`: on the circle, or on one of the loop's chords.
+    fn on_wall(&self, p: P2, radius: f64, wall: &[P2], tol: f64) -> bool {
+        let r = distance(p, self.centre);
+        (r - radius).abs() <= tol
+            || (r < radius && r >= radius - sagitta(wall, radius) - tol && segments(wall).any(|(a, b)| segment_distance(p, a, b) <= tol))
+    }
+
     /// Whether `p` lies on the hole's surface: its bore, its counterbore's wall or floor, or its
     /// countersink's cone.
     fn holds(&self, p: Vec3, tol: f64) -> bool {
-        let r = distance([p[0], p[1]], self.centre);
+        let q = [p[0], p[1]];
+        let r = distance(q, self.centre);
         let depth = (p[2] - self.face_z) * self.inward;
-        if (r - self.bore_r).abs() <= tol && depth >= -tol {
+        if depth >= -tol && self.on_wall(q, self.bore_r, &self.bore, tol) {
             return true;
         }
         if depth < -tol || depth > self.depth + tol {
             return false;
         }
         if self.counterbore {
-            (r - self.head_r).abs() <= tol || ((depth - self.depth).abs() <= tol && r >= self.bore_r - tol && r <= self.head_r + tol)
+            self.on_wall(q, self.head_r, &self.mouth, tol)
+                || ((depth - self.depth).abs() <= tol
+                    && r >= self.bore_r - sagitta(&self.bore, self.bore_r) - tol
+                    && r <= self.head_r + tol)
         } else {
             let cone = self.head_r - depth * (self.head_r - self.bore_r) / self.depth;
             (r - cone).abs() <= tol
@@ -142,7 +159,11 @@ impl Stepped {
         let centroid = [(cap[0][0] + cap[1][0] + cap[2][0]) / 3.0, (cap[0][1] + cap[1][1] + cap[2][1]) / 3.0];
         let r = distance(centroid, self.centre);
         if self.counterbore {
-            cap.iter().all(|p| (depth(p) - self.depth).abs() <= tol) && r >= self.bore_r - tol && r <= self.head_r + tol
+            // Outside the bore's meshed loop, whose chords come within their sagitta of the
+            // centre: a facet of the floor lies there, a disk across the bore does not.
+            cap.iter().all(|p| (depth(p) - self.depth).abs() <= tol)
+                && r >= self.bore_r - sagitta(&self.bore, self.bore_r) - tol
+                && r <= self.head_r + tol
         } else {
             let (low, high) = cap.iter().map(depth).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
             cap.iter().all(|p| self.holds(*p, tol) && depth(p) <= self.depth + tol) && high - low > tol
@@ -212,7 +233,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     let mut holes = Vec::new();
     let mut stepped = Vec::new();
     for (hole, (centre, top_r), loop_index) in &tops {
-        let (_, (bottom_centre, bottom_r), _) = bottoms
+        let (_, (bottom_centre, bottom_r), bottom_index) = bottoms
             .iter()
             .find(|(_, (c, _), _)| distance(*c, *centre) <= tol)
             .ok_or("a hole does not go straight through (slanted and blind holes are not recognised yet)")?;
@@ -226,7 +247,9 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         let on_top = top_r > bottom_r;
         let (head_r, bore_r) = if on_top { (*top_r, *bottom_r) } else { (*bottom_r, *top_r) };
         let (face_z, inward) = if on_top { (size[2], -1.0) } else { (0.0, 1.0) };
-        let mut s = Stepped { centre, bore_r, head_r, face_z, inward, depth: 0.0, counterbore: false };
+        let (top_loop, bottom_loop) = (loops[*loop_index].clone(), bottom_loops[*bottom_index].clone());
+        let (mouth, bore) = if on_top { (top_loop, bottom_loop) } else { (bottom_loop, top_loop) };
+        let mut s = Stepped { centre, bore_r, head_r, bore, mouth, face_z, inward, depth: 0.0, counterbore: false };
         // Its corners between the faces tell the kind: a counterbore has some on its wide wall,
         // down to its floor; a countersink's cone meets the bore at the bore's corners nearest
         // the face.
@@ -538,6 +561,18 @@ impl Walls {
 fn line_distance(p: P2, a: P2, b: P2) -> f64 {
     let (u, w) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
     (u[0] * w[1] - u[1] * w[0]).abs() / u[0].hypot(u[1])
+}
+
+/// The closed loop's sides, from each corner to the next.
+fn segments(l: &[P2]) -> impl Iterator<Item = (P2, P2)> + '_ {
+    l.iter().enumerate().map(|(i, a)| (*a, l[(i + 1) % l.len()]))
+}
+
+/// How far the longest side of `l`, a loop meshed round a circle of radius `r`, comes inside
+/// that circle.
+fn sagitta(l: &[P2], r: f64) -> f64 {
+    let longest = segments(l).map(|(a, b)| distance(a, b)).fold(0.0, f64::max).min(2.0 * r);
+    r - (r * r - longest * longest / 4.0).sqrt()
 }
 
 /// The distance from `p` to the segment from `a` to `b`.
@@ -1549,6 +1584,76 @@ mod tests {
             mesh.triangles.push([[a[0], a[1], 2.0], [c[0], c[1], 2.0], [b[0], b[1], 2.0]]);
         }
         reason(&mesh);
+    }
+
+    /// A closed 60 x 60 x 8 plate with one hole at (30, 30): an Ø`bore` bore and an
+    /// Ø`head` x `depth` counterbore from the top, each a polygon of `n` corners. With `split`,
+    /// the first facet pair of the bore's and of the counterbore's wall is split where the two
+    /// meet, as an exporter refining a mesh would: the new corner lies on the chord.
+    fn counterbored(bore: f64, head: f64, depth: f64, n: usize, split: bool) -> Mesh {
+        let ring = |d: f64| synth::rings(&[HoleSpec { x: 30.0, y: 30.0, d, head: None }], n).remove(0);
+        let (bore_ring, head_ring) = (ring(bore), ring(head));
+        let (z, floor) = (8.0, 8.0 - depth);
+        let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 60.0], [0.0, 60.0]];
+        let at = |p: P2, h: f64| [p[0], p[1], h];
+        let mut triangles = Vec::new();
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&head_ring)) {
+            triangles.push([at(a, z), at(b, z), at(c, z)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&bore_ring)) {
+            triangles.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        for [a, b, c] in synth::triangulate(&head_ring, std::slice::from_ref(&bore_ring)) {
+            triangles.push([at(a, floor), at(b, floor), at(c, floor)]);
+        }
+        let mut wall = |ring: &[P2], lo: f64, hi: f64, split: bool| {
+            for i in 0..ring.len() {
+                let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+                if split && i == 0 {
+                    let m = [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), f64::midpoint(lo, hi)];
+                    triangles.extend([
+                        [at(a, lo), at(b, lo), m],
+                        [m, at(b, lo), at(b, hi)],
+                        [at(a, lo), m, at(a, hi)],
+                        [m, at(b, hi), at(a, hi)],
+                    ]);
+                } else {
+                    triangles.extend([[at(a, lo), at(b, lo), at(b, hi)], [at(a, lo), at(b, hi), at(a, hi)]]);
+                }
+            }
+        };
+        wall(&outline, 0.0, z, false);
+        let reversed = |r: &[P2]| r.iter().rev().copied().collect::<Vec<P2>>();
+        wall(&reversed(&bore_ring), 0.0, floor, split);
+        wall(&reversed(&head_ring), floor, z, split);
+        Mesh::new(triangles)
+    }
+
+    fn counterbore_of(mesh: &Mesh) -> Option<HoleHead> {
+        let (plate, _) = found(mesh);
+        assert_eq!(plate.holes.len(), 1);
+        plate.holes[0].head
+    }
+
+    /// The floor of a counterbore only 0.1 mm wider than its 16-cornered bore reaches inside the
+    /// bore's circle, between the corners of its loop.
+    #[test]
+    fn narrow_counterbores_over_coarse_bores() {
+        assert_eq!(
+            counterbore_of(&counterbored(10.0, 10.2, 3.0, 16, false)),
+            Some(HoleHead::Counterbore { d: 10.2, depth: 3.0, bottom: false })
+        );
+    }
+
+    /// Corners an exporter adds within the facets of a counterbored hole's walls lie on the walls'
+    /// chords, not on their circles, as with a plain hole.
+    #[test]
+    fn subdivided_walls_of_counterbored_holes() {
+        let expected = Some(HoleHead::Counterbore { d: 11.0, depth: 3.0, bottom: false });
+        assert_eq!(counterbore_of(&counterbored(10.0, 11.0, 3.0, 16, false)), expected);
+        let split = counterbored(10.0, 11.0, 3.0, 16, true);
+        assert!((split.volume() - counterbored(10.0, 11.0, 3.0, 16, false).volume()).abs() < 1e-9);
+        assert_eq!(counterbore_of(&split), expected);
     }
 
     /// An L-bracket exported from SolidCraft 0.45 (`file.export_stl`, standard quality): walls in
