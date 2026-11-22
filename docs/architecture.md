@@ -19,7 +19,8 @@ crates/
   meshwright-core/     host-independent: STL → Mesh → Recognition → Design + LossReport
     src/stl.rs         binary and ASCII STL
     src/mesh.rs        triangle soup, bounds, volume, area
-    src/recognize.rs   what recognition finds, and PlateSpec → Design
+    src/recognize/     what recognition finds (`Recognition`), the specs (spec.rs) and
+                       PlateSpec/ProfileSpec → Design (to_design.rs)
     src/plate/         the plate recogniser, one file per concern: mod.rs (entry point, shared
                        constants), geometry.rs (2D measurements), faces.rs and walls.rs (face
                        and wall classification), outline.rs (outline, rounded corners), holes.rs
