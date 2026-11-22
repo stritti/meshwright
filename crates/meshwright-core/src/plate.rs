@@ -188,9 +188,9 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
             3 if nz > 0.0 || sliver => top.push(triangle.map(|p| [p[0] - min[0], p[1] - min[1]])),
             0 if nz < 0.0 || sliver => bottom_area -= normal[2] / 2.0,
             0 | 3 => return Err("some faces point inwards".into()),
-            // A wall from the top to the bottom: its corners must lie on the walls too (a drafted
-            // wall's do not, and its top and bottom faces differ).
-            _ => between.extend(triangle.iter().map(|p| [p[0] - min[0], p[1] - min[1]])),
+            // A wall from the top to the bottom: its corners lie on the top and bottom faces' own
+            // boundaries (a drafted wall shows as top and bottom faces that differ).
+            _ => {}
         }
     }
     Ok((top, bottom_area, between))
@@ -204,24 +204,38 @@ fn on_wall(p: P2, corners: &[P2], radius: Option<f64>, circles: &[(P2, f64)], to
         return true;
     }
     let n = corners.len();
+    let r = radius.unwrap_or(0.0);
+    let unit = |p: P2, q: P2| {
+        let len = distance(p, q);
+        [(q[0] - p[0]) / len, (q[1] - p[1]) / len]
+    };
+    // Per corner: how far its arc's tangent points lie from it along the sides (0 when sharp),
+    // and the arc's centre (inside the turn, `r` from both sides).
+    let rounds: Vec<(f64, P2)> = (0..n)
+        .map(|i| {
+            let (a, c, b) = (corners[(i + n - 1) % n], corners[i], corners[(i + 1) % n]);
+            let (d1, d2) = (unit(a, c), unit(c, b));
+            let turn = (d1[0] * d2[1] - d1[1] * d2[0]).atan2(d1[0] * d2[0] + d1[1] * d2[1]);
+            let t = r * (turn.abs() / 2.0).tan();
+            let start = [c[0] - d1[0] * t, c[1] - d1[1] * t];
+            let side = r * turn.signum();
+            (t, [start[0] - d1[1] * side, start[1] + d1[0] * side])
+        })
+        .collect();
     (0..n).any(|i| {
-        let (a, c, b) = (corners[(i + n - 1) % n], corners[i], corners[(i + 1) % n]);
-        if segment_distance(p, c, b) <= tol {
+        let (c, b) = (corners[i], corners[(i + 1) % n]);
+        let d = unit(c, b);
+        // The side's straight part, between the tangent points of its two corners' arcs.
+        let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
+        let from = [c[0] + d[0] * t0, c[1] + d[1] * t0];
+        let to = [b[0] - d[0] * t1, b[1] - d[1] * t1];
+        if segment_distance(p, from, to) <= tol {
             return true;
         }
-        let Some(r) = radius else { return false };
-        // The arc of corner `c`: tangent to both sides, its centre r from each, inside the turn.
-        let unit = |p: P2, q: P2| {
-            let len = distance(p, q);
-            [(q[0] - p[0]) / len, (q[1] - p[1]) / len]
-        };
-        let (d1, d2) = (unit(a, c), unit(c, b));
-        let turn = (d1[0] * d2[1] - d1[1] * d2[0]).atan2(d1[0] * d2[0] + d1[1] * d2[1]);
-        let t = r * (turn.abs() / 2.0).tan();
-        let start = [c[0] - d1[0] * t, c[1] - d1[1] * t];
-        let side = r * turn.signum();
-        let centre = [start[0] - d1[1] * side, start[1] + d1[0] * side];
-        (distance(p, centre) - r).abs() <= tol
+        // The arc of corner `c`: on its circle, and no farther from the corner than its tangent
+        // points (the rest of the circle lies farther away).
+        let (t, centre) = rounds[i];
+        r > 0.0 && (distance(p, centre) - r).abs() <= tol && distance(p, c) <= t + tol
     })
 }
 
@@ -368,12 +382,22 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
                 break;
             }
         }
-        match found {
-            Some((last, r)) => {
-                arcs.push((i, last, r));
-                i = last;
-            }
-            None => i += 1,
+        if let Some((last, r)) = found {
+            arcs.push((i, last, r));
+            i = last;
+        } else {
+            // A run of three or more facets on one circle that met no tangent side is a curve
+            // (or a round outline), not scanned again from inside it, so a long curve is scanned
+            // once however uneven its facets. An arc can only start inside the run where a side
+            // meets the circle tangentially: the scan goes on at the first such corner, or after
+            // the run when it has none.
+            let on_one_circle = |(centre, r): (P2, f64)| v[i..=end].iter().all(|p| (distance(*p, centre) - r).abs() <= tol);
+            i = match fit.circle() {
+                Some((centre, r)) if end > i + 2 && on_one_circle((centre, r)) => {
+                    (i + 1..end).find(|&j| tangent(v[j - 1], v[j], centre, len(j - 1) / (2.0 * r))).unwrap_or(end)
+                }
+                _ => i + 1,
+            };
         }
     }
     let mut on_arc = vec![false; n];
@@ -385,7 +409,12 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
     // that are no rounded corner make a curved side (or a round outline).
     let mut run = 0;
     for j in 1..=n {
-        let gentle = !on_arc[j % n] && !on_arc[j - 1] && turn(j).abs() <= MAX_CURVE_TURN && carries_on(j - 1, j);
+        // Facets of uneven length count too, as some exporters space a curve's corners unevenly.
+        let gentle = !on_arc[j % n]
+            && !on_arc[j - 1]
+            && turn(j).abs() <= MAX_CURVE_TURN
+            && turn(j) * turn(j - 1) > 0.0
+            && (carries_on(j - 1, j) || len(j) <= 3.0 * len(j - 1) && len(j - 1) <= 3.0 * len(j));
         run = if gentle { run + 1 } else { 0 };
         if run >= 3 {
             return Err("the outline has curved sides (only straight sides and rounded corners are recognised so far)".into());
@@ -849,6 +878,73 @@ mod tests {
         let mesh = Mesh::new(t);
         assert!(mesh.volume() > 0.0);
         assert!(reason(&mesh).contains("not a flat plate"));
+    }
+
+    /// A banded wall corner moved out to where the sharp corner would be is no wall: straight
+    /// sides end at their arcs' tangent points.
+    #[test]
+    #[allow(clippy::float_cmp)] // the same corner, as the generator wrote it into every facet
+    fn a_corner_out_of_its_arc_is_no_wall() {
+        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: Some(1.0) };
+        let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
+        // The band corner nearest the bottom-left arc's middle goes to the sharp corner (0, 0).
+        let arc_middle = [1.0 - std::f64::consts::FRAC_1_SQRT_2, 1.0 - std::f64::consts::FRAC_1_SQRT_2, 2.5];
+        let nearest = mesh
+            .triangles
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|p| (p[2] - 2.5).abs() < 1e-9)
+            .min_by(|p, q| {
+                distance([p[0], p[1]], [arc_middle[0], arc_middle[1]]).total_cmp(&distance([q[0], q[1]], [arc_middle[0], arc_middle[1]]))
+            })
+            .expect("band corners");
+        for t in &mut mesh.triangles {
+            for p in t.iter_mut() {
+                if *p == nearest {
+                    *p = [0.0, 0.0, 2.5];
+                }
+            }
+        }
+        let why = reason(&mesh);
+        assert!(why.contains("not a flat plate") || why.contains("faces differ"), "{why}");
+    }
+
+    /// Extra corners in the middle of the outline's facets (top and bottom alike) change nothing.
+    #[test]
+    fn subdivided_outline_facets() {
+        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: Some(3.0) };
+        let outline = synth::rounded(&[[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]], Some(3.0), 32);
+        let mut split = Vec::new();
+        for i in 0..outline.len() {
+            let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+            if distance(a, b) > 0.0 {
+                split.push(a);
+                split.push([f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1])]);
+            }
+        }
+        assert_eq!(found(&synth::prism(&split, &[], 5.0, [0.0; 3])).0, expected);
+    }
+
+    /// A round outline of 4,000 facets alternating 1 : 3 in length is scanned once, not from every
+    /// corner (which took seconds).
+    #[test]
+    fn uneven_round_outlines_are_refused_quickly() {
+        let steps: Vec<f64> = (0..4000).map(|i| if i % 2 == 0 { 1.0 } else { 3.0 }).collect();
+        let total: f64 = steps.iter().sum();
+        let mut angle = 0.0_f64;
+        let circle: Vec<P2> = steps
+            .iter()
+            .map(|s| {
+                let p = [20.0 + 20.0 * angle.cos(), 20.0 + 20.0 * angle.sin()];
+                angle += 2.0 * PI * s / total;
+                p
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let why = reason(&synth::prism(&circle, &[], 5.0, [0.0; 3]));
+        assert!(why.contains("curved sides"), "{why}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
     }
 
     /// Corners rounded almost all the way along the short sides leave short straight sides
