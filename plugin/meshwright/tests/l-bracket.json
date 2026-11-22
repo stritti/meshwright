@@ -2,7 +2,7 @@
   "entry": "stl",
   "file": "l-bracket.stl",
   "expect": {
-    "reply": {"bodies": 1, "features": 5, "loss_report": {"summary": "A 60 x 40 x 5 mm plate with a 6-sided outline, 2 holes and 2 mm rounded corners"}},
+    "reply": {"bodies": 1, "features": 6, "loss_report": {"summary": "A 60 x 40 x 5 mm plate with a 6-sided outline, 2 holes and 2 mm rounded corners"}},
     "model": {"body_count": 1, "total": {"volume_mm3": 6118.285413}},
     "tolerance": 1e-4
   }

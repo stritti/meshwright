@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-use crate::design::{Design, DesignBuilder, FeatureKind, MeshData, fmt_number};
+use crate::design::{Design, DesignBuilder, FeatureKind, MeshData};
 use crate::mesh::Mesh;
 use crate::recognize::{Recognition, recognize};
 use crate::report::{LossItem, LossReport, Severity};
@@ -58,23 +58,13 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
     let body = body_name(file_name);
     if options.mode == Mode::Auto {
         let recognised = match recognize(&mesh) {
-            Recognition::Plate { plate, offset } => Ok((plate.to_design(""), plate.describe(), plate.volume(), offset)),
-            Recognition::Profile { profile, offset } => Ok((profile.to_design(""), profile.describe(), profile.volume(), offset)),
+            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", offset), plate.describe(), plate.volume())),
+            Recognition::Profile { profile, offset } => Ok((profile.to_design_at("", offset), profile.describe(), profile.volume())),
             Recognition::Unrecognized { reason } => Err(reason),
         };
         match recognised {
-            Ok((design, summary, volume, offset)) => {
+            Ok((design, summary, volume)) => {
                 let mut report = LossReport::new(summary);
-                if offset.iter().any(|c| *c != 0.0) {
-                    let [x, y, z] = offset.map(fmt_number);
-                    report.push(LossItem {
-                        severity: Severity::Info,
-                        title: "Moved to the origin".into(),
-                        subject: body.clone(),
-                        message: format!("The plate's corner was at ({x}, {y}, {z}) mm in the file; the design starts it at the origin."),
-                        code: "meshwright.moved",
-                    });
-                }
                 let change = volume / mesh.volume() - 1.0;
                 if change.abs() > SMOOTHING_NOTE {
                     report.push(LossItem {
@@ -157,11 +147,51 @@ mod tests {
         let result = import(&bytes, "bracket.stl", &ImportOptions::default()).expect("imports");
         let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
         let types: Vec<&str> = json["features"].as_array().expect("features").iter().filter_map(|f| f["type"].as_str()).collect();
-        assert_eq!(types, ["sketch", "extrude", "hole", "fillet"]);
+        assert_eq!(types, ["sketch", "extrude", "move", "hole", "fillet"]);
         assert_eq!(result.report.summary, "A 60 x 40 x 5 mm plate with 1 hole and 4 mm rounded corners");
         let codes: Vec<&str> = result.report.items.iter().map(|i| i.code).collect();
-        assert_eq!(codes, ["meshwright.moved", "meshwright.smoothed"]);
-        assert!(result.report.items[0].message.contains("(-30, -20, 0)"), "{}", result.report.items[0].message);
+        assert_eq!(codes, ["meshwright.smoothed"]);
+        // The plate stays where it is in the file: centred on the origin, as mesh2cad writes it.
+        let params: Vec<(&str, &str)> =
+            result.design.params.iter().filter(|p| !p.model).map(|p| (p.name.as_str(), p.expr.as_str())).collect();
+        assert_eq!(
+            params,
+            [
+                ("base_x", "60 mm"),
+                ("base_y", "40 mm"),
+                ("base_t", "5 mm"),
+                ("base_cx", "0 mm"),
+                ("base_cy", "0 mm"),
+                ("base_z0", "0 mm"),
+                ("hole_1_x", "0 mm"),
+                ("hole_1_y", "0 mm"),
+                ("hole_1_d", "10 mm"),
+                ("fillet_r", "4 mm"),
+            ]
+        );
+        assert_eq!(json["features"][2]["translate"], serde_json::json!(["base_cx - base_x / 2", "base_cy - base_y / 2", "base_z0"]));
+        assert_eq!(json["features"][3]["position"], serde_json::json!([0.0, 0.0, 5.0]));
+        assert_eq!(json["features"][4]["edges"][0], serde_json::json!([-30.0, -20.0, 2.5]));
+    }
+
+    #[test]
+    fn profile_import_keeps_its_place() {
+        use crate::recognize::{HoleSpec, ProfileSpec};
+        let spec = ProfileSpec {
+            corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+            z: 5.0,
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0 }],
+            outline_fillet_r: None,
+        };
+        let bytes = stl::write_binary(&crate::synth::profile(&spec, 32, [20.0, 10.0, 3.0]));
+        let result = import(&bytes, "l.stl", &ImportOptions::default()).expect("imports");
+        let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
+        let names: Vec<&str> = result.design.params.iter().filter(|p| !p.model).map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["extrude_len", "extrude_0", "hole_1_x", "hole_1_y", "hole_1_d"]);
+        assert_eq!(result.design.params[1].expr, "3 mm");
+        assert_eq!(result.design.params[2].expr, "27.5 mm");
+        assert_eq!(json["features"][2]["translate"], serde_json::json!(["20", "10", "extrude_0"]));
+        assert_eq!(json["features"][3]["at"], serde_json::json!(["hole_1_x", "hole_1_y", "extrude_0 + extrude_len"]));
     }
 
     /// Keeps the STL fixture of SolidCraft's plugin test and its expectations in step.

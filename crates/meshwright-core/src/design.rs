@@ -145,6 +145,13 @@ pub enum FeatureKind {
         /// The hole's kind.
         hole: HoleKind,
     },
+    /// A move of whole bodies, by a translation whose three parts are expressions.
+    Move {
+        /// The bodies it moves.
+        bodies: Vec<String>,
+        /// The translation along X, Y and Z.
+        translate: [String; 3],
+    },
     /// A constant-radius fillet.
     Fillet {
         /// Topological names of the edges, which keep the fillet on the right edges when

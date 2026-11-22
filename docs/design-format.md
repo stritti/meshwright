@@ -39,6 +39,7 @@ to features (sketch dimensions) and are driven by an expression.
 | `extrude` | `sketch` (feature id), `profiles: {"type":"all"}`, `extent: {distance, convention:"total_distance", direction:"positive"}`, `operation: "new_body"` | `body_names` lists the body it creates. |
 | `hole` | `position` (numbers), `at` (three expressions), `direction`, `diameter`, `hole: {"type":"simple"}` | `at` follows parameters; `position` is the pick SolidCraft starts from. |
 | `fillet` | `edge_names`, `edges` (one point per edge), `radius` | See below. |
+| `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions) | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
 | `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flat `x,y,z` positions and flat corner indices; `body_names` lists the bodies. |
 
 Fields SolidCraft derives itself and that can be left out: `param_names`, `face_names`,
@@ -73,6 +74,15 @@ way, inside corners included. The L-bracket of `plugin/meshwright/tests/l-bracke
 in `solidcraft-cli 0.45.0` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
 9,461.81 mm³, again as computed.
+
+Since meshwright keeps a part where it is in the file, the sketch and extrusion stay at the
+origin and a `move` feature right after the extrusion takes the body there: for a rectangular
+plate by `[base_cx - base_x / 2, base_cy - base_y / 2, base_z0]`, for an outline by its corner
+and `extrude_0`. Holes and fillet picks are in world coordinates. In `solidcraft-cli 0.45.0`
+`plate-holes.stl` with `base_cx = 50`, `base_x = 90`, `base_z0 = 5`, `fillet_r = 5` and
+`hole_2_x = 70` rebuilt without errors or warnings to 20,978.79 mm³, and the L-bracket (in the
+file at (20, 10)) with `extrude_0 = 4`, `extrude_len = 8` and `outline_fillet_r = 4` to
+9,706.85 mm³, both as computed.
 
 In a polygon outline the fillet comes before the holes: an inside corner's rounding adds
 material, and a hole drilled before it would drill empty space. `l-inside-hole.stl` (5 mm

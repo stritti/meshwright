@@ -38,9 +38,11 @@ recogniser includes this table for its test files.
 Differences that are expected, and why:
 
 - **Numbering.** The two tools may number holes in a different order; compare the sets.
-- **Position.** mesh2cad keeps the part where it is in the file (`base_cx`, `base_x0`,
-  `base_z0`, …); meshwright moves it to the origin and says so in the import report (being
-  changed, see the roadmap in the README).
+- **L-brackets.** mesh2cad writes an L with every corner rounded alike as `base_x`, `base_y`,
+  `leg_x`, `leg_y`, `fillet_r` and `base_hole_N_*` / `leg_hole_N_*`; meshwright writes it as
+  any other outline (`extrude_len`, `outline_fillet_r`, `hole_N_*`).
+- **The outline itself.** mesh2cad's `outline` is a list of points; SolidCraft has no list
+  parameters, so meshwright's outline lives in its sketch, where each side can be dimensioned.
 
 ## Fixtures
 

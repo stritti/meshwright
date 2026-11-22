@@ -38,7 +38,7 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
    detail under *Details*. **Plugins › Last import report…** shows it again later.
 
 A recognised part arrives as a timeline (sketch, extrusion, holes, fillet) with its sizes as
-parameters in the parameter panel: change `base_z` or `hole_1_d` and SolidCraft rebuilds it. A
+parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. A
 part that is not recognised arrives as a mesh body, and the report says why. To try it, import
 [`plugin/meshwright/tests/plate-holes.stl`](plugin/meshwright/tests/plate-holes.stl).
 
@@ -46,15 +46,16 @@ part that is not recognised arrives as a mesh body, and the report says why. To 
 
 | In the STL | In SolidCraft | Parameters |
 |---|---|---|
-| A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY) and `Extrude1` | `base_x`, `base_y`, `base_z` |
-| A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical) and `Extrude1` | `base_z` |
-| Round vertical through holes (8 or more facets going evenly round the circle) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y`, `hole_<n>_d` |
-| Every vertical corner rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes in a non-rectangular outline, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
+| A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY), `Extrude1` and `Move1` (to where the plate is) | `base_x`, `base_y`, `base_t`; the centre `base_cx`, `base_cy` and the bottom `base_z0` |
+| A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical), `Extrude1` and `Move1` | `extrude_len` (thickness), `extrude_0` (bottom) |
+| Round vertical through holes (8 or more facets going evenly round the circle) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y` (where the hole is in the file), `hole_<n>_d` |
+| The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
+| Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 
-A chamfered corner is simply one more straight side, so it comes over exactly. The rebuilt part
-must match the mesh's volume within 1%, otherwise the mesh is kept. The import report notes when
-the plate was moved so that its bounding box's corner sits at the origin, and how much the volume
-changed because round facets became true circles. Not recognised yet (kept as a mesh, with the
+The parameter names are mesh2cad's, and the part stays where it is in the file. A chamfered
+corner is simply one more straight side, so it comes over exactly. The rebuilt part must match
+the mesh's volume within 1%, otherwise the mesh is kept. The import report notes how much the
+volume changed because round facets became true circles. Not recognised yet (kept as a mesh, with the
 reason): curved sides and round outlines, corners with different radii or only some rounded,
 slots, D-shaped and polygonal cut-outs, corners rounded almost all the way along their sides,
 steps, pockets, bosses, blind holes, and parts standing upright or rotated.
@@ -95,11 +96,11 @@ cargo xtask plugin-test        # runs plugin/meshwright/tests in SolidCraft (set
 
 1. **Skeleton** (done): plugin pipeline, document writer, mesh fallback, quality gates, releases.
 2. **Plates** (done): any outline of straight sides with round through holes and rounded
-   vertical corners, moved to the origin when it sits elsewhere.
+   vertical corners.
 3. **Parity with mesh2cad**, one recogniser per pull request, each compared with mesh2cad's
    output (`scripts/compare-mesh2cad.sh`):
-   1. parameter names as mesh2cad writes them (`base_t`, `fillet_r`, `extrude_len`, …), and
-      the part kept where it is in the file;
+   1. (done) parameter names as mesh2cad writes them (`base_t`, `fillet_r`, `extrude_len`, …),
+      and the part kept where it is in the file;
    2. hole rows, grids and bolt circles as SolidCraft patterns;
    3. counterbored and countersunk holes; 4. blind holes; 5. slots; 6. bosses on the top face;
    7. polygonal cut-outs; 8. steps, pockets and shallow recesses; 9. extrusions along X and Y;
