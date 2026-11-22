@@ -147,6 +147,7 @@ mod tests {
             y: 40.0,
             z: 5.0,
             holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 10.0, head: None, blind: None }],
+            bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(4.0),
         };
@@ -249,6 +250,7 @@ mod tests {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
             holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
+            bosses: vec![],
             slots: vec![],
             outline_fillet_r: None,
         };

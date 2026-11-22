@@ -54,6 +54,7 @@ part that is not recognised arrives as a mesh body, and the report says why. To 
 | A countersunk through hole, on the top or the bottom face | `Hole<n>` of type countersink | `hole_<n>_d`, `hole_<n>_csk_d` (at the face), `hole_<n>_csk_angle` (the cone's full angle) |
 | A round blind hole with a flat floor, drilled from the top or the bottom face | `Hole<n>` with a depth (drilled from that face) | `hole_<n>_d`, `hole_<n>_depth` (from that face) |
 | A straight slot through the plate (two round ends of one width), along X, Y or at any angle | `Slot<n>Sketch` (the slot on XY) and `Slot<n>` (a cut through everything) | `slot_<n>_len` (between the end centres), `_w`, the middle `_x`, `_y`, and `_angle` (of the long axis, from +X) |
+| A straight round boss standing on the top face | `Boss<n>` (a cylinder joined to the plate, on its top face) | `boss_<n>_d`, `boss_<n>_h` (above the top face), the centre `boss_<n>_x`, `boss_<n>_y` |
 | Three or more holes of one diameter on a straight line at one pitch | `HoleRow<n>` and `HoleRow<n>Pattern` (a rectangular pattern along the row) | `hole_row_<n>_n`, `_pitch`, `_d`, and the first hole `_x`, `_y` |
 | Holes of one diameter in an axis-aligned grid of at least 2 x 2 | `HoleGrid<n>` and `HoleGrid<n>Pattern` | `hole_grid_<n>_nx`, `_ny`, `_pitch_x`, `_pitch_y`, `_d`, and the corner hole `_x`, `_y` |
 | Three or more holes of one diameter equally spaced on a circle (a bolt circle) | `HoleCircle<n>` and `HoleCircle<n>Pattern` (a circular pattern about the circle's centre) | `hole_circle_<n>_n`, `_d`, `_r` (centre to hole), `_cx`, `_cy`, `_angle` (first hole, from +X) |
@@ -71,7 +72,8 @@ the mesh's volume within 1%, otherwise the mesh is kept. The import report notes
 volume changed because round facets became true circles. Not recognised yet (kept as a mesh, with the
 reason): curved sides and round outlines, corners with different radii or only some rounded,
 D-shaped and polygonal cut-outs, blind or slanted slots, corners rounded almost all the way along their sides,
-steps, pockets, bosses, blind holes with a drill point or a counterbore, and parts standing upright
+steps, pockets, bosses with a draft, a round or a hole, other shapes on the top face, blind holes with a drill
+point or a counterbore, and parts standing upright
 or rotated. Blind holes, like counterbored and countersunk ones, stay single holes, not patterns.
 
 ## How it works
@@ -117,7 +119,7 @@ cargo xtask plugin-test        # runs plugin/meshwright/tests in SolidCraft (set
    1. (done) parameter names as mesh2cad writes them (`base_t`, `fillet_r`, `extrude_len`, …),
       and the part kept where it is in the file;
    2. (done) hole rows, grids and bolt circles as SolidCraft patterns;
-   3. (done) counterbored and countersunk holes; 4. (done) blind holes; 5. (done) slots; 6. bosses on the top face;
+   3. (done) counterbored and countersunk holes; 4. (done) blind holes; 5. (done) slots; 6. (done) bosses on the top face;
    7. polygonal cut-outs; 8. steps, pockets and shallow recesses; 9. extrusions along X and Y;
    10. boxes with every edge rounded, holes and bosses on side faces; 11. chamfers, drafts
    and the rounds at a boss's foot or a hole's rim; 12. combined extrusions.

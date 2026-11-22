@@ -12,7 +12,7 @@
    3. (done) counterbored and countersunk holes
    4. (done) blind holes
    5. (done) slots
-   6. bosses on the top face
+   6. (done) bosses on the top face
    7. polygonal cut-outs
    8. steps, pockets and shallow recesses
    9. extrusions along X and Y

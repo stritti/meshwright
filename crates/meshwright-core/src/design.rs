@@ -174,6 +174,20 @@ pub enum FeatureKind {
         /// Where the copies go.
         pattern: PatternKind,
     },
+    /// A cylinder primitive: `base` is the centre of its bottom face (three expressions), and it
+    /// stands `height` along `axis`.
+    Cylinder {
+        /// The bottom face's centre.
+        base: [String; 3],
+        /// The direction from the bottom to the top.
+        axis: [f64; 3],
+        /// The radius expression.
+        radius: String,
+        /// The height expression.
+        height: String,
+        /// What it does to existing bodies.
+        operation: Operation,
+    },
     /// A move of whole bodies, by a translation whose three parts are expressions.
     Move {
         /// The bodies it moves.
@@ -533,6 +547,8 @@ pub enum Operation {
     NewBody,
     /// Cuts the profile out of existing bodies.
     Cut,
+    /// Adds to an existing body.
+    Join,
 }
 
 /// Where a pattern puts its copies. Counts, spacings and the origin are expressions.
