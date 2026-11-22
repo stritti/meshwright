@@ -49,10 +49,17 @@ part that is not recognised arrives as a mesh body, and the report says why. To 
 | A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY), `Extrude1` and `Move1` (to where the plate is) | `base_x`, `base_y`, `base_t`; the centre `base_cx`, `base_cy` and the bottom `base_z0` |
 | A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical), `Extrude1` and `Move1` | `extrude_len` (thickness), `extrude_0` (bottom) |
 | Round vertical through holes (8 or more facets going evenly round the circle) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y` (where the hole is in the file), `hole_<n>_d` |
+| Three or more holes of one diameter on a straight line at one pitch | `HoleRow<n>` and `HoleRow<n>Pattern` (a rectangular pattern along the row) | `hole_row_<n>_n`, `_pitch`, `_d`, and the first hole `_x`, `_y` |
+| Holes of one diameter in an axis-aligned grid of at least 2 x 2 | `HoleGrid<n>` and `HoleGrid<n>Pattern` | `hole_grid_<n>_nx`, `_ny`, `_pitch_x`, `_pitch_y`, `_d`, and the corner hole `_x`, `_y` |
+| Three or more holes of one diameter equally spaced on a circle (a bolt circle) | `HoleCircle<n>` and `HoleCircle<n>Pattern` (a circular pattern about the circle's centre) | `hole_circle_<n>_n`, `_d`, `_r` (centre to hole), `_cx`, `_cy`, `_angle` (first hole, from +X) |
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 
-The parameter names are mesh2cad's, and the part stays where it is in the file. A chamfered
+The parameter names are mesh2cad's, and the part stays where it is in the file. Change
+`hole_row_1_n` or `hole_circle_1_r` and every hole of that pattern follows. A grid wins over a
+bolt circle (four corner holes are both), two holes are never a pattern, and a pattern with one
+hole missing or out of place stays single holes. A row's direction is fixed (mesh2cad's
+`hole_row_N_angle` is not a parameter, as a SolidCraft pattern direction is not an expression). A chamfered
 corner is simply one more straight side, so it comes over exactly. The rebuilt part must match
 the mesh's volume within 1%, otherwise the mesh is kept. The import report notes how much the
 volume changed because round facets became true circles. Not recognised yet (kept as a mesh, with the
@@ -101,7 +108,7 @@ cargo xtask plugin-test        # runs plugin/meshwright/tests in SolidCraft (set
    output (`scripts/compare-mesh2cad.sh`):
    1. (done) parameter names as mesh2cad writes them (`base_t`, `fillet_r`, `extrude_len`, …),
       and the part kept where it is in the file;
-   2. hole rows, grids and bolt circles as SolidCraft patterns;
+   2. (done) hole rows, grids and bolt circles as SolidCraft patterns;
    3. counterbored and countersunk holes; 4. blind holes; 5. slots; 6. bosses on the top face;
    7. polygonal cut-outs; 8. steps, pockets and shallow recesses; 9. extrusions along X and Y;
    10. boxes with every edge rounded, holes and bosses on side faces; 11. chamfers, drafts

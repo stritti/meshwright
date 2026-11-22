@@ -40,6 +40,7 @@ to features (sketch dimensions) and are driven by an expression.
 | `hole` | `position` (numbers), `at` (three expressions), `direction`, `diameter`, `hole: {"type":"simple"}` | `at` follows parameters; `position` is the pick SolidCraft starts from. |
 | `fillet` | `edge_names`, `edges` (one point per edge), `radius` | See below. |
 | `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions) | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
+| `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
 | `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flat `x,y,z` positions and flat corner indices; `body_names` lists the bodies. |
 
 Fields SolidCraft derives itself and that can be left out: `param_names`, `face_names`,
@@ -83,6 +84,14 @@ and `extrude_0`. Holes and fillet picks are in world coordinates. In `solidcraft
 `hole_2_x = 70` rebuilt without errors or warnings to 20,978.79 mm³, and the L-bracket (in the
 file at (20, 10)) with `extrude_0 = 4`, `extrude_len = 8` and `outline_fillet_r = 4` to
 9,706.85 mm³, both as computed.
+
+A hole pattern is one `hole` feature at the first hole and a `pattern` feature on it. A bolt
+circle's first hole is at `[cx + r * cos(angle), cy + r * sin(angle), top]` as expressions and
+its pattern's origin is `[cx, cy, 0]`. `plate-patterns.stl` (a 2 x 2 grid, a row of three, a
+bolt circle of six round a single bore) imports in `solidcraft-cli 0.45.0` to 55,995.49 mm³ as
+computed; with `hole_grid_1_nx = 3`, `hole_grid_1_pitch_x = 50`, `hole_row_1_n = 4`,
+`hole_circle_1_n = 8`, `hole_circle_1_r = 18` and `hole_circle_1_angle = 0` it rebuilt without
+errors or warnings to 55,566.66 mm³ with five more bores, again as computed.
 
 In a polygon outline the fillet comes before the holes: an inside corner's rounding adds
 material, and a hole drilled before it would drill empty space. `l-inside-hole.stl` (5 mm

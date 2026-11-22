@@ -21,6 +21,7 @@
 pub mod design;
 pub mod import;
 pub mod mesh;
+pub mod patterns;
 pub mod plate;
 pub mod recognize;
 pub mod report;

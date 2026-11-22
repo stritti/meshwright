@@ -96,6 +96,19 @@ pub fn group_holes(holes: &[HoleSpec]) -> Vec<HoleGroup> {
     groups
 }
 
+/// `degrees` rounded to the coarsest of 1°, 0.5°, 0.1°, 0.01° and 0.001° that moves a point at
+/// `reach` mm from the pivot by no more than the tolerance: hole centres are exact to a
+/// micrometre, so an angle measured between them carries noise in its third decimal.
+fn snap_angle(degrees: f64, reach: f64) -> f64 {
+    for step in [1.0, 0.5, 0.1, 0.01, 0.001] {
+        let rounded = (degrees / step).round() * step;
+        if ((rounded - degrees).to_radians() * reach).abs() <= TOLERANCE {
+            return if rounded == 0.0 { 0.0 } else { rounded };
+        }
+    }
+    degrees
+}
+
 fn snap(value: f64) -> f64 {
     let snapped = (value * 1000.0).round() / 1000.0;
     if snapped == 0.0 { 0.0 } else { snapped }
@@ -173,7 +186,7 @@ fn row(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     }
     along.sort_by(f64::total_cmp);
     let pitch = even_step(&along)?;
-    let angle = snap(dir[1].atan2(dir[0]).to_degrees());
+    let angle = snap_angle(dir[1].atan2(dir[0]).to_degrees(), far);
     Some(HoleGroup::Row { n, pitch: snap(pitch), d, x: origin[0], y: origin[1], angle })
 }
 
@@ -203,7 +216,7 @@ fn circle(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     if angle <= -half + 1e-9 {
         angle += 2.0 * half;
     }
-    Some(HoleGroup::Circle { n, d, r: snap(r), cx: snap(centre[0]), cy: snap(centre[1]), angle: snap(angle) })
+    Some(HoleGroup::Circle { n, d, r: snap(r), cx: snap(centre[0]), cy: snap(centre[1]), angle: snap_angle(angle, r) })
 }
 
 #[cfg(test)]

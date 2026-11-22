@@ -9,9 +9,11 @@
 use std::fmt::Write as _;
 
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, Plane, Profiles, fmt_number, polygon_sketch, rectangle_sketch,
+    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, fmt_number, polygon_sketch,
+    rectangle_sketch,
 };
 use crate::mesh::{Mesh, Vec3};
+use crate::patterns::{HoleGroup, group_holes};
 
 /// What recognition found.
 #[derive(Debug, Clone, PartialEq)]
@@ -251,32 +253,140 @@ impl ProfileSpec {
     }
 }
 
-/// Hole positions in world coordinates, for a plate whose corner is at `at`.
+/// The holes, grouped into patterns (see [`crate::patterns`]), each with the parameter prefix
+/// mesh2cad gives it: `hole_<n>`, `hole_row_<n>`, `hole_grid_<n>` or `hole_circle_<n>`, numbered
+/// per kind.
+fn hole_groups(holes: &[HoleSpec]) -> Vec<(String, HoleGroup)> {
+    let mut counts = [0usize; 4];
+    group_holes(holes)
+        .into_iter()
+        .map(|group| {
+            let (slot, kind) = match group {
+                HoleGroup::Single(_) => (0, "hole"),
+                HoleGroup::Row { .. } => (1, "hole_row"),
+                HoleGroup::Grid { .. } => (2, "hole_grid"),
+                HoleGroup::Circle { .. } => (3, "hole_circle"),
+            };
+            counts[slot] += 1;
+            (format!("{kind}_{}", counts[slot]), group)
+        })
+        .collect()
+}
+
+/// The holes' parameters, positions in world coordinates for a plate whose corner is at `at`.
+#[allow(clippy::many_single_char_names)] // x, y, d, r as in the parameter names
 fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3) {
-    for (i, hole) in holes.iter().enumerate() {
-        let n = i + 1;
-        b.param(Param::user(format!("hole_{n}_x"), snap_mm(at[0] + hole.x)))
-            .param(Param::user(format!("hole_{n}_y"), snap_mm(at[1] + hole.y)))
-            .param(Param::user(format!("hole_{n}_d"), hole.d));
+    let (ax, ay) = (at[0], at[1]);
+    for (p, group) in hole_groups(holes) {
+        match group {
+            HoleGroup::Single(h) => {
+                b.param(Param::user(format!("{p}_x"), snap_mm(ax + h.x)))
+                    .param(Param::user(format!("{p}_y"), snap_mm(ay + h.y)))
+                    .param(Param::user(format!("{p}_d"), h.d));
+            }
+            HoleGroup::Row { n, pitch, d, x, y, .. } => {
+                b.param(Param::count(format!("{p}_n"), n))
+                    .param(Param::user(format!("{p}_pitch"), pitch))
+                    .param(Param::user(format!("{p}_d"), d))
+                    .param(Param::user(format!("{p}_x"), snap_mm(ax + x)))
+                    .param(Param::user(format!("{p}_y"), snap_mm(ay + y)));
+            }
+            HoleGroup::Grid { nx, ny, pitch_x, pitch_y, d, x, y } => {
+                b.param(Param::count(format!("{p}_nx"), nx))
+                    .param(Param::count(format!("{p}_ny"), ny))
+                    .param(Param::user(format!("{p}_pitch_x"), pitch_x))
+                    .param(Param::user(format!("{p}_pitch_y"), pitch_y))
+                    .param(Param::user(format!("{p}_d"), d))
+                    .param(Param::user(format!("{p}_x"), snap_mm(ax + x)))
+                    .param(Param::user(format!("{p}_y"), snap_mm(ay + y)));
+            }
+            HoleGroup::Circle { n, d, r, cx, cy, angle } => {
+                b.param(Param::count(format!("{p}_n"), n))
+                    .param(Param::user(format!("{p}_d"), d))
+                    .param(Param::user(format!("{p}_r"), r))
+                    .param(Param::user(format!("{p}_cx"), snap_mm(ax + cx)))
+                    .param(Param::user(format!("{p}_cy"), snap_mm(ay + cy)))
+                    .param(Param::angle(format!("{p}_angle"), angle));
+            }
+        }
     }
 }
 
-/// A through hole per hole, drilled down from the top face at height `top` (its expression)
-/// of a plate `z` thick whose corner is at `at`.
+/// A through hole per hole, or per pattern a hole and a pattern feature that repeats it, drilled
+/// down from the top face at height `top` (its expression) of a plate `z` thick whose corner is
+/// at `at`.
+#[allow(clippy::many_single_char_names)] // x, y, d, r as in the parameter names
 fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str, z: f64) {
-    for (i, hole) in holes.iter().enumerate() {
-        let n = i + 1;
+    let top_z = at[2] + z;
+    let hole = |b: &mut DesignBuilder, name: String, position: [f64; 2], x: String, y: String, d: String| {
         b.feature(
-            format!("Hole{n}"),
+            name,
             vec![],
             FeatureKind::Hole {
-                position: [at[0] + hole.x, at[1] + hole.y, at[2] + z],
-                at: [format!("hole_{n}_x"), format!("hole_{n}_y"), top.into()],
+                position: [position[0], position[1], top_z],
+                at: [x, y, top.into()],
                 direction: [0.0, 0.0, -1.0],
-                diameter: format!("hole_{n}_d"),
+                diameter: d,
                 hole: HoleKind::Simple,
             },
-        );
+        )
+    };
+    let (mut singles, mut rows, mut grids, mut circles) = (0, 0, 0, 0);
+    for (p, group) in hole_groups(holes) {
+        let (x, y, d) = (format!("{p}_x"), format!("{p}_y"), format!("{p}_d"));
+        match group {
+            HoleGroup::Single(h) => {
+                singles += 1;
+                hole(b, format!("Hole{singles}"), [at[0] + h.x, at[1] + h.y], x, y, d);
+            }
+            HoleGroup::Row { x: hx, y: hy, angle, .. } => {
+                rows += 1;
+                let seed = hole(b, format!("HoleRow{rows}"), [at[0] + hx, at[1] + hy], x, y, d);
+                let (sin, cos) = angle.to_radians().sin_cos();
+                let pattern = PatternKind::Rectangular {
+                    dir1: [cos, sin, 0.0],
+                    count1: format!("{p}_n"),
+                    spacing1: format!("{p}_pitch"),
+                    dir2: None,
+                    count2: None,
+                    spacing2: None,
+                };
+                b.feature(format!("HoleRow{rows}Pattern"), vec![], FeatureKind::Pattern { features: vec![seed], pattern });
+            }
+            HoleGroup::Grid { x: hx, y: hy, .. } => {
+                grids += 1;
+                let seed = hole(b, format!("HoleGrid{grids}"), [at[0] + hx, at[1] + hy], x, y, d);
+                let pattern = PatternKind::Rectangular {
+                    dir1: [1.0, 0.0, 0.0],
+                    count1: format!("{p}_nx"),
+                    spacing1: format!("{p}_pitch_x"),
+                    dir2: Some([0.0, 1.0, 0.0]),
+                    count2: Some(format!("{p}_ny")),
+                    spacing2: Some(format!("{p}_pitch_y")),
+                };
+                b.feature(format!("HoleGrid{grids}Pattern"), vec![], FeatureKind::Pattern { features: vec![seed], pattern });
+            }
+            HoleGroup::Circle { r, cx, cy, angle, .. } => {
+                circles += 1;
+                let (sin, cos) = angle.to_radians().sin_cos();
+                let position = [at[0] + cx + r * cos, at[1] + cy + r * sin];
+                let seed = hole(
+                    b,
+                    format!("HoleCircle{circles}"),
+                    position,
+                    format!("{p}_cx + {p}_r * cos({p}_angle)"),
+                    format!("{p}_cy + {p}_r * sin({p}_angle)"),
+                    d,
+                );
+                let pattern = PatternKind::Circular {
+                    origin: [format!("{p}_cx"), format!("{p}_cy"), "0".into()],
+                    axis: [0.0, 0.0, 1.0],
+                    count: format!("{p}_n"),
+                    angle: "360 deg".into(),
+                };
+                b.feature(format!("HoleCircle{circles}Pattern"), vec![], FeatureKind::Pattern { features: vec![seed], pattern });
+            }
+        }
     }
 }
 
