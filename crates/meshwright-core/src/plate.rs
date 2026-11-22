@@ -89,8 +89,9 @@ struct Faces {
     caps: Vec<[Vec3; 3]>,
     /// The bottom corners of the walls.
     rim: Vec<P2>,
-    /// The wall facets' edges that do not run along the top face.
-    chords: Vec<(P2, P2)>,
+    /// The wall facets' edges that do not run along the top face, seen from above, with each
+    /// edge's middle.
+    chords: Vec<(P2, P2, Vec3)>,
 }
 
 /// A hole whose mouth is wider than its bore, at the top or the bottom face, in coordinates
@@ -126,6 +127,11 @@ impl Stepped {
         let r = distance(p, self.centre);
         (r - radius).abs() <= tol
             || (r < radius && r >= radius - sagitta(wall, radius) - tol && segments(wall).any(|(a, b)| segment_distance(p, a, b) <= tol))
+    }
+
+    /// How far the longer facets of the bore's and the mouth's loops come inside their circles.
+    fn sagitta(&self) -> f64 {
+        sagitta(&self.bore, self.bore_r).max(sagitta(&self.mouth, self.head_r))
     }
 
     /// Whether `p` lies on the hole's surface: its bore, its counterbore's wall or floor, or its
@@ -307,10 +313,13 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p)) {
         return Err(NOT_FLAT.into());
     }
-    let reaches_step = |p: P2| stepped.iter().any(|s| s.reaches(p, tol));
-    if faces.rim.iter().any(|p| !walls.holds(*p) && !in_step([p[0], p[1], 0.0]))
-        || faces.chords.iter().any(|&(a, b)| (!reaches_step(a) || !reaches_step(b)) && !walls.holds_chord(a, b))
-    {
+    // A wall facet's edge in a stepped hole's mouth must follow the hole's surface too: its
+    // middle within the sagitta of a chord two facets long, or the facet cuts across the bore.
+    let follows = |&(a, b, middle): &(P2, P2, Vec3)| match stepped.iter().find(|s| s.reaches(a, tol) && s.reaches(b, tol)) {
+        Some(s) => s.holds(middle, tol + 4.0 * s.sagitta()),
+        None => walls.holds_chord(a, b),
+    };
+    if faces.rim.iter().any(|p| !walls.holds(*p) && !in_step([p[0], p[1], 0.0])) || !faces.chords.iter().all(follows) {
         return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
     }
 
@@ -365,7 +374,8 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
             let on_top = |v: Vec3| (v[2] - top_z).abs() <= tol;
             let (a, b) = (flat(&p), flat(&q));
             if !(on_top(p) && on_top(q)) && distance(a, b) > tol {
-                chords.push(if a < b { (a, b) } else { (b, a) });
+                let middle = relative(&[f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])]);
+                chords.push(if a < b { (a, b, middle) } else { (b, a, middle) });
             }
         }
     };
@@ -421,7 +431,12 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
     between.sort_by(|p, q| p[0].total_cmp(&q[0]).then(p[1].total_cmp(&q[1])).then(p[2].total_cmp(&q[2])));
     between.dedup();
     chords.sort_by(|p, q| {
-        p.0[0].total_cmp(&q.0[0]).then(p.0[1].total_cmp(&q.0[1])).then(p.1[0].total_cmp(&q.1[0])).then(p.1[1].total_cmp(&q.1[1]))
+        p.0[0]
+            .total_cmp(&q.0[0])
+            .then(p.0[1].total_cmp(&q.0[1]))
+            .then(p.1[0].total_cmp(&q.1[0]))
+            .then(p.1[1].total_cmp(&q.1[1]))
+            .then(p.2[2].total_cmp(&q.2[2]))
     });
     chords.dedup();
     Ok(Faces { top, bottom, between, caps, rim, chords })
@@ -889,8 +904,27 @@ fn intersect(a: P2, b: P2, c: P2, d: P2) -> Option<P2> {
     Some([a[0] + t * u[0], a[1] + t * u[1]])
 }
 
-/// Fits a circle to a hole's corners and checks that they all lie on it.
+/// Fits a circle to a hole's corners and checks that they all lie on it. A corner off the circle
+/// that lies on the straight line between its neighbours (an exporter split a rim edge there) is
+/// left out, and the circle fitted again.
 fn round_hole(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
+    let first = round_ring(ring, tol);
+    let Some((centre, r)) = fit_circle(ring) else { return first };
+    if first.is_ok() {
+        return first;
+    }
+    let n = ring.len();
+    let kept: Vec<P2> = (0..n)
+        .filter(|&i| {
+            let p = ring[i];
+            (distance(p, centre) - r).abs() <= tol || segment_distance(p, ring[(i + n - 1) % n], ring[(i + 1) % n]) > tol / 4.0
+        })
+        .map(|i| ring[i])
+        .collect();
+    if kept.len() == n { first } else { round_ring(&kept, tol) }
+}
+
+fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
     if ring.len() < MIN_HOLE_SEGMENTS {
         return Err(format!(
             "a cut-out has only {} corners, so it is taken for a polygon, not a round hole (polygonal cut-outs are not recognised yet)",
@@ -1589,10 +1623,16 @@ mod tests {
     /// A closed 60 x 60 x 8 plate with one hole at (30, 30): an Ø`bore` bore and an
     /// Ø`head` x `depth` counterbore from the top, each a polygon of `n` corners. With `split`,
     /// the first facet pair of the bore's and of the counterbore's wall is split where the two
-    /// meet, as an exporter refining a mesh would: the new corner lies on the chord.
-    fn counterbored(bore: f64, head: f64, depth: f64, n: usize, split: bool) -> Mesh {
+    /// meet, as an exporter refining a mesh would: the new corner lies on the chord. `twist` turns
+    /// the bore's upper rim (at the floor) by that angle about the hole's axis.
+    fn counterbored(bore: f64, head: f64, depth: f64, n: usize, split: bool, twist: f64) -> Mesh {
         let ring = |d: f64| synth::rings(&[HoleSpec { x: 30.0, y: 30.0, d, head: None }], n).remove(0);
         let (bore_ring, head_ring) = (ring(bore), ring(head));
+        let (sin, cos) = twist.sin_cos();
+        let turned: Vec<P2> = bore_ring
+            .iter()
+            .map(|p| [30.0 + (p[0] - 30.0) * cos - (p[1] - 30.0) * sin, 30.0 + (p[0] - 30.0) * sin + (p[1] - 30.0) * cos])
+            .collect();
         let (z, floor) = (8.0, 8.0 - depth);
         let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 60.0], [0.0, 60.0]];
         let at = |p: P2, h: f64| [p[0], p[1], h];
@@ -1603,29 +1643,26 @@ mod tests {
         for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&bore_ring)) {
             triangles.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
         }
-        for [a, b, c] in synth::triangulate(&head_ring, std::slice::from_ref(&bore_ring)) {
+        for [a, b, c] in synth::triangulate(&head_ring, std::slice::from_ref(&turned)) {
             triangles.push([at(a, floor), at(b, floor), at(c, floor)]);
         }
-        let mut wall = |ring: &[P2], lo: f64, hi: f64, split: bool| {
-            for i in 0..ring.len() {
-                let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+        // A wall from `lower` up to `upper`, two loops of corners that match one for one.
+        let mut wall = |lower: &[P2], upper: &[P2], lo: f64, hi: f64, split: bool| {
+            let n = lower.len();
+            for i in 0..n {
+                let (a, b, c, d) = (at(lower[i], lo), at(lower[(i + 1) % n], lo), at(upper[(i + 1) % n], hi), at(upper[i], hi));
                 if split && i == 0 {
-                    let m = [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), f64::midpoint(lo, hi)];
-                    triangles.extend([
-                        [at(a, lo), at(b, lo), m],
-                        [m, at(b, lo), at(b, hi)],
-                        [at(a, lo), m, at(a, hi)],
-                        [m, at(b, hi), at(a, hi)],
-                    ]);
+                    let m = [f64::midpoint(a[0], c[0]), f64::midpoint(a[1], c[1]), f64::midpoint(lo, hi)];
+                    triangles.extend([[a, b, m], [m, b, c], [a, m, d], [m, c, d]]);
                 } else {
-                    triangles.extend([[at(a, lo), at(b, lo), at(b, hi)], [at(a, lo), at(b, hi), at(a, hi)]]);
+                    triangles.extend([[a, b, c], [a, c, d]]);
                 }
             }
         };
-        wall(&outline, 0.0, z, false);
+        wall(&outline, &outline, 0.0, z, false);
         let reversed = |r: &[P2]| r.iter().rev().copied().collect::<Vec<P2>>();
-        wall(&reversed(&bore_ring), 0.0, floor, split);
-        wall(&reversed(&head_ring), floor, z, split);
+        wall(&reversed(&bore_ring), &reversed(&turned), 0.0, floor, split);
+        wall(&reversed(&head_ring), &reversed(&head_ring), floor, z, split);
         Mesh::new(triangles)
     }
 
@@ -1640,7 +1677,7 @@ mod tests {
     #[test]
     fn narrow_counterbores_over_coarse_bores() {
         assert_eq!(
-            counterbore_of(&counterbored(10.0, 10.2, 3.0, 16, false)),
+            counterbore_of(&counterbored(10.0, 10.2, 3.0, 16, false, 0.0)),
             Some(HoleHead::Counterbore { d: 10.2, depth: 3.0, bottom: false })
         );
     }
@@ -1650,10 +1687,52 @@ mod tests {
     #[test]
     fn subdivided_walls_of_counterbored_holes() {
         let expected = Some(HoleHead::Counterbore { d: 11.0, depth: 3.0, bottom: false });
-        assert_eq!(counterbore_of(&counterbored(10.0, 11.0, 3.0, 16, false)), expected);
-        let split = counterbored(10.0, 11.0, 3.0, 16, true);
-        assert!((split.volume() - counterbored(10.0, 11.0, 3.0, 16, false).volume()).abs() < 1e-9);
+        assert_eq!(counterbore_of(&counterbored(10.0, 11.0, 3.0, 16, false, 0.0)), expected);
+        let split = counterbored(10.0, 11.0, 3.0, 16, true, 0.0);
+        assert!((split.volume() - counterbored(10.0, 11.0, 3.0, 16, false, 0.0).volume()).abs() < 1e-9);
         assert_eq!(counterbore_of(&split), expected);
+    }
+
+    /// A counterbored bore whose upper rim is turned 60° against its lower one before the wall
+    /// joins them narrows in the middle: its facets cut across the bore, although every corner
+    /// lies on the bore's circle. Turned half a step it is still a bore, as exporters mesh it.
+    #[test]
+    fn a_twisted_counterbored_bore_is_refused() {
+        let why = reason(&counterbored(5.5, 10.0, 3.0, 32, false, 60_f64.to_radians()));
+        assert!(why.contains("not vertical"), "{why}");
+        let half_step = Some(HoleHead::Counterbore { d: 10.0, depth: 3.0, bottom: false });
+        assert_eq!(counterbore_of(&counterbored(5.5, 10.0, 3.0, 32, false, PI / 32.0)), half_step);
+    }
+
+    /// A rim edge of a hole's bottom loop split in the middle (both facets on it) leaves a corner
+    /// on the edge, inside the circle: the rim stays round.
+    #[test]
+    #[allow(clippy::float_cmp)] // the edge corners are the generator output, bit for bit
+    fn split_hole_rims_stay_round() {
+        let expected =
+            PlateSpec { x: 60.0, y: 60.0, z: 8.0, holes: vec![HoleSpec { x: 30.0, y: 30.0, d: 10.0, head: None }], outline_fillet_r: None };
+        let mut mesh = synth::plate(&expected, 16, [0.0; 3]);
+        let ring = synth::rings(&expected.holes, 16).remove(0);
+        let (p, q) = ([ring[0][0], ring[0][1], 0.0], [ring[1][0], ring[1][1], 0.0]);
+        let m = [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), 0.0];
+        let mut split = 0;
+        mesh.triangles = mesh
+            .triangles
+            .iter()
+            .flat_map(|t| {
+                // The facet's corners from the edge's start round to the edge's end, if it has it.
+                (0..3).find(|&k| (t[k] == p && t[(k + 1) % 3] == q) || (t[k] == q && t[(k + 1) % 3] == p)).map_or_else(
+                    || vec![*t],
+                    |k| {
+                        split += 1;
+                        let (a, b, c) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3]);
+                        vec![[a, m, c], [m, b, c]]
+                    },
+                )
+            })
+            .collect();
+        assert_eq!(split, 2);
+        assert_eq!(found(&mesh).0, expected);
     }
 
     /// An L-bracket exported from SolidCraft 0.45 (`file.export_stl`, standard quality): walls in
