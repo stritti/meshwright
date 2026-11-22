@@ -16,8 +16,26 @@
       "model": false
     },
     {
-      "name": "base_z",
+      "name": "base_t",
       "expr": "6 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "base_cx",
+      "expr": "35 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "base_cy",
+      "expr": "20 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "base_z0",
+      "expr": "0 mm",
       "unit": "mm",
       "model": false
     },
@@ -40,7 +58,7 @@
       "model": false
     },
     {
-      "name": "outline_fillet_r",
+      "name": "fillet_r",
       "expr": "3 mm",
       "unit": "mm",
       "model": false
@@ -211,7 +229,7 @@
         "type": "all"
       },
       "extent": {
-        "distance": "base_z",
+        "distance": "base_t",
         "convention": "total_distance",
         "direction": "positive"
       },
@@ -219,6 +237,20 @@
     },
     {
       "id": 3,
+      "name": "Move1",
+      "suppressed": false,
+      "type": "move",
+      "bodies": [
+        "Body1"
+      ],
+      "translate": [
+        "base_cx - base_x / 2",
+        "base_cy - base_y / 2",
+        "base_z0"
+      ]
+    },
+    {
+      "id": 4,
       "name": "Hole1",
       "suppressed": false,
       "type": "hole",
@@ -230,7 +262,7 @@
       "at": [
         "hole_1_x",
         "hole_1_y",
-        "base_z"
+        "base_z0 + base_t"
       ],
       "direction": [
         0.0,
@@ -243,7 +275,7 @@
       }
     },
     {
-      "id": 4,
+      "id": 5,
       "name": "Fillet1",
       "suppressed": false,
       "type": "fillet",
@@ -275,10 +307,10 @@
           3.0
         ]
       ],
-      "radius": "outline_fillet_r"
+      "radius": "fillet_r"
     }
   ],
-  "next_id": 5,
+  "next_id": 6,
   "reserved_body_names": [
     "Body1"
   ],

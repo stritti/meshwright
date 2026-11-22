@@ -2,7 +2,7 @@
   "entry": "stl",
   "file": "l-inside-hole.stl",
   "expect": {
-    "reply": {"bodies": 1, "features": 4, "loss_report": {"summary": "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 5 mm rounded corners"}},
+    "reply": {"bodies": 1, "features": 5, "loss_report": {"summary": "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 5 mm rounded corners"}},
     "model": {"body_count": 1, "total": {"volume_mm3": 6267.070763}},
     "tolerance": 1e-4
   }

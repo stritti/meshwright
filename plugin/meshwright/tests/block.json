@@ -2,7 +2,7 @@
   "entry": "stl",
   "file": "block-60x40x6.stl",
   "expect": {
-    "reply": {"bodies": 1, "features": 2, "loss_report": {"summary": "A 60 x 40 x 6 mm plate", "items": []}},
+    "reply": {"bodies": 1, "features": 3, "loss_report": {"summary": "A 60 x 40 x 6 mm plate", "items": []}},
     "model": {"body_count": 1, "total": {"volume_mm3": 14400}}
   }
 }

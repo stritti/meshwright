@@ -64,14 +64,28 @@ pub struct HoleSpec {
 }
 
 impl PlateSpec {
-    /// The plate as a parametric history: parameters `base_x`, `base_y`, `base_z`,
-    /// `hole_<n>_x/_y/_d` and `outline_fillet_r` (the names mesh2cad gives them), a sketch,
-    /// an extrusion, a hole per hole and a fillet of the corners.
+    /// The plate as a parametric history, its corner at the origin; see [`PlateSpec::to_design_at`].
     #[must_use]
     pub fn to_design(&self, name: &str) -> Design {
+        self.to_design_at(name, [0.0; 3])
+    }
+
+    /// The plate as a parametric history with its lowest corner at `at`, as mesh2cad writes it:
+    /// parameters `base_x`, `base_y`, `base_t`, the centre `base_cx`, `base_cy` and the bottom
+    /// `base_z0`, `hole_<n>_x/_y/_d` (in world coordinates) and `fillet_r`; a sketch and an
+    /// extrusion at the origin, a move to where the plate is, a hole per hole and a fillet of the
+    /// four vertical corners.
+    #[must_use]
+    pub fn to_design_at(&self, name: &str, at: Vec3) -> Design {
         let mut b = DesignBuilder::new(name);
-        b.param(Param::user("base_x", self.x)).param(Param::user("base_y", self.y)).param(Param::user("base_z", self.z));
-        hole_params(&mut b, &self.holes, self.outline_fillet_r);
+        b.param(Param::user("base_x", self.x)).param(Param::user("base_y", self.y)).param(Param::user("base_t", self.z));
+        b.param(Param::user("base_cx", snap_mm(at[0] + self.x / 2.0)))
+            .param(Param::user("base_cy", snap_mm(at[1] + self.y / 2.0)))
+            .param(Param::user("base_z0", snap_mm(at[2])));
+        hole_params(&mut b, &self.holes, at);
+        if let Some(r) = self.outline_fillet_r {
+            b.param(Param::user("fillet_r", r));
+        }
         b.param(Param::model("d1", "base_x")).param(Param::model("d2", "base_y"));
 
         let sketch = b.feature(
@@ -82,19 +96,28 @@ impl PlateSpec {
         let extrude = b.feature(
             "Extrude1",
             vec!["Body1".into()],
-            FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::positive("base_z"), operation: Operation::NewBody },
+            FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::positive("base_t"), operation: Operation::NewBody },
         );
-        hole_features(&mut b, &self.holes, self.z);
+        b.feature(
+            "Move1",
+            vec![],
+            FeatureKind::Move {
+                bodies: vec!["Body1".into()],
+                translate: ["base_cx - base_x / 2".into(), "base_cy - base_y / 2".into(), "base_z0".into()],
+            },
+        );
+        hole_features(&mut b, &self.holes, at, "base_z0 + base_t", self.z);
         if self.outline_fillet_r.is_some() {
-            let mid = self.z / 2.0;
+            let mid = at[2] + self.z / 2.0;
             let side = |a: u32, b: u32| format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}");
+            let (x0, y0, x1, y1) = (at[0], at[1], at[0] + self.x, at[1] + self.y);
             b.feature(
                 "Fillet1",
                 vec![],
                 FeatureKind::Fillet {
                     edge_names: vec![side(1, 4), side(1, 2), side(2, 3), side(3, 4)],
-                    edges: vec![[0.0, 0.0, mid], [self.x, 0.0, mid], [self.x, self.y, mid], [0.0, self.y, mid]],
-                    radius: "outline_fillet_r".into(),
+                    edges: vec![[x0, y0, mid], [x1, y0, mid], [x1, y1, mid], [x0, y1, mid]],
+                    radius: "fillet_r".into(),
                 },
             );
         }
@@ -133,15 +156,28 @@ pub struct ProfileSpec {
 }
 
 impl ProfileSpec {
-    /// The plate as a parametric history: parameters `base_z`, `hole_<n>_x/_y/_d` and
-    /// `outline_fillet_r`, a sketch of the outline (see [`polygon_sketch`]), an extrusion, a
-    /// fillet of every vertical corner and a hole per hole. The fillet comes before the holes:
-    /// an inside corner's rounding adds material, and a hole may lie in it.
+    /// The plate as a parametric history, its bounding box's corner at the origin; see
+    /// [`ProfileSpec::to_design_at`].
     #[must_use]
     pub fn to_design(&self, name: &str) -> Design {
+        self.to_design_at(name, [0.0; 3])
+    }
+
+    /// The plate as a parametric history with its bounding box's lowest corner at `at`, as
+    /// mesh2cad writes an extruded outline: parameters `extrude_len` (the thickness),
+    /// `extrude_0` (where it starts along Z), `hole_<n>_x/_y/_d` (in world coordinates) and
+    /// `outline_fillet_r`; a sketch of the outline (see [`polygon_sketch`]), an extrusion, a move
+    /// to where the plate is, a fillet of every vertical corner and a hole per hole. The fillet
+    /// comes before the holes: an inside corner's rounding adds material, and a hole may lie in
+    /// it.
+    #[must_use]
+    pub fn to_design_at(&self, name: &str, at: Vec3) -> Design {
         let mut b = DesignBuilder::new(name);
-        b.param(Param::user("base_z", self.z));
-        hole_params(&mut b, &self.holes, self.outline_fillet_r);
+        b.param(Param::user("extrude_len", self.z)).param(Param::user("extrude_0", snap_mm(at[2])));
+        hole_params(&mut b, &self.holes, at);
+        if let Some(r) = self.outline_fillet_r {
+            b.param(Param::user("outline_fillet_r", r));
+        }
         let sketch = b.feature(
             "Sketch1",
             vec![],
@@ -150,7 +186,17 @@ impl ProfileSpec {
         let extrude = b.feature(
             "Extrude1",
             vec!["Body1".into()],
-            FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::positive("base_z"), operation: Operation::NewBody },
+            FeatureKind::Extrude {
+                sketch,
+                profiles: Profiles::All,
+                extent: Extent::positive("extrude_len"),
+                operation: Operation::NewBody,
+            },
+        );
+        b.feature(
+            "Move1",
+            vec![],
+            FeatureKind::Move { bodies: vec!["Body1".into()], translate: [fmt_number(at[0]), fmt_number(at[1]), "extrude_0".into()] },
         );
         if self.outline_fillet_r.is_some() {
             let n = self.corners.len();
@@ -162,10 +208,10 @@ impl ProfileSpec {
                     format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}")
                 })
                 .collect();
-            let edges = self.corners.iter().map(|c| [c[0], c[1], self.z / 2.0]).collect();
+            let edges = self.corners.iter().map(|c| [at[0] + c[0], at[1] + c[1], at[2] + self.z / 2.0]).collect();
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
         }
-        hole_features(&mut b, &self.holes, self.z);
+        hole_features(&mut b, &self.holes, at, "extrude_0 + extrude_len", self.z);
         b.build()
     }
 
@@ -205,33 +251,40 @@ impl ProfileSpec {
     }
 }
 
-fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], fillet_r: Option<f64>) {
+/// Hole positions in world coordinates, for a plate whose corner is at `at`.
+fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3) {
     for (i, hole) in holes.iter().enumerate() {
         let n = i + 1;
-        b.param(Param::user(format!("hole_{n}_x"), hole.x))
-            .param(Param::user(format!("hole_{n}_y"), hole.y))
+        b.param(Param::user(format!("hole_{n}_x"), snap_mm(at[0] + hole.x)))
+            .param(Param::user(format!("hole_{n}_y"), snap_mm(at[1] + hole.y)))
             .param(Param::user(format!("hole_{n}_d"), hole.d));
-    }
-    if let Some(r) = fillet_r {
-        b.param(Param::user("outline_fillet_r", r));
     }
 }
 
-fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], z: f64) {
+/// A through hole per hole, drilled down from the top face at height `top` (its expression)
+/// of a plate `z` thick whose corner is at `at`.
+fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str, z: f64) {
     for (i, hole) in holes.iter().enumerate() {
         let n = i + 1;
         b.feature(
             format!("Hole{n}"),
             vec![],
             FeatureKind::Hole {
-                position: [hole.x, hole.y, z],
-                at: [format!("hole_{n}_x"), format!("hole_{n}_y"), "base_z".into()],
+                position: [at[0] + hole.x, at[1] + hole.y, at[2] + z],
+                at: [format!("hole_{n}_x"), format!("hole_{n}_y"), top.into()],
                 direction: [0.0, 0.0, -1.0],
                 diameter: format!("hole_{n}_d"),
                 hole: HoleKind::Simple,
             },
         );
     }
+}
+
+/// A coordinate rounded to micrometres, as recognised sizes are: a sum of an offset and a size
+/// must not show float noise in the parameter panel.
+fn snap_mm(value: f64) -> f64 {
+    let snapped = (value * 1000.0).round() / 1000.0;
+    if snapped == 0.0 { 0.0 } else { snapped }
 }
 
 /// "A 70 x 40 x 6 mm plate with a 6-sided outline, 2 holes and 3 mm rounded corners".
@@ -330,7 +383,7 @@ mod tests {
         assert_eq!(spec.describe(), "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 2 mm rounded corners");
         let names = |d: &Design| -> Vec<String> {
             let json: serde_json::Value = serde_json::from_str(&d.to_json()).expect("valid");
-            json["features"][2]["edge_names"].as_array().expect("names").iter().filter_map(|n| n.as_str().map(String::from)).collect()
+            json["features"][3]["edge_names"].as_array().expect("names").iter().filter_map(|n| n.as_str().map(String::from)).collect()
         };
         let mut no_hole = spec.clone();
         no_hole.holes.clear();
@@ -363,7 +416,7 @@ mod tests {
         };
         let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
         let types: Vec<&str> = json["features"].as_array().expect("features").iter().filter_map(|f| f["type"].as_str()).collect();
-        assert_eq!(types, ["sketch", "extrude", "fillet", "hole"]);
+        assert_eq!(types, ["sketch", "extrude", "move", "fillet", "hole"]);
     }
 
     #[test]
