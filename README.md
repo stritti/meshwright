@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/stritti/meshwright/actions/workflows/ci.yml/badge.svg)](https://github.com/stritti/meshwright/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-stritti.github.io%2Fmeshwright-3e7bd6.svg)](https://stritti.github.io/meshwright/)
 
 **Open STL files in [SolidCraft](https://github.com/tangency-labs/solidcraft) as editable designs.**
 
@@ -75,6 +76,7 @@ steps, pockets, bosses, blind holes, and parts standing upright or rotated.
 | [`xtask`](xtask) | Builds the component and the installable zip, and runs SolidCraft's plugin tests. |
 | [`plugin/meshwright`](plugin/meshwright) | The plugin package: `plugin.json` and the test cases SolidCraft runs. |
 
+The documentation is published at <https://stritti.github.io/meshwright/>.
 More in [docs/architecture.md](docs/architecture.md), for the document format the importer
 writes in [docs/design-format.md](docs/design-format.md), and for comparing a recogniser with
 mesh2cad in [docs/development.md](docs/development.md).

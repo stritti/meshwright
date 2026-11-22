@@ -1,0 +1,23 @@
+# Use
+
+1. On the **Model** ribbon tab, click the label of the **Plugins** group to open the Plugins
+   menu, and choose **meshwright › stl**. SolidCraft's own *File › Open* keeps using its built-in
+   mesh import for `.stl`, so meshwright is reached through the Plugins menu.
+2. The dialog offers **Import as**: `auto` (recognise features, keep the mesh where none are
+   found; the default) or `mesh` (keep the mesh as it is).
+3. Its button chooses the STL file. It opens as a new, unsaved design.
+4. The **Import report** follows: a summary, one line per kind of change, and everything in
+   detail under *Details*. **Plugins › Last import report…** shows it again later.
+
+A recognised part arrives as a timeline (sketch, extrusion, holes, fillet) with its sizes as
+parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. A
+part that is not recognised arrives as a mesh body, and the report says why.
+
+::: tip Try it
+Import
+[`plugin/meshwright/tests/plate-holes.stl`](https://github.com/stritti/meshwright/blob/main/plugin/meshwright/tests/plate-holes.stl)
+from the repository.
+:::
+
+Which parts are recognised, and which parameters they get, is on
+[What auto recognises](/guide/recognition).
