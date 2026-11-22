@@ -23,7 +23,9 @@ crates/
     src/plate.rs       the plate recogniser: prism check, top-face loops, outline and rounded
                        corners, round holes
     src/synth.rs       synthetic meshes of known parts, for tests and STL fixtures
-    src/design.rs      the SolidCraft document model (the subset meshwright writes)
+    src/design/        the SolidCraft document model (the subset meshwright writes):
+                       mod.rs (Design, features, DesignBuilder), sketch.rs (sketches and
+                       their constructors)
     src/report.rs      the loss report SolidCraft shows after an import
     src/import.rs      the whole pipeline, and the import options
     tests/data/        fixtures and golden designs
