@@ -100,10 +100,10 @@ fn plugin_test(root: &Path) -> Result<(), String> {
 fn default_cli() -> String {
     let on_path = Command::new("solidcraft-cli").arg("--version").output().is_ok_and(|o| o.status.success());
     let installed = ["C:\\Program Files\\SolidCraft\\solidcraft-cli.exe", "/mnt/c/Program Files/SolidCraft/solidcraft-cli.exe"];
-    match installed.iter().find(|p| !on_path && Path::new(p).is_file()) {
-        Some(path) => (*path).to_owned(),
-        None => "solidcraft-cli".into(),
+    if on_path {
+        return "solidcraft-cli".into();
     }
+    installed.iter().find_map(|p| Path::new(p).is_file().then(|| (*p).to_owned())).unwrap_or_else(|| "solidcraft-cli".into())
 }
 
 fn manifest(root: &Path) -> Result<serde_json::Value, String> {

@@ -52,16 +52,70 @@ const MAX_FACET_TURN: f64 = 50.0 * PI / 180.0;
 /// Largest turn between facets of a curved side (30°): finer than a twelve-sided outline.
 const MAX_CURVE_TURN: f64 = 30.0 * PI / 180.0;
 
+/// How far a corner may lie from its expected place, relative to the part's size, and at least.
+const REL_TOLERANCE: f64 = 1e-5;
+const MIN_TOLERANCE: f64 = 1e-3;
+
+/// How far the top and bottom faces' areas and the prism volume may differ relatively, for faces
+/// meshed apart.
+const AREA_MATCH_REL: f64 = 1e-4;
+const VOLUME_MATCH_REL: f64 = 1e-3;
+
+/// A facet of a run on one circle may differ from the run's first facet's length by this share.
+const CARRY_LEN_SHARE: f64 = 0.25;
+
+/// A corner whose turn is at least this share of the next corner's continues the run.
+const CARRY_TURN_SHARE: f64 = 0.75;
+
+/// Facets of a curve span at most this ratio of longest to shortest.
+const CURVE_LEN_SPREAD: f64 = 4.0;
+
+/// Facets of a gentle run (a possible curved side) span at most this ratio.
+const GENTLE_LEN_SPREAD: f64 = 3.0;
+
+/// Sine below which two sides count as one straight line when facet corners are merged.
+const COLLINEAR_SIN: f64 = 1e-4;
+
+/// Relative denominator below which two lines count as parallel.
+const PARALLEL_DENOM: f64 = 1e-9;
+
+/// How far the steps round a hole's rim may add up to a full circle.
+const FULL_TURN_TOL: f64 = 1e-6;
+
+/// A facet between the faces counts as a cap when its normal is at least this vertical (60°).
+const CAP_NORMAL_MIN: f64 = 0.5;
+
+/// Cells across the plate when the walls are indexed, and the finest cell in tolerances.
+const WALL_CELLS_ACROSS: f64 = 256.0;
+const WALL_CELL_MIN_TOL: f64 = 4.0;
+
+/// Walls are sampled along themselves this many halves of a cell apart.
+const WALL_SAMPLE_HALVES: f64 = 0.5;
+
+/// The grid that welds boundary corners, in tolerances.
+const WELD_GRID_TOL: f64 = 16.0;
+
+/// A wall edge's middle may lie this many facets' sagittas inside its circle (a two-facet chord).
+const CHORD_FACET_SPAN: f64 = 4.0;
+
+/// A countersink angle rounds to a whole degree when that moves its edge by at most this much.
+const ANGLE_WHOLE_TOL: f64 = 1e-3;
+
+/// The finest angle a countersink keeps, in hundredths of a degree.
+const ANGLE_HUNDREDTHS: f64 = 100.0;
+
 /// How far a corner may lie from where the recogniser expects it, in millimetres, for a part
 /// whose largest size is `scale`. STL coordinates have about seven significant digits.
 fn tolerance(scale: f64) -> f64 {
-    (scale * 1e-5).max(1e-3)
+    (scale * REL_TOLERANCE).max(MIN_TOLERANCE)
 }
 
 type P2 = [f64; 2];
 
 const NOT_FLAT: &str = "it is not a flat plate: some corners lie between its top and bottom faces \
                         (steps, pockets and bosses are not recognised yet)";
+
+const NOT_CLOSED: &str = "the mesh is not closed, or its top and bottom faces differ";
 
 /// A hole's rounded parameters, its circle as fitted, and the index of its loop.
 type FittedHole = (HoleSpec, (P2, f64), usize);
@@ -325,7 +379,8 @@ impl Stepped {
             // cone as their chords come inside the circles; a corner an exporter adds within a
             // facet lies there too. Allow chords two facets long, as for the walls' edges.
             let cone = self.head_r - depth * (self.head_r - self.bore_r) / self.depth;
-            let inside = 4.0 * (sagitta(&self.mouth, self.head_r) / self.head_r).max(sagitta(&self.bore, self.bore_r) / self.bore_r);
+            let inside =
+                CHORD_FACET_SPAN * (sagitta(&self.mouth, self.head_r) / self.head_r).max(sagitta(&self.bore, self.bore_r) / self.bore_r);
             r <= cone + tol && r >= cone * (1.0 - inside) - tol
         }
     }
@@ -364,7 +419,11 @@ impl Stepped {
             // A whole degree when that moves the cone's edge by no more than a micrometre, else
             // a hundredth of one.
             let whole = angle.round();
-            let angle = if ((whole - angle).to_radians() * self.depth).abs() <= 1e-3 { whole } else { (angle * 100.0).round() / 100.0 };
+            let angle = if ((whole - angle).to_radians() * self.depth).abs() <= ANGLE_WHOLE_TOL {
+                whole
+            } else {
+                (angle * ANGLE_HUNDREDTHS).round() / ANGLE_HUNDREDTHS
+            };
             HoleHead::Countersink { d, angle, bottom }
         }
     }
@@ -525,7 +584,7 @@ fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Option<(Mesh, Ve
                 let (p, q) = (t[i], t[(i + 1) % 3]);
                 [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])]
             };
-            let middle_on = |p: Vec3| between(&p) && b.foot.near_wall(flat(&p), 4.0 * b.foot.sagitta(&b.ring), tol);
+            let middle_on = |p: Vec3| between(&p) && b.foot.near_wall(flat(&p), CHORD_FACET_SPAN * b.foot.sagitta(&b.ring), tol);
             if !t.iter().all(corner_on) || !(0..3).all(|i| middle_on(middle(i))) {
                 return Err(NO_BOSS.into());
             }
@@ -581,8 +640,8 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     let bottom_outline = bottom_loops.iter().find(|l| signed_area(l) > 0.0).ok_or("the bottom face has no outline")?;
     // An exporter may mesh the top and bottom faces apart, with their own corners on round
     // edges: their outlines must match to 0.01%. A draft changes that by far more.
-    if !close(signed_area(outline), signed_area(bottom_outline), 1e-4) {
-        return Err("the mesh is not closed, or its top and bottom faces differ".into());
+    if !close(signed_area(outline), signed_area(bottom_outline), AREA_MATCH_REL) {
+        return Err(NOT_CLOSED.into());
     }
     let (corners, radius) = outline_shape(outline, tol)?;
 
@@ -782,8 +841,8 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     if stepped.is_empty() && blinds.is_empty() {
         let area = |t: &[[P2; 3]]| t.iter().map(|[a, b, c]| signed_area(&[*a, *b, *c])).sum::<f64>();
         let top_area = area(&faces.top);
-        if !close(top_area, area(&faces.bottom), 1e-4) || !close(top_area * size[2], mesh_volume, 1e-3) {
-            return Err("the mesh is not closed, or its top and bottom faces differ".into());
+        if !close(top_area, area(&faces.bottom), AREA_MATCH_REL) || !close(top_area * size[2], mesh_volume, VOLUME_MATCH_REL) {
+            return Err(NOT_CLOSED.into());
         }
     }
     // A facet facing up or down between the faces must belong to a counterbore's floor or a
@@ -808,9 +867,9 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         let mut steps = stepped.iter().filter(|s| s.reaches(a, tol) && s.reaches(b, tol)).peekable();
         let mut blind = blinds.iter().filter(|h| h.reaches(a, tol) && h.reaches(b, tol)).peekable();
         if steps.peek().is_some() {
-            steps.any(|s| s.holds(middle, tol + 4.0 * s.sagitta()))
+            steps.any(|s| s.holds(middle, tol + CHORD_FACET_SPAN * s.sagitta()))
         } else if blind.peek().is_some() {
-            blind.any(|h| h.holds(middle, tol + 4.0 * h.sagitta()))
+            blind.any(|h| h.holds(middle, tol + CHORD_FACET_SPAN * h.sagitta()))
         } else {
             walls.holds_chord(a, b)
         }
@@ -907,7 +966,7 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
             // A face between the top and the bottom that faces up or down is no wall (a wall
             // band's facets lean a little, never this much): the caller allows it only on a
             // counterbore's floor or a countersink's cone.
-            if !sliver && nz.abs() > 0.5 {
+            if !sliver && nz.abs() > CAP_NORMAL_MIN {
                 caps.push(triangle.map(|p| relative(&p)));
                 continue;
             }
@@ -1024,7 +1083,7 @@ impl Walls {
             walls.extend((0..ring.len()).map(|i| Wall::Segment(ring[i], ring[(i + 1) % ring.len()])));
         }
         // About 256 cells across the plate, never finer than a few tolerances.
-        let cell = (size / 256.0).max(4.0 * tol);
+        let cell = (size / WALL_CELLS_ACROSS).max(WALL_CELL_MIN_TOL * tol);
         // Each wall goes into the cells along it, not into every cell of its bounding box (a long
         // diagonal side or a large circle would fill thousands): points on it half a cell apart,
         // each with the cells around it, cover every cell within a tolerance of it.
@@ -1033,11 +1092,11 @@ impl Walls {
             #[allow(clippy::cast_sign_loss)] // counts of half cells along a wall, never negative
             let samples: Vec<P2> = match *wall {
                 Wall::Segment(a, b) => {
-                    let steps = (distance(a, b) / (0.5 * cell)).ceil().max(1.0) as usize;
+                    let steps = (distance(a, b) / (WALL_SAMPLE_HALVES * cell)).ceil().max(1.0) as usize;
                     (0..=steps).map(|s| s as f64 / steps as f64).map(|t| [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]).collect()
                 }
                 Wall::Arc { centre, r, .. } | Wall::Circle(centre, r) => {
-                    let steps = ((2.0 * PI * r) / (0.5 * cell)).ceil().max(8.0) as usize;
+                    let steps = ((2.0 * PI * r) / (WALL_SAMPLE_HALVES * cell)).ceil().max(8.0) as usize;
                     (0..steps)
                         .map(|s| 2.0 * PI * s as f64 / steps as f64)
                         .map(|a| [centre[0] + r * a.cos(), centre[1] + r * a.sin()])
@@ -1125,7 +1184,7 @@ fn segment_distance(p: P2, a: P2, b: P2) -> f64 {
 fn boundary_loops(triangles: &[[P2; 3]], tol: f64) -> Result<Vec<Vec<P2>>, String> {
     // Corners that are the same point in the file can differ in the last bit after the offset
     // was subtracted, so they are welded on a grid well below the tolerance.
-    let grid = tol / 16.0;
+    let grid = tol / WELD_GRID_TOL;
     let mut ids: HashMap<(i64, i64), usize> = HashMap::new();
     let mut points: Vec<P2> = Vec::new();
     let mut id = |p: P2| {
@@ -1208,7 +1267,7 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
     // Facet `j` carries on a run of facets that started with facet `first`: about as long, and
     // turning the same small way as the run's first turn, at corner `first + 1`.
     let carries_on = |first: usize, j: usize| {
-        (len(j) - len(first)).abs() <= 0.25 * len(first) && turn(j).abs() <= MAX_FACET_TURN && turn(j) * turn(first + 1) > 0.0
+        (len(j) - len(first)).abs() <= CARRY_LEN_SHARE * len(first) && turn(j).abs() <= MAX_FACET_TURN && turn(j) * turn(first + 1) > 0.0
     };
 
     // A rounded corner is a run of facets of about equal length that each turn a little the
@@ -1218,7 +1277,7 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
     let mut arcs: Vec<(usize, usize, f64)> = Vec::new(); // first and last facet corner, radius
     let mut i = 0;
     while i + 2 < n {
-        if i > 0 && carries_on(i - 1, i) && turn(i).abs() >= 0.75 * turn(i + 1).abs() {
+        if i > 0 && carries_on(i - 1, i) && turn(i).abs() >= CARRY_TURN_SHARE * turn(i + 1).abs() {
             i += 1;
             continue;
         }
@@ -1275,7 +1334,7 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
             // skipped.
             let (short, long) = (i..end).map(len).fold((f64::INFINITY, 0.0_f64), |(lo, hi), l| (lo.min(l), hi.max(l)));
             i = match fit.circle() {
-                Some((centre, r)) if end > i + 2 && long <= 4.0 * short && on_one_circle((centre, r)) => {
+                Some((centre, r)) if end > i + 2 && long <= CURVE_LEN_SPREAD * short && on_one_circle((centre, r)) => {
                     (i + 1..end).find(|&j| tangent(v[j - 1], v[j], centre, len(j - 1) / (2.0 * r))).unwrap_or(end)
                 }
                 _ => i + 1,
@@ -1296,7 +1355,7 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
             && !on_arc[j - 1]
             && turn(j).abs() <= MAX_CURVE_TURN
             && turn(j) * turn(j - 1) > 0.0
-            && (carries_on(j - 1, j) || len(j) <= 3.0 * len(j - 1) && len(j - 1) <= 3.0 * len(j));
+            && (carries_on(j - 1, j) || len(j) <= GENTLE_LEN_SPREAD * len(j - 1) && len(j - 1) <= GENTLE_LEN_SPREAD * len(j));
         run = if gentle { run + 1 } else { 0 };
         if run >= 3 {
             return Err("the outline has curved sides (only straight sides and rounded corners are recognised so far)".into());
@@ -1395,7 +1454,7 @@ fn merge_collinear(ring: &[P2]) -> Vec<P2> {
             let (a, b, c) = (ring[(i + n - 1) % n], ring[i], ring[(i + 1) % n]);
             let (u, w) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
             let sin = (u[0] * w[1] - u[1] * w[0]) / (u[0].hypot(u[1]) * w[0].hypot(w[1]));
-            !(sin.abs() <= 1e-4 && u[0] * w[0] + u[1] * w[1] > 0.0)
+            !(sin.abs() <= COLLINEAR_SIN && u[0] * w[0] + u[1] * w[1] > 0.0)
         })
         .map(|i| ring[i])
         .collect()
@@ -1419,7 +1478,7 @@ fn tangent(from: P2, at: P2, centre: P2, sin_half: f64) -> bool {
 fn intersect(a: P2, b: P2, c: P2, d: P2) -> Option<P2> {
     let (u, w) = ([b[0] - a[0], b[1] - a[1]], [d[0] - c[0], d[1] - c[1]]);
     let den = u[0] * w[1] - u[1] * w[0];
-    if den.abs() <= 1e-9 * u[0].hypot(u[1]) * w[0].hypot(w[1]) {
+    if den.abs() <= PARALLEL_DENOM * u[0].hypot(u[1]) * w[0].hypot(w[1]) {
         return None;
     }
     let t = ((c[0] - a[0]) * w[1] - (c[1] - a[1]) * w[0]) / den;
@@ -1477,7 +1536,7 @@ fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
     let median = sorted[n / 2];
     // Some exporters (SolidCraft among them) space a rim's corners unevenly, a step up to about
     // twice another; a flat side is several steps long.
-    if (around.abs() - 2.0 * PI).abs() > 1e-6 || steps.iter().any(|s| *s > MAX_HOLE_STEP || *s > MAX_STEP_RATIO * median) {
+    if (around.abs() - 2.0 * PI).abs() > FULL_TURN_TOL || steps.iter().any(|s| *s > MAX_HOLE_STEP || *s > MAX_STEP_RATIO * median) {
         return Err(not_round());
     }
     Ok((HoleSpec { x: snap_mm(cx), y: snap_mm(cy), d: snap_mm(2.0 * r), head: None, blind: None }, ([cx, cy], r)))
