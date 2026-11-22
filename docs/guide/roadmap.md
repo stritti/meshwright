@@ -13,7 +13,7 @@
    4. (done) blind holes
    5. (done) slots
    6. (done) bosses on the top face
-   7. polygonal cut-outs
+   7. (done) polygonal cut-outs
    8. steps, pockets and shallow recesses
    9. extrusions along X and Y
    10. boxes with every edge rounded, holes and bosses on side faces

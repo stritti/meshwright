@@ -44,6 +44,20 @@ to features (sketch dimensions) and are driven by an expression.
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
 | `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flat `x,y,z` positions and flat corner indices; `body_names` lists the bodies. |
 
+## Cut-outs
+
+A cut-out of straight sides is one more closed loop in the outline's sketch (its corners free,
+sides along X or Y held horizontal or vertical). The extrusion then names the outline's profile,
+as SolidCraft saves an extrusion of a sketch with an opening:
+`"profiles": {"type": "curves", "loops": [["l1", "l2", "l3", "l4"]]}`, the profile whose outer
+loop is made of those curves, the loops inside it its holes. With `{"type": "all"}` SolidCraft
+extrudes the cut-out's region too and fills it. `cutouts.stl` (exported by SolidCraft: a
+70 x 40 x 6 plate with a 16 x 20 rectangle and a hexagon 7 mm to its corners cut out, and an Ø5
+hole) imports to 13,998.378 mm³, 0.022 mm³ over what SolidCraft measured, as the hexagon's corners
+are rounded to 0.01 mm; with `extrude_len = 9` and `hole_1_d = 6` it rebuilt without errors to the
+value computed for those rounded corners. A rectangle with cut-outs is written as an outline,
+as mesh2cad writes it (`extrude_len`, `extrude_0`), not as a `base_*` plate.
+
 ## Bosses
 
 A boss is a `cylinder` joined to the plate, standing on the top face's expression
