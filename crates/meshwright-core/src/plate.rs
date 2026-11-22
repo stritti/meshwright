@@ -320,6 +320,12 @@ impl Walls {
     }
 }
 
+/// The distance from `p` to the line through `a` and `b`.
+fn line_distance(p: P2, a: P2, b: P2) -> f64 {
+    let (u, w) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
+    (u[0] * w[1] - u[1] * w[0]).abs() / u[0].hypot(u[1])
+}
+
 /// The distance from `p` to the segment from `a` to `b`.
 fn segment_distance(p: P2, a: P2, b: P2) -> f64 {
     let (u, w) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
@@ -455,8 +461,13 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
             // Each side is held to its own length: a chord of the circle turns from the tangent by
             // half its own angle, a tangent side (however short) by nothing. Measured against a
             // neighbouring facet instead, a shorter facet of the arc itself could pass for a side.
+            // The angle alone allows a long side to miss the circle by more than the tolerance:
+            // the circle must also touch each side's line, its centre `r` from it.
+            let touches = |a: P2, b: P2| (line_distance(centre, a, b) - r).abs() <= tol;
             if tangent(before, v[i], centre, len(i + n - 1) / (2.0 * r))
                 && tangent(v[(end + 1) % n], v[end], centre, len(end) / (2.0 * r))
+                && touches(before, v[i])
+                && touches(v[end], v[(end + 1) % n])
                 && v[i..=end].iter().all(|p| (distance(*p, centre) - r).abs() <= tol)
             {
                 found = Some((end, r));
@@ -1064,6 +1075,23 @@ mod tests {
         assert!(walls.cells.len() < 10_000, "{} cells", walls.cells.len());
         assert!(walls.holds([75.0, 25.0]) && walls.holds([25.0, 75.0]));
         assert!(!walls.holds([50.0, 50.0]) && !walls.holds([75.0, 26.0]));
+    }
+
+    /// Arcs that stop 0.045 radians short of their sides meet them at a kink too small for the
+    /// angle check next to long sides, but their circles miss the sides by about 0.02 mm.
+    #[test]
+    fn arcs_short_of_their_sides_are_no_fillets() {
+        let (x, y, r, gap, facets) = (80.0, 50.0, 20.0, 0.045, 128);
+        let centres = [[x - r, r, -PI / 2.0], [x - r, y - r, 0.0], [r, y - r, PI / 2.0], [r, r, PI]];
+        let mut outline = Vec::new();
+        for [cx, cy, start] in centres {
+            for k in 0..=facets {
+                let a = start + gap + (PI / 2.0 - 2.0 * gap) * f64::from(k) / f64::from(facets);
+                outline.push([cx + r * a.cos(), cy + r * a.sin()]);
+            }
+        }
+        let mesh = synth::prism(&outline, &[], 5.0, [0.0; 3]);
+        reason(&mesh);
     }
 
     /// Small rounds of many facets next to long sides, in single precision.
