@@ -8,3 +8,7 @@
 .idea/
 .vscode/
 *.swp
+# VitePress site in docs/
+/docs/node_modules/
+/docs/.vitepress/dist/
+/docs/.vitepress/cache/
