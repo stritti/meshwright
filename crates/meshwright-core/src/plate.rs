@@ -122,6 +122,9 @@ impl SlotGeometry {
 /// A cut-out's loop that is not round: a straight slot, or the reason it is neither.
 type FittedSlot = (SlotSpec, SlotGeometry, usize);
 
+/// A face's cut-outs: round holes, slots, and polygons (their corners and loop index).
+type Cutouts = (Vec<FittedHole>, Vec<FittedSlot>, Vec<(Vec<P2>, usize)>);
+
 /// What [`split_faces`] sorts a mesh into, in coordinates relative to its lowest corner.
 struct Faces {
     /// The top face's triangles, seen from above.
@@ -502,18 +505,31 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     // Each hole meets the top and the bottom face in a circle about one centre (the circles as
     // fitted; the parameters are rounded). Where the two differ, the wider one is the mouth of a
     // counterbore or a countersink.
-    // A cut-out that is not round may be a straight slot; it must go straight through.
-    let fit = |loops: &[Vec<P2>]| -> Result<(Vec<FittedHole>, Vec<FittedSlot>), String> {
-        let (mut holes, mut slots) = (Vec::new(), Vec::new());
+    // A cut-out that is not round may be a straight slot, or a polygon of straight sides; either
+    // must go straight through.
+    let fit = |loops: &[Vec<P2>]| -> Result<Cutouts, String> {
+        let (mut holes, mut slots, mut polygons) = (Vec::new(), Vec::new(), Vec::new());
         for (k, l) in loops.iter().enumerate().filter(|(_, l)| signed_area(l) < 0.0) {
             match round_hole(l, tol) {
                 Ok((h, c)) => holes.push((h, c, k)),
-                Err(why) => slots.push(slot_shape(l, tol).map(|(spec, geometry)| (spec, geometry, k)).ok_or(why)?),
+                Err(why) => {
+                    if let Some((spec, geometry)) = slot_shape(l, tol) {
+                        slots.push((spec, geometry, k));
+                    } else {
+                        polygons.push((polygon_cutout(l, tol).ok_or(why)?, k));
+                    }
+                }
             }
         }
-        Ok((holes, slots))
+        Ok((holes, slots, polygons))
     };
-    let ((tops, top_slots), (bottoms, bottom_slots)) = (fit(&loops)?, fit(&bottom_loops)?);
+    let ((tops, top_slots, top_cutouts), (bottoms, bottom_slots, bottom_cutouts)) = (fit(&loops)?, fit(&bottom_loops)?);
+    let same_polygon = |a: &[P2], b: &[P2]| a.len() == b.len() && a.iter().all(|p| b.iter().any(|q| distance(*p, *q) <= tol));
+    if top_cutouts.len() != bottom_cutouts.len()
+        || !top_cutouts.iter().all(|(c, _)| bottom_cutouts.iter().any(|(other, _)| same_polygon(c, other)))
+    {
+        return Err("a cut-out does not go straight through (pockets and slanted cut-outs are not recognised yet)".into());
+    }
     let mut circles = Vec::new();
     let mut wall_loops = vec![outline.clone()];
     let mut slots = Vec::new();
@@ -530,6 +546,17 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     }
     // In mesh2cad's order: by Y, then X, angle and width.
     slots.sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)).then(a.angle.total_cmp(&b.angle)).then(a.w.total_cmp(&b.w)));
+    // Cut-outs: their walls stand on their loops; each is written counter-clockwise from its
+    // lowest corner, the leftmost of those.
+    let mut cutouts: Vec<Vec<P2>> = Vec::new();
+    for (corners, k) in top_cutouts {
+        wall_loops.push(loops[k].clone());
+        let mut c: Vec<P2> = corners.iter().rev().map(|p| p.map(snap)).collect();
+        let first = (0..c.len()).min_by(|&a, &b| c[a][1].total_cmp(&c[b][1]).then(c[a][0].total_cmp(&c[b][0])));
+        c.rotate_left(first.unwrap_or(0));
+        cutouts.push(c);
+    }
+    cutouts.sort_by(|a, b| a[0][1].total_cmp(&b[0][1]).then(a[0][0].total_cmp(&b[0][0])));
     let mut holes = Vec::new();
     let mut stepped = Vec::new();
     // A circle on one face only is a blind hole's mouth; its depth is found below.
@@ -661,10 +688,13 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     let offset = bounds.min.map(|c| if c.abs() <= tol { 0.0 } else { snap(c) });
     let (z, outline_fillet_r) = (snap(size[2]), radius.map(snap));
     let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
-    let rectangle =
-        corners.len() == 4 && box_corners.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol));
+    // A rectangle with cut-outs is an outline, as mesh2cad writes it (`extrude_len`, the outline's
+    // corners and each cut-out's).
+    let rectangle = cutouts.is_empty()
+        && corners.len() == 4
+        && box_corners.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol));
     let (found, volume) = if rectangle {
-        let plate = PlateSpec { x: snap(size[0]), y: snap(size[1]), z, holes, bosses: vec![], slots, outline_fillet_r };
+        let plate = PlateSpec { x: snap(size[0]), y: snap(size[1]), z, holes, slots, bosses: vec![], cutouts, outline_fillet_r };
         let volume = plate.volume();
         (Recognition::Plate { plate, offset }, volume)
     } else {
@@ -673,7 +703,7 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
         corners.rotate_left(first.unwrap_or(0));
-        let profile = ProfileSpec { corners, z, holes, bosses: vec![], slots, outline_fillet_r };
+        let profile = ProfileSpec { corners, z, holes, slots, bosses: vec![], cutouts, outline_fillet_r };
         let volume = profile.volume();
         (Recognition::Profile { profile, offset }, volume)
     };
@@ -1320,6 +1350,27 @@ fn slot_shape(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
     })
 }
 
+/// The most corners a polygonal cut-out may have, and the least it must turn at each: a loop of
+/// more and gentler corners is a curve, faceted.
+const MAX_CUTOUT_CORNERS: usize = 24;
+const MIN_CUTOUT_TURN: f64 = 15.0 * PI / 180.0;
+
+/// A cut-out of straight sides: its corners (in the loop's order), without the corners an
+/// exporter may have added along a side, every one a real turn.
+fn polygon_cutout(ring: &[P2], tol: f64) -> Option<Vec<P2>> {
+    let corners = drop_collinear(ring, tol);
+    let n = corners.len();
+    if !(3..=MAX_CUTOUT_CORNERS).contains(&n) {
+        return None;
+    }
+    let turns = (0..n).all(|i| {
+        let (a, b, c) = (corners[(i + n - 1) % n], corners[i], corners[(i + 1) % n]);
+        let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+        (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]).abs() >= MIN_CUTOUT_TURN
+    });
+    turns.then_some(corners)
+}
+
 /// The loop without corners on the straight line between their neighbours (within `tol / 4`),
 /// as an exporter that splits facets adds them.
 fn drop_collinear(ring: &[P2], tol: f64) -> Vec<P2> {
@@ -1486,6 +1537,7 @@ mod tests {
             y: 50.0,
             z: 5.0,
             holes: holes.iter().map(|&(x, y, d)| HoleSpec { x, y, d, head: None, blind: None }).collect(),
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: r,
@@ -1501,6 +1553,7 @@ mod tests {
                 HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None },
                 HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None, blind: None },
             ],
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: r,
@@ -1613,6 +1666,7 @@ mod tests {
             corners: vec![[0.0, 0.0], [50.0, 0.0], [60.0, 20.0], [25.0, 35.0], [0.0, 20.0]],
             z: 4.0,
             holes: vec![HoleSpec { x: 25.0, y: 15.0, d: 8.0, head: None, blind: None }],
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(3.0),
@@ -1627,7 +1681,10 @@ mod tests {
         // One facet per quarter circle is a 45° chamfer: an exact eight-sided outline.
         let (profile, _) = found_profile(&synth::plate(&spec(&[], Some(5.0)), 4, [0.0; 3]));
         let corners = vec![[5.0, 0.0], [75.0, 0.0], [80.0, 5.0], [80.0, 45.0], [75.0, 50.0], [5.0, 50.0], [0.0, 45.0], [0.0, 5.0]];
-        assert_eq!(profile, ProfileSpec { corners, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None });
+        assert_eq!(
+            profile,
+            ProfileSpec { corners, z: 5.0, holes: vec![], cutouts: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None }
+        );
     }
 
     #[test]
@@ -1667,9 +1724,14 @@ mod tests {
         assert!(started.elapsed().as_secs_f64() < 5.0, "took {:?}", started.elapsed());
     }
 
+    /// A hole of six facets is no round hole but a hexagonal cut-out, rebuilt as it is.
     #[test]
     fn hexagonal_cut_out_is_not_a_hole() {
-        assert!(reason(&synth::plate(&spec(&[(40.0, 25.0, 10.0)], None), 6, [0.0; 3])).contains("6 corners"));
+        let (plate, _) = found_profile(&synth::plate(&spec(&[(40.0, 25.0, 10.0)], None), 6, [0.0; 3]));
+        assert_eq!(plate.holes, []);
+        assert_eq!(plate.cutouts.len(), 1);
+        assert_eq!(plate.cutouts[0].len(), 6);
+        assert_eq!(plate.cutouts[0][0], [37.5, 20.67]);
     }
 
     /// Splits every wall facet at the middle of its vertical edge, moved `inward` mm towards
@@ -1753,7 +1815,16 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)] // the same corner, as the generator wrote it into every facet
     fn a_corner_out_of_its_arc_is_no_wall() {
-        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(1.0) };
+        let spec = PlateSpec {
+            x: 80.0,
+            y: 50.0,
+            z: 5.0,
+            holes: vec![],
+            cutouts: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: Some(1.0),
+        };
         let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
         // The band corner nearest the bottom-left arc's middle goes to the sharp corner (0, 0).
         let arc_middle = [1.0 - std::f64::consts::FRAC_1_SQRT_2, 1.0 - std::f64::consts::FRAC_1_SQRT_2, 2.5];
@@ -1824,7 +1895,8 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
     fn a_shifted_bottom_band_is_not_vertical() {
-        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
+        let spec =
+            PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], cutouts: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
         let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
         // Shift the whole bottom 0.5 mm along X: the mesh stays closed, the faces keep their
         // areas and the volume stays that of a prism, so only the walls' bottom corners tell.
@@ -1965,7 +2037,16 @@ mod tests {
     /// Small rounds of many facets next to long sides, in single precision.
     #[test]
     fn small_fine_rounds() {
-        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(0.5) };
+        let expected = PlateSpec {
+            x: 80.0,
+            y: 50.0,
+            z: 5.0,
+            holes: vec![],
+            cutouts: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: Some(0.5),
+        };
         let mesh = crate::stl::parse(&crate::stl::write_binary(&synth::plate(&expected, 96, [0.0; 3]))).expect("round trip");
         assert_eq!(found(&mesh).0, expected);
     }
@@ -1990,7 +2071,16 @@ mod tests {
     /// Extra corners in the middle of the outline's facets (top and bottom alike) change nothing.
     #[test]
     fn subdivided_outline_facets() {
-        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(3.0) };
+        let expected = PlateSpec {
+            x: 80.0,
+            y: 50.0,
+            z: 5.0,
+            holes: vec![],
+            cutouts: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: Some(3.0),
+        };
         let outline = synth::rounded(&[[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]], Some(3.0), 32);
         let mut split = Vec::new();
         for i in 0..outline.len() {
@@ -2028,7 +2118,16 @@ mod tests {
     /// between the arcs, whose far corners lie within the tolerance of the circle.
     #[test]
     fn short_sides_between_large_rounds() {
-        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(24.95) };
+        let expected = PlateSpec {
+            x: 80.0,
+            y: 50.0,
+            z: 5.0,
+            holes: vec![],
+            cutouts: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: Some(24.95),
+        };
         assert_eq!(found(&synth::plate(&expected, 32, [0.0; 3])).0, expected);
     }
 
@@ -2042,6 +2141,20 @@ mod tests {
         let (plate, offset) = found(&reread);
         assert_eq!(offset, [4000.0, 4000.0, 0.0]);
         assert_eq!(plate.holes.len(), 2);
+    }
+
+    /// A 70 x 40 x 6 plate exported from SolidCraft 0.45 with a 16 x 20 rectangular and a
+    /// hexagonal cut-out (7 mm to its corners) and an Ø5 hole.
+    #[test]
+    fn recognises_polygonal_cut_outs() {
+        let mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/cutouts.stl")).expect("parses");
+        let (plate, _) = found_profile(&mesh);
+        assert_eq!(plate.corners, [[0.0, 0.0], [70.0, 0.0], [70.0, 40.0], [0.0, 40.0]]);
+        assert_eq!(plate.cutouts.len(), 2);
+        assert_eq!(plate.cutouts[0], [[8.0, 10.0], [24.0, 10.0], [24.0, 30.0], [8.0, 30.0]]);
+        assert_eq!(plate.cutouts[1].len(), 6);
+        // SolidCraft measured 13,998.356 mm³; the hexagon's corners are rounded to 0.01 mm.
+        assert!((plate.volume() - 13_998.356).abs() < 0.05, "{}", plate.volume());
     }
 
     /// A 70 x 40 x 6 plate exported from SolidCraft 0.45 with an Ø10 x 5 and an Ø8 x 3 boss on
@@ -2205,7 +2318,8 @@ mod tests {
                 cut.push(p);
             }
         }
-        for cutout in [rounded, stadium([40.0, 25.0], 18.0, 7.0, 0.0, 3), ellipse, uneven, cut] {
+        // (A slot with ends of three facets is an octagonal cut-out, see `polygonal_cut_outs`.)
+        for cutout in [rounded, ellipse, uneven, cut] {
             let why = reason(&plate_with_cutout(cutout));
             assert!(why.contains("not round") || why.contains("corners"), "{why}");
         }
@@ -2314,6 +2428,25 @@ mod tests {
             .collect();
         let (plate, _) = found(&plate_with_cutout(split));
         assert_eq!(plate.slots, [SlotSpec { x: 40.0, y: 25.0, len: 18.0, w: 7.0, angle: 0.0 }]);
+    }
+
+    /// Cut-outs of straight sides: a rectangle, a triangle, an L-shape, and a slot whose ends
+    /// are three facets each. A curve of many gentle corners is no polygon.
+    #[test]
+    fn polygonal_cut_outs() {
+        let rectangle = vec![[10.0, 10.0], [25.0, 10.0], [25.0, 30.0], [10.0, 30.0]];
+        let triangle = vec![[40.0, 10.0], [60.0, 12.0], [48.0, 30.0]];
+        let ell = vec![[30.0, 35.0], [50.0, 35.0], [50.0, 40.0], [35.0, 40.0], [35.0, 45.0], [30.0, 45.0]];
+        let outline = [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]];
+        let mesh = synth::prism(&outline, &[rectangle.clone(), triangle.clone(), ell.clone()], 6.0, [0.0; 3]);
+        let (plate, _) = found_profile(&mesh);
+        assert_eq!(plate.cutouts, [rectangle, triangle, ell]);
+        assert!((plate.volume() - mesh.volume()).abs() < 1e-6);
+        let (plate, _) = found_profile(&plate_with_cutout(stadium([40.0, 25.0], 18.0, 7.0, 0.0, 3)));
+        assert_eq!(plate.cutouts[0].len(), 8);
+        let gentle: Vec<P2> =
+            (0..30).map(|i| 2.0 * PI * f64::from(i) / 30.0).map(|a| [40.0 + 12.0 * a.cos(), 25.0 + 6.0 * a.sin()]).collect();
+        reason(&plate_with_cutout(gentle));
     }
 
     /// A slot through the top face that does not reach the bottom face is no through slot.
@@ -2623,6 +2756,7 @@ mod tests {
             y: 60.0,
             z: 8.0,
             holes: vec![HoleSpec { x: 30.0, y: 30.0, d: 10.0, head: None, blind: None }],
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: None,

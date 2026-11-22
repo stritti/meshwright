@@ -512,6 +512,12 @@ fn is_zero(n: &usize) -> bool {
 pub enum Profiles {
     /// Every profile.
     All,
+    /// The profiles whose outer loops are made of these curves (by id), the loops inside them
+    /// their holes.
+    Curves {
+        /// Each profile's outer loop.
+        loops: Vec<Vec<String>>,
+    },
 }
 
 /// How far an extrusion goes.
@@ -715,6 +721,55 @@ pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
     }
     let counters = Counters { a: 0, j: 0, k: constraints.len(), l: n, p: n };
     Sketch { points, curves, constraints, links: vec![], counters }
+}
+
+/// A sketch on the XY plane of closed polygons (each `corners` counter-clockwise or not), drawn as
+/// [`polygon_sketch`] draws its outline: free corners, sides along X or Y held horizontal or
+/// vertical.
+#[must_use]
+pub fn polygons_sketch(polygons: &[Vec<[f64; 2]>]) -> Sketch {
+    let mut sketch = Sketch {
+        points: vec![SketchPoint::new("origin", [0.0, 0.0], true)],
+        curves: vec![],
+        constraints: vec![],
+        links: vec![],
+        counters: Counters { a: 0, j: 0, k: 0, l: 0, p: 0 },
+    };
+    add_polygons(&mut sketch, polygons);
+    sketch
+}
+
+fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>]) {
+    for corners in polygons {
+        let n = corners.len();
+        let first = sketch.points.len();
+        let base_point = sketch.counters.p;
+        let base_line = sketch.counters.l;
+        for (i, c) in corners.iter().enumerate() {
+            sketch.points.push(SketchPoint::new(format!("p{}", base_point + i + 1), *c, false));
+        }
+        for i in 0..n {
+            let line = sketch.curves.len();
+            sketch.curves.push(SketchCurve::Line {
+                id: format!("l{}", base_line + i + 1),
+                a: first + i,
+                b: first + (i + 1) % n,
+                construction: false,
+                link: None,
+            });
+            let (a, b) = (corners[i], corners[(i + 1) % n]);
+            let id = format!("k{}", sketch.counters.k + 1);
+            if (a[1] - b[1]).abs() < 1e-9 {
+                sketch.constraints.push(Constraint::Horizontal { id, l: line });
+                sketch.counters.k += 1;
+            } else if (a[0] - b[0]).abs() < 1e-9 {
+                sketch.constraints.push(Constraint::Vertical { id, l: line });
+                sketch.counters.k += 1;
+            }
+        }
+        sketch.counters.p += n;
+        sketch.counters.l += n;
+    }
 }
 
 /// What drives a slot's sketch: model parameters for the distance between the end centres,

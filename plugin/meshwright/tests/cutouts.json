@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "cutouts.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 6, "loss_report": {"summary": "A 70 x 40 x 6 mm plate with a 4-sided outline, 1 hole and 2 cut-outs"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 13998.378275}},
+    "tolerance": 1e-4
+  }
+}

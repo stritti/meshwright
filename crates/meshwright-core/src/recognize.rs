@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 
 use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions, fmt_number,
-    polygon_sketch, rectangle_sketch, slot_sketch,
+    polygon_sketch, polygons_sketch, rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Mesh, Vec3};
 use crate::patterns::{HoleGroup, group_holes};
@@ -54,6 +54,8 @@ pub struct PlateSpec {
     pub slots: Vec<SlotSpec>,
     /// Round bosses standing on the top face.
     pub bosses: Vec<BossSpec>,
+    /// Openings of straight sides through the plate, each its corners counter-clockwise.
+    pub cutouts: Vec<Vec<[f64; 2]>>,
     /// The radius of the four vertical corner edges, if they are rounded.
     pub outline_fillet_r: Option<f64>,
 }
@@ -217,6 +219,7 @@ impl PlateSpec {
                 translate: ["base_cx - base_x / 2".into(), "base_cy - base_y / 2".into(), "base_z0".into()],
             },
         );
+        cutout_features(&mut b, &self.cutouts, at);
         hole_features(&mut b, &self.holes, at, "base_z0 + base_t", "base_z0", self.z);
         slot_features(&mut b, &self.slots, at);
         boss_features(&mut b, &self.bosses, "base_z0 + base_t");
@@ -240,7 +243,12 @@ impl PlateSpec {
     /// One line describing the plate, for the loss report.
     #[must_use]
     pub fn describe(&self) -> String {
-        describe([self.x, self.y, self.z], None, [self.holes.len(), self.slots.len(), self.bosses.len()], self.outline_fillet_r)
+        describe(
+            [self.x, self.y, self.z],
+            None,
+            [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len()],
+            self.outline_fillet_r,
+        )
     }
 
     /// The volume of the plate this spec describes, in mm³: what SolidCraft measures once it has
@@ -251,7 +259,8 @@ impl PlateSpec {
         let holes: f64 = self.holes.iter().map(|h| h.volume(self.z)).sum();
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
         let bosses: f64 = self.bosses.iter().map(BossSpec::volume).sum();
-        (self.x * self.y - corners - slots) * self.z - holes + bosses
+        let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area(c)).sum();
+        (self.x * self.y - corners - slots - cutouts) * self.z - holes + bosses
     }
 }
 
@@ -269,6 +278,8 @@ pub struct ProfileSpec {
     pub slots: Vec<SlotSpec>,
     /// Round bosses standing on the top face.
     pub bosses: Vec<BossSpec>,
+    /// Openings of straight sides through the plate, each its corners counter-clockwise.
+    pub cutouts: Vec<Vec<[f64; 2]>>,
     /// The radius of every vertical corner edge, inside and outside corners alike, if they are
     /// rounded.
     pub outline_fillet_r: Option<f64>,
@@ -332,6 +343,7 @@ impl ProfileSpec {
             let edges = self.corners.iter().map(|c| [at[0] + c[0], at[1] + c[1], at[2] + self.z / 2.0]).collect();
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
         }
+        cutout_features(&mut b, &self.cutouts, at);
         hole_features(&mut b, &self.holes, at, "extrude_0 + extrude_len", "extrude_0", self.z);
         slot_features(&mut b, &self.slots, at);
         boss_features(&mut b, &self.bosses, "extrude_0 + extrude_len");
@@ -345,7 +357,7 @@ impl ProfileSpec {
         describe(
             [size[0], size[1], self.z],
             Some(self.corners.len()),
-            [self.holes.len(), self.slots.len(), self.bosses.len()],
+            [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len()],
             self.outline_fillet_r,
         )
     }
@@ -377,7 +389,8 @@ impl ProfileSpec {
         let holes: f64 = self.holes.iter().map(|h| h.volume(self.z)).sum();
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
         let bosses: f64 = self.bosses.iter().map(BossSpec::volume).sum();
-        (area - slots) * self.z - holes + bosses
+        let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area(c)).sum();
+        (area - slots - cutouts) * self.z - holes + bosses
     }
 }
 
@@ -426,6 +439,24 @@ fn slot_features(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3) {
             FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::through_all(), operation: Operation::Cut },
         );
     }
+}
+
+/// The cut-outs as one sketch (in world coordinates for a plate whose corner is at `at`) and a
+/// cut through everything both ways from it. It comes after the outline's fillet: a cut-out may
+/// lie in the material an inside corner's rounding adds.
+fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3) {
+    if cutouts.is_empty() {
+        return;
+    }
+    let world: Vec<Vec<[f64; 2]>> =
+        cutouts.iter().map(|c| c.iter().map(|p| [snap_mm(at[0] + p[0]), snap_mm(at[1] + p[1])]).collect()).collect();
+    let sketch =
+        b.feature("CutoutsSketch", vec![], FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: polygons_sketch(&world) });
+    b.feature(
+        "Cutouts",
+        vec![],
+        FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::through_all(), operation: Operation::Cut },
+    );
 }
 
 /// The bosses' parameters, as mesh2cad names them: `boss_<n>_d`, `_h` (above the top face) and
@@ -639,9 +670,15 @@ fn snap_mm(value: f64) -> f64 {
 }
 
 /// "A 70 x 40 x 6 mm plate with a 6-sided outline, 2 holes and 3 mm rounded corners".
-/// `counts` are the holes, the slots and the bosses.
-fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 3], fillet_r: Option<f64>) -> String {
-    let [holes, slots, bosses] = counts;
+/// The area a polygon encloses, either way round.
+fn polygon_area(corners: &[[f64; 2]]) -> f64 {
+    let n = corners.len();
+    ((0..n).map(|i| corners[i][0] * corners[(i + 1) % n][1] - corners[(i + 1) % n][0] * corners[i][1]).sum::<f64>() / 2.0).abs()
+}
+
+/// `counts` are the holes, the slots, the bosses and the cut-outs.
+fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 4], fillet_r: Option<f64>) -> String {
+    let [holes, slots, bosses, cutouts] = counts;
     let [x, y, z] = size.map(fmt_number);
     let mut parts = Vec::new();
     if let Some(n) = sides {
@@ -661,6 +698,11 @@ fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 3], fillet_r: 
         0 => {}
         1 => parts.push("1 boss".to_owned()),
         n => parts.push(format!("{n} bosses")),
+    }
+    match cutouts {
+        0 => {}
+        1 => parts.push("1 cut-out".to_owned()),
+        n => parts.push(format!("{n} cut-outs")),
     }
     if let Some(r) = fillet_r {
         parts.push(format!("{} mm rounded corners", fmt_number(r)));
@@ -710,19 +752,30 @@ mod tests {
     #[test]
     fn recognises_block_on_origin() {
         let found = recognize(&block(60.0, 40.0, 6.0, [0.0; 3]));
-        let plate = PlateSpec { x: 60.0, y: 40.0, z: 6.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
+        let plate =
+            PlateSpec { x: 60.0, y: 40.0, z: 6.0, holes: vec![], cutouts: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
         assert_eq!(found, Recognition::Plate { plate, offset: [0.0; 3] });
     }
 
     #[test]
     fn moves_offset_block_to_the_origin() {
-        let plate = PlateSpec { x: 1.0, y: 1.0, z: 1.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
+        let plate =
+            PlateSpec { x: 1.0, y: 1.0, z: 1.0, holes: vec![], cutouts: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
         assert_eq!(recognize(&block(1.0, 1.0, 1.0, [5.0, 0.0, 0.0])), Recognition::Plate { plate, offset: [5.0, 0.0, 0.0] });
     }
 
     #[test]
     fn describes_plates() {
-        let mut spec = PlateSpec { x: 70.0, y: 40.0, z: 6.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(3.0) };
+        let mut spec = PlateSpec {
+            x: 70.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![],
+            cutouts: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: Some(3.0),
+        };
         assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 3 mm rounded corners");
         spec.holes = vec![HoleSpec { x: 1.0, y: 1.0, d: 1.0, head: None, blind: None }; 2];
         assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 2 holes and 3 mm rounded corners");
@@ -739,6 +792,7 @@ mod tests {
             y: 40.0,
             z: 6.0,
             holes: vec![],
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![slot(15.0, 0.0), slot(40.0, 30.0)],
             outline_fillet_r: None,
@@ -773,6 +827,45 @@ mod tests {
         assert_eq!(spec.describe(), "A 60 x 40 x 6 mm plate with 2 slots");
     }
 
+    /// Cut-outs are one sketch and a cut through everything, after the outline's fillet (a
+    /// cut-out may lie in an inside corner's rounding) and before the holes.
+    #[test]
+    fn cut_outs_are_cut_after_the_fillet() {
+        let spec = PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![],
+            slots: vec![],
+            bosses: vec![],
+            cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
+            outline_fillet_r: None,
+        };
+        let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [5.0, 0.0, 0.0]).to_json()).expect("valid");
+        let features = json["features"].as_array().expect("features");
+        let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
+        assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "CutoutsSketch", "Cutouts"]);
+        let sketch = &features[3]["sketch"];
+        assert_eq!(sketch["curves"].as_array().map(Vec::len), Some(3));
+        assert_eq!(sketch["points"][1]["pos"], serde_json::json!([15.0, 10.0]));
+        assert_eq!((features[4]["operation"].as_str(), &features[4]["extent"]["through_all"]), (Some("cut"), &serde_json::json!(true)));
+        assert!((spec.volume() - (60.0 * 40.0 - 50.0) * 6.0).abs() < 1e-9);
+        assert_eq!(spec.describe(), "A 60 x 40 x 6 mm plate with 1 cut-out");
+        let ell = ProfileSpec {
+            corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+            z: 5.0,
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
+            slots: vec![],
+            bosses: vec![],
+            cutouts: vec![vec![[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]]],
+            outline_fillet_r: Some(5.0),
+        };
+        let json: serde_json::Value = serde_json::from_str(&ell.to_design("").to_json()).expect("valid");
+        let names: Vec<String> =
+            json["features"].as_array().expect("features").iter().filter_map(|f| f["name"].as_str().map(String::from)).collect();
+        assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Fillet1", "CutoutsSketch", "Cutouts", "Hole1"]);
+    }
+
     /// A boss is a cylinder joined to the plate, standing on the top face's expression.
     #[test]
     fn bosses_become_cylinders() {
@@ -782,6 +875,7 @@ mod tests {
             z: 6.0,
             holes: vec![],
             slots: vec![],
+            cutouts: vec![],
             bosses: vec![BossSpec { x: 20.0, y: 15.0, d: 10.0, h: 4.0 }],
             outline_fillet_r: None,
         };
@@ -806,6 +900,7 @@ mod tests {
             y: 40.0,
             z: 6.0,
             holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(3.0),
@@ -819,6 +914,7 @@ mod tests {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
             holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(2.0),
@@ -840,6 +936,7 @@ mod tests {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
             holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(2.0),
@@ -857,6 +954,7 @@ mod tests {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
             holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4, head: None, blind: None }],
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(5.0),
@@ -881,6 +979,7 @@ mod tests {
             y: 40.0,
             z: 6.0,
             holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
+            cutouts: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(3.0),
