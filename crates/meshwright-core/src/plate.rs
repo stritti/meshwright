@@ -134,6 +134,21 @@ impl Stepped {
         }
     }
 
+    /// Whether the facet `cap` (facing up or down) is part of the mouth: a piece of the
+    /// counterbore's annular floor, or a facet of the countersink's cone. Its corners lying on
+    /// the hole is not enough: a disk across the bore has them all on the bore's circle.
+    fn holds_cap(&self, cap: &[Vec3; 3], tol: f64) -> bool {
+        let depth = |p: &Vec3| (p[2] - self.face_z) * self.inward;
+        let centroid = [(cap[0][0] + cap[1][0] + cap[2][0]) / 3.0, (cap[0][1] + cap[1][1] + cap[2][1]) / 3.0];
+        let r = distance(centroid, self.centre);
+        if self.counterbore {
+            cap.iter().all(|p| (depth(p) - self.depth).abs() <= tol) && r >= self.bore_r - tol && r <= self.head_r + tol
+        } else {
+            let (low, high) = cap.iter().map(depth).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
+            cap.iter().all(|p| self.holds(*p, tol) && depth(p) <= self.depth + tol) && high - low > tol
+        }
+    }
+
     fn head(&self) -> HoleHead {
         let bottom = self.inward > 0.0;
         let d = snap(2.0 * self.head_r);
@@ -257,7 +272,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     // A facet facing up or down between the faces must belong to a counterbore's floor or a
     // countersink's cone; anywhere else it is a floor or a ledge (of a blind hole, a step or a
     // pocket), even when its corners lie on a hole's circle.
-    if !faces.caps.iter().all(|cap| stepped.iter().any(|s| cap.iter().all(|p| s.holds(*p, tol)))) {
+    if !faces.caps.iter().all(|cap| stepped.iter().any(|s| s.holds_cap(cap, tol))) {
         return Err(NOT_FLAT.into());
     }
     // Corners between the top and the bottom face, and the bottom ends of the walls, must lie on
@@ -1508,6 +1523,30 @@ mod tests {
                     p[2] += 0.5;
                 }
             }
+        }
+        reason(&mesh);
+    }
+
+    /// A 1 mm web left in the counterbored bore (between Z = 2 and Z = 3, two blind holes meeting
+    /// it from both faces) is no through hole, although every corner of its two disks lies on the
+    /// bore's circle. Its volume is below the 1 % the volume check would notice.
+    #[test]
+    fn a_web_across_a_counterbored_bore_is_refused() {
+        let mut mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/stepped-holes.stl")).expect("parses");
+        let centre = [15.0, 20.0];
+        let mut rim: Vec<P2> = Vec::new();
+        for p in mesh.triangles.iter().flatten() {
+            let q = [p[0], p[1]];
+            if (distance(q, centre) - 2.75).abs() < 1e-3 && !rim.iter().any(|r| distance(*r, q) < 1e-6) {
+                rim.push(q);
+            }
+        }
+        rim.sort_by(|a, b| (a[1] - centre[1]).atan2(a[0] - centre[0]).total_cmp(&(b[1] - centre[1]).atan2(b[0] - centre[0])));
+        assert!(rim.len() > 8, "{}", rim.len());
+        for i in 1..rim.len() - 1 {
+            let (a, b, c) = (rim[0], rim[i], rim[i + 1]);
+            mesh.triangles.push([[a[0], a[1], 3.0], [b[0], b[1], 3.0], [c[0], c[1], 3.0]]);
+            mesh.triangles.push([[a[0], a[1], 2.0], [c[0], c[1], 2.0], [b[0], b[1], 2.0]]);
         }
         reason(&mesh);
     }
