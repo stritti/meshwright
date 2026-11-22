@@ -16,6 +16,8 @@ fn main() {
         z: 6.0,
         holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
         cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(3.0),

@@ -54,10 +54,48 @@ pub struct PlateSpec {
     pub slots: Vec<SlotSpec>,
     /// Round bosses standing on the top face.
     pub bosses: Vec<BossSpec>,
+    /// Rectangular blocks standing on the top face.
+    pub pads: Vec<PadSpec>,
+    /// Rectangular blind pockets in the top or the bottom face.
+    pub pockets: Vec<PocketSpec>,
     /// Openings of straight sides through the plate, each its corners counter-clockwise.
     pub cutouts: Vec<Vec<[f64; 2]>>,
     /// The radius of the four vertical corner edges, if they are rounded.
     pub outline_fillet_r: Option<f64>,
+}
+
+/// A rectangular block standing on the top face, its sides along X and Y: `w` along X, `l`
+/// along Y and `h` high, about its middle `(x, y)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PadSpec {
+    /// Middle X.
+    pub x: f64,
+    /// Middle Y.
+    pub y: f64,
+    /// Size along X.
+    pub w: f64,
+    /// Size along Y.
+    pub l: f64,
+    /// Height above the top face.
+    pub h: f64,
+}
+
+/// A rectangular blind pocket with a flat floor, its sides along X and Y: `w` along X, `l`
+/// along Y and `depth` deep from the face it opens on, about its middle `(x, y)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PocketSpec {
+    /// Middle X.
+    pub x: f64,
+    /// Middle Y.
+    pub y: f64,
+    /// Size along X.
+    pub w: f64,
+    /// Size along Y.
+    pub l: f64,
+    /// Depth from the face.
+    pub depth: f64,
+    /// Whether it opens on the bottom face (else on the top).
+    pub bottom: bool,
 }
 
 /// A round boss standing on the top face: a cylinder `d` wide and `h` high about `(x, y)`.
@@ -196,6 +234,7 @@ impl PlateSpec {
         hole_params(&mut b, &self.holes, at);
         slot_params(&mut b, &self.slots, at);
         boss_params(&mut b, &self.bosses, at);
+        block_params(&mut b, &self.pads, &self.pockets, at);
         if let Some(r) = self.outline_fillet_r {
             b.param(Param::user("fillet_r", r));
         }
@@ -223,6 +262,7 @@ impl PlateSpec {
         hole_features(&mut b, &self.holes, at, "base_z0 + base_t", "base_z0", self.z);
         slot_features(&mut b, &self.slots, at);
         boss_features(&mut b, &self.bosses, "base_z0 + base_t");
+        block_features(&mut b, &self.pads, &self.pockets, "base_z0 + base_t", "base_z0");
         if self.outline_fillet_r.is_some() {
             let mid = at[2] + self.z / 2.0;
             let side = |a: u32, b: u32| format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}");
@@ -246,7 +286,7 @@ impl PlateSpec {
         describe(
             [self.x, self.y, self.z],
             None,
-            [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len()],
+            [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
             self.outline_fillet_r,
         )
     }
@@ -260,7 +300,7 @@ impl PlateSpec {
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
         let bosses: f64 = self.bosses.iter().map(BossSpec::volume).sum();
         let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area(c)).sum();
-        (self.x * self.y - corners - slots - cutouts) * self.z - holes + bosses
+        (self.x * self.y - corners - slots - cutouts) * self.z - holes + bosses + blocks(&self.pads, &self.pockets)
     }
 }
 
@@ -278,6 +318,10 @@ pub struct ProfileSpec {
     pub slots: Vec<SlotSpec>,
     /// Round bosses standing on the top face.
     pub bosses: Vec<BossSpec>,
+    /// Rectangular blocks standing on the top face.
+    pub pads: Vec<PadSpec>,
+    /// Rectangular blind pockets in the top or the bottom face.
+    pub pockets: Vec<PocketSpec>,
     /// Openings of straight sides through the plate, each its corners counter-clockwise.
     pub cutouts: Vec<Vec<[f64; 2]>>,
     /// The radius of every vertical corner edge, inside and outside corners alike, if they are
@@ -307,6 +351,7 @@ impl ProfileSpec {
         hole_params(&mut b, &self.holes, at);
         slot_params(&mut b, &self.slots, at);
         boss_params(&mut b, &self.bosses, at);
+        block_params(&mut b, &self.pads, &self.pockets, at);
         if let Some(r) = self.outline_fillet_r {
             b.param(Param::user("outline_fillet_r", r));
         }
@@ -347,6 +392,7 @@ impl ProfileSpec {
         hole_features(&mut b, &self.holes, at, "extrude_0 + extrude_len", "extrude_0", self.z);
         slot_features(&mut b, &self.slots, at);
         boss_features(&mut b, &self.bosses, "extrude_0 + extrude_len");
+        block_features(&mut b, &self.pads, &self.pockets, "extrude_0 + extrude_len", "extrude_0");
         b.build()
     }
 
@@ -357,7 +403,7 @@ impl ProfileSpec {
         describe(
             [size[0], size[1], self.z],
             Some(self.corners.len()),
-            [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len()],
+            [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
             self.outline_fillet_r,
         )
     }
@@ -390,7 +436,7 @@ impl ProfileSpec {
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
         let bosses: f64 = self.bosses.iter().map(BossSpec::volume).sum();
         let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area(c)).sum();
-        (area - slots - cutouts) * self.z - holes + bosses
+        (area - slots - cutouts) * self.z - holes + bosses + blocks(&self.pads, &self.pockets)
     }
 }
 
@@ -487,6 +533,56 @@ fn boss_features(b: &mut DesignBuilder, bosses: &[BossSpec], top: &str) {
                 operation: Operation::Join,
             },
         );
+    }
+}
+
+/// The pads' and the pockets' parameters: `pad_<n>_w` (along X), `_l` (along Y), `_h` and the
+/// middle `_x`, `_y`, as mesh2cad names a pad, and `pocket_<n>_w`, `_l`, `_depth`, `_x`, `_y`
+/// alike (in world coordinates for a plate whose corner is at `at`).
+fn block_params(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec], at: Vec3) {
+    let middle = |b: &mut DesignBuilder, p: &str, x: f64, y: f64| {
+        b.param(Param::user(format!("{p}_x"), snap_mm(at[0] + x))).param(Param::user(format!("{p}_y"), snap_mm(at[1] + y)));
+    };
+    for (i, s) in pads.iter().enumerate() {
+        let p = format!("pad_{}", i + 1);
+        b.param(Param::user(format!("{p}_w"), s.w)).param(Param::user(format!("{p}_l"), s.l)).param(Param::user(format!("{p}_h"), s.h));
+        middle(b, &p, s.x, s.y);
+    }
+    for (i, s) in pockets.iter().enumerate() {
+        let p = format!("pocket_{}", i + 1);
+        b.param(Param::user(format!("{p}_w"), s.w))
+            .param(Param::user(format!("{p}_l"), s.l))
+            .param(Param::user(format!("{p}_depth"), s.depth));
+        middle(b, &p, s.x, s.y);
+    }
+}
+
+/// A box joined to the plate per pad, standing on the top face at height `top` (its
+/// expression), and a box cut out of it per pocket, down from `top` or up from `bottom`.
+fn block_features(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec], top: &str, bottom: &str) {
+    let corner = |p: &str, z: String| [format!("{p}_x - {p}_w / 2"), format!("{p}_y - {p}_l / 2"), z];
+    for i in 1..=pads.len() {
+        let p = format!("pad_{i}");
+        let kind = FeatureKind::Box {
+            corner: corner(&p, top.into()),
+            length: format!("{p}_w"),
+            width: format!("{p}_l"),
+            height: format!("{p}_h"),
+            operation: Operation::Join,
+        };
+        b.feature(format!("Pad{i}"), vec![], kind);
+    }
+    for (i, s) in pockets.iter().enumerate() {
+        let p = format!("pocket_{}", i + 1);
+        let z = if s.bottom { bottom.to_owned() } else { format!("{top} - {p}_depth") };
+        let kind = FeatureKind::Box {
+            corner: corner(&p, z),
+            length: format!("{p}_w"),
+            width: format!("{p}_l"),
+            height: format!("{p}_depth"),
+            operation: Operation::Cut,
+        };
+        b.feature(format!("Pocket{}", i + 1), vec![], kind);
     }
 }
 
@@ -676,9 +772,14 @@ fn polygon_area(corners: &[[f64; 2]]) -> f64 {
     ((0..n).map(|i| corners[i][0] * corners[(i + 1) % n][1] - corners[(i + 1) % n][0] * corners[i][1]).sum::<f64>() / 2.0).abs()
 }
 
-/// `counts` are the holes, the slots, the bosses and the cut-outs.
-fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 4], fillet_r: Option<f64>) -> String {
-    let [holes, slots, bosses, cutouts] = counts;
+/// The volume pads add and pockets take away, in mm³.
+fn blocks(pads: &[PadSpec], pockets: &[PocketSpec]) -> f64 {
+    pads.iter().map(|p| p.w * p.l * p.h).sum::<f64>() - pockets.iter().map(|p| p.w * p.l * p.depth).sum::<f64>()
+}
+
+/// `counts` are the holes, the slots, the bosses, the cut-outs, the pads and the pockets.
+fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 6], fillet_r: Option<f64>) -> String {
+    let [holes, slots, bosses, cutouts, pads, pockets] = counts;
     let [x, y, z] = size.map(fmt_number);
     let mut parts = Vec::new();
     if let Some(n) = sides {
@@ -703,6 +804,13 @@ fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 4], fillet_r: 
         0 => {}
         1 => parts.push("1 cut-out".to_owned()),
         n => parts.push(format!("{n} cut-outs")),
+    }
+    for (n, one, many) in [(pads, "pad", "pads"), (pockets, "pocket", "pockets")] {
+        match n {
+            0 => {}
+            1 => parts.push(format!("1 {one}")),
+            n => parts.push(format!("{n} {many}")),
+        }
     }
     if let Some(r) = fillet_r {
         parts.push(format!("{} mm rounded corners", fmt_number(r)));
@@ -752,15 +860,35 @@ mod tests {
     #[test]
     fn recognises_block_on_origin() {
         let found = recognize(&block(60.0, 40.0, 6.0, [0.0; 3]));
-        let plate =
-            PlateSpec { x: 60.0, y: 40.0, z: 6.0, holes: vec![], cutouts: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
+        let plate = PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: None,
+        };
         assert_eq!(found, Recognition::Plate { plate, offset: [0.0; 3] });
     }
 
     #[test]
     fn moves_offset_block_to_the_origin() {
-        let plate =
-            PlateSpec { x: 1.0, y: 1.0, z: 1.0, holes: vec![], cutouts: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
+        let plate = PlateSpec {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+            holes: vec![],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: None,
+        };
         assert_eq!(recognize(&block(1.0, 1.0, 1.0, [5.0, 0.0, 0.0])), Recognition::Plate { plate, offset: [5.0, 0.0, 0.0] });
     }
 
@@ -772,6 +900,8 @@ mod tests {
             z: 6.0,
             holes: vec![],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(3.0),
@@ -793,6 +923,8 @@ mod tests {
             z: 6.0,
             holes: vec![],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![slot(15.0, 0.0), slot(40.0, 30.0)],
             outline_fillet_r: None,
@@ -837,6 +969,8 @@ mod tests {
             z: 6.0,
             holes: vec![],
             slots: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
             outline_fillet_r: None,
@@ -856,6 +990,8 @@ mod tests {
             z: 5.0,
             holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
             slots: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             cutouts: vec![vec![[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]]],
             outline_fillet_r: Some(5.0),
@@ -864,6 +1000,36 @@ mod tests {
         let names: Vec<String> =
             json["features"].as_array().expect("features").iter().filter_map(|f| f["name"].as_str().map(String::from)).collect();
         assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Fillet1", "CutoutsSketch", "Cutouts", "Hole1"]);
+    }
+
+    /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face
+    /// down, or from the bottom face up.
+    #[test]
+    fn pads_and_pockets_become_boxes() {
+        let spec = PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![],
+            slots: vec![],
+            pads: vec![PadSpec { x: 15.0, y: 20.0, w: 10.0, l: 8.0, h: 3.0 }],
+            pockets: vec![
+                PocketSpec { x: 40.0, y: 10.0, w: 12.0, l: 6.0, depth: 2.0, bottom: false },
+                PocketSpec { x: 40.0, y: 30.0, w: 12.0, l: 6.0, depth: 1.5, bottom: true },
+            ],
+            bosses: vec![],
+            cutouts: vec![],
+            outline_fillet_r: None,
+        };
+        let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+        let f = &json["features"];
+        assert_eq!((f[3]["type"].as_str(), f[3]["operation"].as_str()), (Some("box"), Some("join")));
+        assert_eq!(f[3]["corner"], serde_json::json!(["pad_1_x - pad_1_w / 2", "pad_1_y - pad_1_l / 2", "base_z0 + base_t"]));
+        assert_eq!(f[4]["corner"][2], "base_z0 + base_t - pocket_1_depth");
+        assert_eq!(f[5]["corner"][2], "base_z0");
+        assert_eq!((f[5]["operation"].as_str(), f[5]["height"].as_str()), (Some("cut"), Some("pocket_2_depth")));
+        assert!((spec.volume() - (60.0 * 40.0 * 6.0 + 240.0 - 144.0 - 108.0)).abs() < 1e-9);
+        assert_eq!(spec.describe(), "A 60 x 40 x 6 mm plate with 1 pad and 2 pockets");
     }
 
     /// A boss is a cylinder joined to the plate, standing on the top face's expression.
@@ -876,6 +1042,8 @@ mod tests {
             holes: vec![],
             slots: vec![],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![BossSpec { x: 20.0, y: 15.0, d: 10.0, h: 4.0 }],
             outline_fillet_r: None,
         };
@@ -901,6 +1069,8 @@ mod tests {
             z: 6.0,
             holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(3.0),
@@ -915,6 +1085,8 @@ mod tests {
             z: 5.0,
             holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(2.0),
@@ -937,6 +1109,8 @@ mod tests {
             z: 5.0,
             holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(2.0),
@@ -955,6 +1129,8 @@ mod tests {
             z: 5.0,
             holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4, head: None, blind: None }],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(5.0),
@@ -980,6 +1156,8 @@ mod tests {
             z: 6.0,
             holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(3.0),

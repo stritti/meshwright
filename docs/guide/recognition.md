@@ -14,6 +14,8 @@
 | A straight slot through the plate (two round ends of one width), along X, Y or at any angle | `Slot<n>Sketch` (the slot on XY) and `Slot<n>` (a cut through everything) | `slot_<n>_len` (between the end centres), `_w`, the middle `_x`, `_y`, and `_angle` (of the long axis, from +X) |
 | A straight round boss standing on the top face | `Boss<n>` (a cylinder joined to the plate, on its top face) | `boss_<n>_d`, `boss_<n>_h` (above the top face), the centre `boss_<n>_x`, `boss_<n>_y` |
 | A cut-out of straight sides through the plate (3 to 24 corners, each a real turn) | `CutoutsSketch` (every cut-out, on XY) and `Cutouts` (a cut through everything, after the outline's fillet) | none: its corners are as in the file (mesh2cad writes them as the point list `cutout_<n>`) |
+| A rectangular block (pad) along X and Y standing on the top face | `Pad<n>` (a box joined to the plate) | `pad_<n>_w` (along X), `pad_<n>_l` (along Y), `pad_<n>_h`, the middle `pad_<n>_x`, `pad_<n>_y` |
+| A rectangular blind pocket along X and Y with a flat floor, in the top or the bottom face | `Pocket<n>` (a box cut out of the plate) | `pocket_<n>_w`, `pocket_<n>_l`, `pocket_<n>_depth` (from that face), the middle `pocket_<n>_x`, `pocket_<n>_y` |
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 
@@ -33,7 +35,7 @@ These are kept as a mesh, with the reason in the report:
 - corners with different radii, or only some corners rounded
 - D-shaped and other curved cut-outs, blind or slanted slots
 - corners rounded almost all the way along their sides
-- steps and pockets, other shapes on the top face, and bosses with a draft, a round or a hole
+- steps, pockets other than rectangles, other shapes on the top face, and bosses with a draft, a round or a hole
 - blind holes with a drill point or a counterbore
 - parts standing upright or rotated
 

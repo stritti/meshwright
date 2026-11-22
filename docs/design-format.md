@@ -39,6 +39,7 @@ to features (sketch dimensions) and are driven by an expression.
 | `extrude` | `sketch` (feature id), `profiles: {"type":"all"}`, `extent: {distance, convention:"total_distance", direction:"positive"}`, `operation: "new_body"` | `body_names` lists the body it creates. A cut through everything both ways from its sketch: `extent: {distance: "0", convention: "total_distance", direction: "symmetric", through_all: true}`, `operation: "cut"`. |
 | `hole` | `position` (numbers), `at` (three expressions), `direction`, `diameter`, `depth` (a blind hole's, from the face; through all without it), `hole: {"type":"simple"}`, `{"type":"counterbore", cb_diameter, cb_depth}` or `{"type":"countersink", cs_diameter, cs_angle}` | `at` follows parameters; `position` is the pick SolidCraft starts from. A hole whose counterbore or countersink is on the bottom face starts there with `direction: [0, 0, 1]`. `cs_angle` is the cone's full angle; a parameter in degrees drives it. |
 | `fillet` | `edge_names`, `edges` (one point per edge), `radius` | See below. |
+| `box` | `corner` (three expressions: the lowest corner), `length` (X), `width` (Y), `height` (Z), `operation: "join"` or `"cut"` | SolidCraft's box primitive. |
 | `cylinder` | `base` (three expressions: the bottom face's centre), `axis: [0, 0, 1]`, `radius`, `height`, `operation: "join"` | SolidCraft's own cylinder primitive saves `radius` as `"(10 mm) / 2"` when given a diameter; meshwright writes `"boss_<n>_d / 2"`. |
 | `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions) | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
@@ -70,6 +71,18 @@ an Ø5 hole) imports to 17,225.686 mm³, the volume SolidCraft measured for the 
 With `boss_1_d = 12`, `boss_1_h = 8`, `boss_2_x = 40`, `boss_2_h = 4`, `base_t = 9` and
 `base_z0 = 2` it rebuilt without errors to 26,129.126 mm³, as computed; exported again, the
 rebuilt part is recognised with those parameters.
+
+## Pads and pockets
+
+A pad is a `box` joined to the plate, its corner at `[pad_<n>_x - pad_<n>_w / 2, pad_<n>_y -
+pad_<n>_l / 2, base_z0 + base_t]`; a pocket a `box` cut out of it, from `base_z0 + base_t -
+pocket_<n>_depth` up for a pocket in the top face, or from `base_z0` for one in the bottom face.
+`pockets.stl` (exported by SolidCraft: a 70 x 40 x 6 plate with a 16 x 12 x 4 pad, a 20 x 14 x 3
+pocket in the top face, a 12 x 8 x 2 one in the bottom face and an Ø4 hole) imports to
+16,460.602 mm³, the volume SolidCraft measured for the part it exported. With `pad_1_w = 20`,
+`pad_1_h = 6`, `pocket_1_depth = 4`, `pocket_1_l = 10`, `pocket_2_x = 45`, `pocket_2_depth = 1`,
+`base_t = 8` and `base_z0 = 3` it rebuilt without errors to 22,843.469 mm³, as computed; exported
+again, it is recognised with those sizes.
 
 ## Slot sketches
 

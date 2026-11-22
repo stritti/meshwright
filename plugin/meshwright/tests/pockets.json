@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "pockets.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 7, "loss_report": {"summary": "A 70 x 40 x 6 mm plate with 1 hole, 1 pad and 2 pockets"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 16460.601776}},
+    "tolerance": 1e-4
+  }
+}

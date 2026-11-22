@@ -14,7 +14,7 @@
    5. (done) slots
    6. (done) bosses on the top face
    7. (done) polygonal cut-outs
-   8. steps, pockets and shallow recesses
+   8. (done) pads and rectangular pockets (steps and other pockets later)
    9. extrusions along X and Y
    10. boxes with every edge rounded, holes and bosses on side faces
    11. chamfers, drafts and the rounds at a boss's foot or a hole's rim
