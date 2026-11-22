@@ -1149,34 +1149,47 @@ fn slot_shape(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
     let (sin, cos) = angle.to_radians().sin_cos();
     let along = |p: &P2| (p[0] - centre[0]) * cos + (p[1] - centre[1]) * sin;
     let across = |p: &P2| (p[1] - centre[1]) * cos - (p[0] - centre[0]) * sin;
+    // The straight sides' corners lie the radius off the axis. Each end's centre is where its
+    // corners say, `along - sqrt(r² - across²)` (the tip itself need not be a corner: an end
+    // of an odd number of facets has none there); the sides' corners lie short of it.
     let r = ring.iter().map(|p| across(p).abs()).fold(0.0, f64::max);
-    let half = ring.iter().map(|p| along(p).abs()).fold(0.0, f64::max) - r;
-    if half <= 2.0 * tol || r <= tol {
+    let end_centre = |side: f64| {
+        ring.iter()
+            .filter(|p| along(p) * side > 0.0)
+            .map(|p| along(p) * side - (r * r - across(p).powi(2)).max(0.0).sqrt())
+            .fold(f64::NEG_INFINITY, f64::max)
+    };
+    let (ahead, behind) = (end_centre(1.0), end_centre(-1.0));
+    let half = f64::midpoint(ahead, behind);
+    if !half.is_finite() || half <= 2.0 * tol || r <= tol {
         return None;
     }
+    let shift = (ahead - behind) / 2.0;
+    let centre = [centre[0] + shift * cos, centre[1] + shift * sin];
+    let along = |p: &P2| (p[0] - centre[0]) * cos + (p[1] - centre[1]) * sin;
     let g = SlotGeometry { centre, axis: [cos, sin], half, r };
     if ring.iter().any(|p| (g.reach(*p) - r).abs() > tol) {
         return None;
     }
-    // Each facet follows the outline: a straight side lies on it, a facet of an end bows in by
-    // its own sagitta, and an end is faceted in steps no coarser than a round hole's.
+    // Each facet is a piece of a straight side (both corners on one side's line, between the
+    // ends) or of one end (both corners past that end's centre, a step no coarser than a round
+    // hole's, its middle within its own sagitta of the circle). A facet from a side across to
+    // an end cuts the corner.
     let [end_a, end_b] = g.ends();
     for i in 0..n {
         let (p, q) = (ring[i], ring[(i + 1) % n]);
-        let len = distance(p, q);
-        let middle = [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1])];
-        let bow = r - (r * r - (len * len / 4.0).min(r * r)).sqrt();
-        let d = g.reach(middle);
-        if d > r + tol || d < r - bow - tol {
-            return None;
+        let on_side = |s: f64| [p, q].iter().all(|c| (across(c) - s * r).abs() <= tol && along(c).abs() <= half + tol);
+        if on_side(1.0) || on_side(-1.0) {
+            continue;
         }
-        for (end, side) in [(end_a, 1.0), (end_b, -1.0)] {
-            if along(&p) * side > half - tol && along(&q) * side > half - tol {
-                let turn = (q[1] - end[1]).atan2(q[0] - end[0]) - (p[1] - end[1]).atan2(p[0] - end[0]);
-                if ((turn + PI).rem_euclid(2.0 * PI) - PI).abs() > MAX_HOLE_STEP {
-                    return None;
-                }
-            }
+        let (end, _) =
+            [(end_a, 1.0), (end_b, -1.0)].into_iter().find(|(_, s)| along(&p) * s >= half - tol && along(&q) * s >= half - tol)?;
+        let turn = (q[1] - end[1]).atan2(q[0] - end[0]) - (p[1] - end[1]).atan2(p[0] - end[0]);
+        let len = distance(p, q);
+        let bow = r - (r * r - (len * len / 4.0).min(r * r)).sqrt();
+        let middle = [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1])];
+        if ((turn + PI).rem_euclid(2.0 * PI) - PI).abs() > MAX_HOLE_STEP || (distance(middle, end) - (r - bow)).abs() > tol {
+            return None;
         }
     }
     let spec = SlotSpec { x: snap(centre[0]), y: snap(centre[1]), len: snap(2.0 * half), w: snap(2.0 * r), angle };
@@ -1826,7 +1839,7 @@ mod tests {
     /// Slots of a synthetic mesh at any angle, finely or coarsely faceted.
     #[test]
     fn synthetic_slots() {
-        for (angle, n) in [(0.0, 16), (90.0, 8), (30.0, 12), (137.5, 24)] {
+        for (angle, n) in [(0.0, 16), (0.0, 15), (90.0, 8), (90.0, 9), (30.0, 12), (30.0, 13), (137.5, 24), (137.5, 7)] {
             let (plate, _) = found(&plate_with_cutout(stadium([40.0, 25.0], 18.0, 7.0, angle, n)));
             assert_eq!(plate.slots, [SlotSpec { x: 40.0, y: 25.0, len: 18.0, w: 7.0, angle }], "{angle} {n}");
         }
@@ -1843,7 +1856,19 @@ mod tests {
         for p in &mut uneven[..17] {
             p[1] = 25.0 + (p[1] - 25.0) * 1.2;
         }
-        for cutout in [rounded, stadium([40.0, 25.0], 18.0, 7.0, 0.0, 3), ellipse, uneven] {
+        // Codex's: long facets from each side across to a short tip of the end.
+        let full = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
+        let mut cut: Vec<P2> = Vec::new();
+        for (end, sign) in [(&full[..17], -1.0), (&full[17..], 1.0)] {
+            for k in [0, 6, 7, 8, 9, 10, 16] {
+                let mut p = end[k];
+                if k == 0 || k == 16 {
+                    p[0] += sign * 4.0;
+                }
+                cut.push(p);
+            }
+        }
+        for cutout in [rounded, stadium([40.0, 25.0], 18.0, 7.0, 0.0, 3), ellipse, uneven, cut] {
             let why = reason(&plate_with_cutout(cutout));
             assert!(why.contains("not round") || why.contains("corners"), "{why}");
         }
