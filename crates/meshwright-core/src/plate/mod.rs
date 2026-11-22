@@ -15,7 +15,8 @@
 //! 3. The outline must be made of straight sides, its corners all sharp or all rounded with the
 //!    same radius (a rounded corner is a run of facet corners on one circle that meets the sides
 //!    on either side of it tangentially); each hole must be round. A rectangular outline becomes
-//!    a [`PlateSpec`], any other a [`ProfileSpec`].
+//!    a [`PlateSpec`](crate::recognize::PlateSpec), any other a
+//!    [`ProfileSpec`](crate::recognize::ProfileSpec).
 //! 4. Each hole meets the top and the bottom face in circles about one centre. Where they
 //!    differ, the wider one is the mouth of a counterbore (corners on its wide wall down to a
 //!    flat floor) or a countersink (a cone down to where the bore's corners begin); every corner
@@ -23,10 +24,10 @@
 //! 5. The plate rebuilt from those numbers must have the mesh's volume within 1%, the check
 //!    mesh2cad documents for its scripts; otherwise the mesh is kept.
 //!
-//! The module is split by concern: [`geometry`] (2D helpers), [`faces`] (top/bottom face and
-//! wall split), [`walls`] (the wall index), [`outline`] (straight sides and rounded corners),
-//! [`holes`] (holes, slots, cut-outs, pockets), [`bosses`] (what stands on the top face) and
-//! [`prism`] (the recognition pipeline). Only [`recognize_plate`] is the entry point.
+//! The module is split by concern: `geometry` (2D helpers), `faces` (top/bottom face and
+//! wall split), `walls` (the wall index), `outline` (straight sides and rounded corners),
+//! `holes` (holes, slots, cut-outs, pockets), `bosses` (what stands on the top face) and
+//! `prism` (the recognition pipeline). Only `recognize_plate` is the entry point.
 
 #![allow(clippy::many_single_char_names)] // points a, b, c, sizes x, y, z and radii r, as in the geometry
 
