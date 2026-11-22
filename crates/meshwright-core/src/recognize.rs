@@ -9,8 +9,8 @@
 use std::fmt::Write as _;
 
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions, add_polygons,
-    fmt_number, polygon_sketch, rectangle_sketch, slot_sketch,
+    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions, fmt_number,
+    polygon_sketch, polygons_sketch, rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Mesh, Vec3};
 use crate::patterns::{HoleGroup, group_holes};
@@ -204,20 +204,12 @@ impl PlateSpec {
         let sketch = b.feature(
             "Sketch1",
             vec![],
-            FeatureKind::Sketch {
-                plane: Plane::Origin { name: "XY" },
-                sketch: with_cutouts(rectangle_sketch(self.x, self.y), &self.cutouts),
-            },
+            FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: rectangle_sketch(self.x, self.y) },
         );
         let extrude = b.feature(
             "Extrude1",
             vec!["Body1".into()],
-            FeatureKind::Extrude {
-                sketch,
-                profiles: Profiles::outline(4, !self.cutouts.is_empty()),
-                extent: Extent::positive("base_t"),
-                operation: Operation::NewBody,
-            },
+            FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::positive("base_t"), operation: Operation::NewBody },
         );
         b.feature(
             "Move1",
@@ -227,6 +219,7 @@ impl PlateSpec {
                 translate: ["base_cx - base_x / 2".into(), "base_cy - base_y / 2".into(), "base_z0".into()],
             },
         );
+        cutout_features(&mut b, &self.cutouts, at);
         hole_features(&mut b, &self.holes, at, "base_z0 + base_t", "base_z0", self.z);
         slot_features(&mut b, &self.slots, at);
         boss_features(&mut b, &self.bosses, "base_z0 + base_t");
@@ -320,14 +313,14 @@ impl ProfileSpec {
         let sketch = b.feature(
             "Sketch1",
             vec![],
-            FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: with_cutouts(polygon_sketch(&self.corners), &self.cutouts) },
+            FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: polygon_sketch(&self.corners) },
         );
         let extrude = b.feature(
             "Extrude1",
             vec!["Body1".into()],
             FeatureKind::Extrude {
                 sketch,
-                profiles: Profiles::outline(self.corners.len(), !self.cutouts.is_empty()),
+                profiles: Profiles::All,
                 extent: Extent::positive("extrude_len"),
                 operation: Operation::NewBody,
             },
@@ -350,6 +343,7 @@ impl ProfileSpec {
             let edges = self.corners.iter().map(|c| [at[0] + c[0], at[1] + c[1], at[2] + self.z / 2.0]).collect();
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
         }
+        cutout_features(&mut b, &self.cutouts, at);
         hole_features(&mut b, &self.holes, at, "extrude_0 + extrude_len", "extrude_0", self.z);
         slot_features(&mut b, &self.slots, at);
         boss_features(&mut b, &self.bosses, "extrude_0 + extrude_len");
@@ -447,10 +441,22 @@ fn slot_features(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3) {
     }
 }
 
-/// The outline's sketch with the cut-outs drawn in it, so that the extrusion leaves them open.
-fn with_cutouts(mut sketch: crate::design::Sketch, cutouts: &[Vec<[f64; 2]>]) -> crate::design::Sketch {
-    add_polygons(&mut sketch, cutouts);
-    sketch
+/// The cut-outs as one sketch (in world coordinates for a plate whose corner is at `at`) and a
+/// cut through everything both ways from it. It comes after the outline's fillet: a cut-out may
+/// lie in the material an inside corner's rounding adds.
+fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3) {
+    if cutouts.is_empty() {
+        return;
+    }
+    let world: Vec<Vec<[f64; 2]>> =
+        cutouts.iter().map(|c| c.iter().map(|p| [snap_mm(at[0] + p[0]), snap_mm(at[1] + p[1])]).collect()).collect();
+    let sketch =
+        b.feature("CutoutsSketch", vec![], FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: polygons_sketch(&world) });
+    b.feature(
+        "Cutouts",
+        vec![],
+        FeatureKind::Extrude { sketch, profiles: Profiles::All, extent: Extent::through_all(), operation: Operation::Cut },
+    );
 }
 
 /// The bosses' parameters, as mesh2cad names them: `boss_<n>_d`, `_h` (above the top face) and
@@ -821,10 +827,10 @@ mod tests {
         assert_eq!(spec.describe(), "A 60 x 40 x 6 mm plate with 2 slots");
     }
 
-    /// Cut-outs are drawn in the outline's sketch, and the extrusion takes the profile inside the
-    /// outline's lines, the cut-outs its holes.
+    /// Cut-outs are one sketch and a cut through everything, after the outline's fillet (a
+    /// cut-out may lie in an inside corner's rounding) and before the holes.
     #[test]
-    fn cut_outs_are_loops_in_the_outline_sketch() {
+    fn cut_outs_are_cut_after_the_fillet() {
         let spec = PlateSpec {
             x: 60.0,
             y: 40.0,
@@ -835,16 +841,29 @@ mod tests {
             cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
             outline_fillet_r: None,
         };
-        let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
-        let sketch = &json["features"][0]["sketch"];
-        assert_eq!(sketch["curves"].as_array().map(Vec::len), Some(7));
-        assert_eq!(sketch["counters"]["p"], 7);
-        assert_eq!(json["features"][1]["profiles"], serde_json::json!({"type": "curves", "loops": [["l1", "l2", "l3", "l4"]]}));
+        let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [5.0, 0.0, 0.0]).to_json()).expect("valid");
+        let features = json["features"].as_array().expect("features");
+        let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
+        assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "CutoutsSketch", "Cutouts"]);
+        let sketch = &features[3]["sketch"];
+        assert_eq!(sketch["curves"].as_array().map(Vec::len), Some(3));
+        assert_eq!(sketch["points"][1]["pos"], serde_json::json!([15.0, 10.0]));
+        assert_eq!((features[4]["operation"].as_str(), &features[4]["extent"]["through_all"]), (Some("cut"), &serde_json::json!(true)));
         assert!((spec.volume() - (60.0 * 40.0 - 50.0) * 6.0).abs() < 1e-9);
         assert_eq!(spec.describe(), "A 60 x 40 x 6 mm plate with 1 cut-out");
-        let no_cutout = PlateSpec { cutouts: vec![], ..spec };
-        let json: serde_json::Value = serde_json::from_str(&no_cutout.to_design("").to_json()).expect("valid");
-        assert_eq!(json["features"][1]["profiles"], serde_json::json!({"type": "all"}));
+        let ell = ProfileSpec {
+            corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+            z: 5.0,
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
+            slots: vec![],
+            bosses: vec![],
+            cutouts: vec![vec![[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]]],
+            outline_fillet_r: Some(5.0),
+        };
+        let json: serde_json::Value = serde_json::from_str(&ell.to_design("").to_json()).expect("valid");
+        let names: Vec<String> =
+            json["features"].as_array().expect("features").iter().filter_map(|f| f["name"].as_str().map(String::from)).collect();
+        assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Fillet1", "CutoutsSketch", "Cutouts", "Hole1"]);
     }
 
     /// A boss is a cylinder joined to the plate, standing on the top face's expression.

@@ -13,7 +13,7 @@
 | A round blind hole with a flat floor, drilled from the top or the bottom face | `Hole<n>` with a depth (drilled from that face) | `hole_<n>_d`, `hole_<n>_depth` (from that face) |
 | A straight slot through the plate (two round ends of one width), along X, Y or at any angle | `Slot<n>Sketch` (the slot on XY) and `Slot<n>` (a cut through everything) | `slot_<n>_len` (between the end centres), `_w`, the middle `_x`, `_y`, and `_angle` (of the long axis, from +X) |
 | A straight round boss standing on the top face | `Boss<n>` (a cylinder joined to the plate, on its top face) | `boss_<n>_d`, `boss_<n>_h` (above the top face), the centre `boss_<n>_x`, `boss_<n>_y` |
-| A cut-out of straight sides through the plate (3 to 24 corners, each a real turn) | a loop in `Sketch1`, left open by `Extrude1` | none: its corners are as in the file (mesh2cad writes them as the point list `cutout_<n>`) |
+| A cut-out of straight sides through the plate (3 to 24 corners, each a real turn) | `CutoutsSketch` (every cut-out, on XY) and `Cutouts` (a cut through everything, after the outline's fillet) | none: its corners are as in the file (mesh2cad writes them as the point list `cutout_<n>`) |
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 

@@ -520,15 +520,6 @@ pub enum Profiles {
     },
 }
 
-impl Profiles {
-    /// The profile inside the outline of lines `l1` to `l<sides>`, with every loop inside it a
-    /// hole; every profile when nothing lies inside.
-    #[must_use]
-    pub fn outline(sides: usize, openings: bool) -> Self {
-        if openings { Self::Curves { loops: vec![(1..=sides).map(|i| format!("l{i}")).collect()] } } else { Self::All }
-    }
-}
-
 /// How far an extrusion goes.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Extent {
@@ -732,11 +723,23 @@ pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
     Sketch { points, curves, constraints, links: vec![], counters }
 }
 
-/// Adds closed polygons to `sketch` (each `corners` counter-clockwise or not), as
+/// A sketch on the XY plane of closed polygons (each `corners` counter-clockwise or not), drawn as
 /// [`polygon_sketch`] draws its outline: free corners, sides along X or Y held horizontal or
-/// vertical. Inside the outline they are openings, which an extrusion of every profile leaves
-/// out.
-pub fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>]) {
+/// vertical.
+#[must_use]
+pub fn polygons_sketch(polygons: &[Vec<[f64; 2]>]) -> Sketch {
+    let mut sketch = Sketch {
+        points: vec![SketchPoint::new("origin", [0.0, 0.0], true)],
+        curves: vec![],
+        constraints: vec![],
+        links: vec![],
+        counters: Counters { a: 0, j: 0, k: 0, l: 0, p: 0 },
+    };
+    add_polygons(&mut sketch, polygons);
+    sketch
+}
+
+fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>]) {
     for corners in polygons {
         let n = corners.len();
         let first = sketch.points.len();
