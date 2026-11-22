@@ -99,18 +99,18 @@ impl SlotGeometry {
         segment_distance(p, a, b)
     }
 
-    /// Its round ends as walls: four quarter circles, each bounded by the corner it rounds (the
-    /// end's inner half lies inside the slot, no wall).
-    fn quarters(&self) -> Vec<(P2, f64, P2, f64)> {
-        let [u, v] = [self.axis, [-self.axis[1], self.axis[0]]];
-        let mut out = Vec::new();
-        for (end, s) in self.ends().into_iter().zip([1.0, -1.0]) {
-            for t in [1.0, -1.0] {
-                let corner = [end[0] + self.r * (s * u[0] + t * v[0]), end[1] + self.r * (s * u[1] + t * v[1])];
-                out.push((end, self.r, corner, self.r));
-            }
-        }
-        out
+    /// Its round ends as walls: each end's outer half circle, bounded by reaching no further
+    /// than `r·√2` from the end's tip. That disk holds every point and every chord of the outer
+    /// half and leaves out the inner half, which lies inside the slot.
+    fn halves(&self) -> Vec<(P2, f64, P2, f64)> {
+        self.ends()
+            .into_iter()
+            .zip([1.0, -1.0])
+            .map(|(end, s)| {
+                let tip = [end[0] + s * self.r * self.axis[0], end[1] + s * self.r * self.axis[1]];
+                (end, self.r, tip, self.r * std::f64::consts::SQRT_2)
+            })
+            .collect()
     }
 
     fn matches(&self, other: &Self, tol: f64) -> bool {
@@ -349,7 +349,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         return Err("a slot does not go straight through (blind and slanted slots are not recognised yet)".into());
     }
     for (spec, g, k) in top_slots {
-        slot_arcs.extend(g.quarters());
+        slot_arcs.extend(g.halves());
         wall_loops.push(loops[k].clone());
         slots.push(spec);
     }
@@ -1136,8 +1136,23 @@ fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
 /// corner on that outline and every facet following it (within its sagitta on the ends), the
 /// ends faceted as finely as a round hole. Its spec is rounded; its geometry as fitted, along
 /// the rounded angle.
-#[allow(clippy::many_single_char_names)] // the textbook symbols of the area moments
 fn slot_shape(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
+    slot_fit(ring, tol).or_else(|| {
+        // An exporter may have split facets: a corner on the straight line between its
+        // neighbours is left out, and the slot fitted again (as for a round hole's rim).
+        let mut kept: Vec<P2> = Vec::with_capacity(ring.len());
+        for (i, p) in ring.iter().enumerate() {
+            let prev = kept.last().copied().unwrap_or(ring[ring.len() - 1]);
+            if segment_distance(*p, prev, ring[(i + 1) % ring.len()]) > tol / 4.0 {
+                kept.push(*p);
+            }
+        }
+        (kept.len() < ring.len()).then(|| slot_fit(&kept, tol)).flatten()
+    })
+}
+
+#[allow(clippy::many_single_char_names)] // the textbook symbols of the area moments
+fn slot_fit(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
     let n = ring.len();
     if n < MIN_HOLE_SEGMENTS {
         return None;
@@ -1954,6 +1969,68 @@ mod tests {
             .collect();
         assert!(moved > 0);
         reason(&Mesh::new(triangles));
+    }
+
+    /// Top and bottom rims meshed apart, with eight facets per end on top and seven below: a
+    /// wall facet's edge across an end's tip still follows the end.
+    #[test]
+    fn slot_rims_meshed_apart() {
+        let outline = [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]];
+        let (top, bottom) = (stadium([40.0, 25.0], 18.0, 7.0, 0.0, 8), stadium([40.0, 25.0], 18.0, 7.0, 0.0, 7));
+        let mut t: Vec<crate::mesh::Triangle> = Vec::new();
+        let at = |p: P2, h: f64| [p[0], p[1], h];
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&top)) {
+            t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&bottom)) {
+            t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        for i in 0..4 {
+            let (a, b) = (outline[i], outline[(i + 1) % 4]);
+            t.extend([[at(a, 0.0), at(b, 0.0), at(b, 6.0)], [at(a, 0.0), at(b, 6.0), at(a, 6.0)]]);
+        }
+        // The slot's wall: walk both rims clockwise (as the top face's boundary runs), ordered
+        // by their angle about the middle, joining them by triangles as they advance.
+        let clockwise = |ring: &[P2]| -> Vec<P2> {
+            let turn = |p: &P2| (-(p[1] - 25.0).atan2(p[0] - 40.0)).rem_euclid(2.0 * PI);
+            let mut out: Vec<P2> = ring.to_vec();
+            out.sort_by(|a, b| turn(a).total_cmp(&turn(b)));
+            out
+        };
+        let (lower, upper) = (clockwise(&bottom), clockwise(&top));
+        let turn = |p: P2| (-(p[1] - 25.0).atan2(p[0] - 40.0)).rem_euclid(2.0 * PI);
+        let (nl, nu) = (lower.len(), upper.len());
+        let (mut i, mut j) = (0, 0);
+        while i < nl || j < nu {
+            let (l0, l1) = (lower[i % nl], lower[(i + 1) % nl]);
+            let (u0, u1) = (upper[j % nu], upper[(j + 1) % nu]);
+            let next_low = if i + 1 >= nl { 2.0 * PI + turn(lower[0]) } else { turn(l1) };
+            let next_up = if j + 1 >= nu { 2.0 * PI + turn(upper[0]) } else { turn(u1) };
+            if j >= nu || (i < nl && next_low <= next_up) {
+                t.push([at(l0, 0.0), at(l1, 0.0), at(u0, 6.0)]);
+                i += 1;
+            } else {
+                t.push([at(l0, 0.0), at(u1, 6.0), at(u0, 6.0)]);
+                j += 1;
+            }
+        }
+        let mesh = Mesh::new(t);
+        assert!(mesh.volume() > 0.0);
+        let (plate, _) = found(&mesh);
+        assert_eq!(plate.slots, [SlotSpec { x: 40.0, y: 25.0, len: 18.0, w: 7.0, angle: 0.0 }]);
+    }
+
+    /// Every facet of a slot's rim split in the middle: the new corners lie on the facets'
+    /// chords, not the circles, and the slot is the same.
+    #[test]
+    fn split_slot_facets() {
+        let ring = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
+        let n = ring.len();
+        let split: Vec<P2> = (0..n)
+            .flat_map(|i| [ring[i], [f64::midpoint(ring[i][0], ring[(i + 1) % n][0]), f64::midpoint(ring[i][1], ring[(i + 1) % n][1])]])
+            .collect();
+        let (plate, _) = found(&plate_with_cutout(split));
+        assert_eq!(plate.slots, [SlotSpec { x: 40.0, y: 25.0, len: 18.0, w: 7.0, angle: 0.0 }]);
     }
 
     /// A slot through the top face that does not reach the bottom face is no through slot.
