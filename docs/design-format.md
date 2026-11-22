@@ -37,7 +37,7 @@ to features (sketch dimensions) and are driven by an expression.
 |---|---|---|
 | `sketch` | `plane: {"type":"origin","name":"XY"}`, `sketch: {points, curves, constraints, counters}` | Point 0 is the fixed origin. Curves and constraints refer to points and curves by **index**. A `length` constraint names its model parameter in `param`. |
 | `extrude` | `sketch` (feature id), `profiles: {"type":"all"}`, `extent: {distance, convention:"total_distance", direction:"positive"}`, `operation: "new_body"` | `body_names` lists the body it creates. |
-| `hole` | `position` (numbers), `at` (three expressions), `direction`, `diameter`, `hole: {"type":"simple"}`, `{"type":"counterbore", cb_diameter, cb_depth}` or `{"type":"countersink", cs_diameter, cs_angle}` | `at` follows parameters; `position` is the pick SolidCraft starts from. A hole whose counterbore or countersink is on the bottom face starts there with `direction: [0, 0, 1]`. `cs_angle` is the cone's full angle; a parameter in degrees drives it. |
+| `hole` | `position` (numbers), `at` (three expressions), `direction`, `diameter`, `depth` (a blind hole's, from the face; through all without it), `hole: {"type":"simple"}`, `{"type":"counterbore", cb_diameter, cb_depth}` or `{"type":"countersink", cs_diameter, cs_angle}` | `at` follows parameters; `position` is the pick SolidCraft starts from. A hole whose counterbore or countersink is on the bottom face starts there with `direction: [0, 0, 1]`. `cs_angle` is the cone's full angle; a parameter in degrees drives it. |
 | `fillet` | `edge_names`, `edges` (one point per edge), `radius` | See below. |
 | `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions) | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
@@ -99,6 +99,13 @@ bottom) imports to 18,311.518 mm³, the volume SolidCraft measured for the part 
 `hole_1_cbore_d = 12`, `hole_1_cbore_depth = 4`, `hole_2_cbore_depth = 3.5`, `hole_3_csk_d = 14`,
 `hole_3_csk_angle = 82` and `base_t = 10` it rebuilt without errors or warnings to
 22,614.14 mm³, as computed.
+
+`blind-holes.stl` (exported by SolidCraft: a 60 x 40 x 8 plate with Ø6 x 4 and Ø3 x 6 blind
+holes from the top, an Ø8 x 2.5 one from the bottom and an Ø5 hole through) imports to
+18,761.748 mm³, the volume SolidCraft measured for the part it exported. A blind hole's `depth`
+runs to its flat floor. With `hole_1_d = 7`, `hole_1_depth = 6`, `hole_3_x = 40`,
+`hole_3_depth = 4`, `hole_4_depth = 2` and `base_t = 10` it rebuilt without errors to
+23,357.544 mm³, as computed.
 
 In a polygon outline the fillet comes before the holes: an inside corner's rounding adds
 material, and a hole drilled before it would drill empty space. `l-inside-hole.stl` (5 mm

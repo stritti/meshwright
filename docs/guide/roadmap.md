@@ -8,9 +8,9 @@
    output (`scripts/compare-mesh2cad.sh`, see [Development](/development)):
    1. (done) parameter names as mesh2cad writes them (`base_t`, `fillet_r`, `extrude_len`, …),
       and the part kept where it is in the file
-   2. hole rows, grids and bolt circles as SolidCraft patterns
-   3. counterbored and countersunk holes
-   4. blind holes
+   2. (done) hole rows, grids and bolt circles as SolidCraft patterns
+   3. (done) counterbored and countersunk holes
+   4. (done) blind holes
    5. slots
    6. bosses on the top face
    7. polygonal cut-outs

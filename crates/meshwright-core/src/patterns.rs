@@ -82,11 +82,14 @@ pub fn group_holes(holes: &[HoleSpec]) -> Vec<HoleGroup> {
     let mut buckets: Vec<Vec<usize>> = Vec::new();
     for (i, hole) in holes.iter().enumerate() {
         // As mesh2cad does, counterbored and countersunk holes stay single holes.
-        if hole.head.is_some() {
+        if hole.head.is_some() || hole.blind.is_some() {
             buckets.push(vec![i]);
             continue;
         }
-        match buckets.iter_mut().find(|b| holes[b[0]].head.is_none() && (holes[b[0]].d - hole.d).abs() <= TOLERANCE) {
+        match buckets
+            .iter_mut()
+            .find(|b| holes[b[0]].head.is_none() && holes[b[0]].blind.is_none() && (holes[b[0]].d - hole.d).abs() <= TOLERANCE)
+        {
             Some(bucket) => bucket.push(i),
             None => buckets.push(vec![i]),
         }
@@ -284,13 +287,13 @@ mod tests {
     use super::*;
 
     fn holes(centres: &[(f64, f64)], d: f64) -> Vec<HoleSpec> {
-        centres.iter().map(|&(x, y)| HoleSpec { x, y, d, head: None }).collect()
+        centres.iter().map(|&(x, y)| HoleSpec { x, y, d, head: None, blind: None }).collect()
     }
 
     fn on_circle(n: usize, r: f64, centre: (f64, f64), start_deg: f64, d: f64) -> Vec<HoleSpec> {
         (0..n)
             .map(|i| (start_deg + 360.0 * i as f64 / n as f64).to_radians())
-            .map(|a| HoleSpec { x: snap(centre.0 + r * a.cos()), y: snap(centre.1 + r * a.sin()), d, head: None })
+            .map(|a| HoleSpec { x: snap(centre.0 + r * a.cos()), y: snap(centre.1 + r * a.sin()), d, head: None, blind: None })
             .collect()
     }
 
@@ -348,9 +351,9 @@ mod tests {
     #[test]
     fn single_holes_keep_their_order() {
         let all = vec![
-            HoleSpec { x: 0.0, y: 0.0, d: 3.0, head: None },
-            HoleSpec { x: 10.0, y: 5.0, d: 4.0, head: None },
-            HoleSpec { x: 30.0, y: 0.0, d: 3.0, head: None },
+            HoleSpec { x: 0.0, y: 0.0, d: 3.0, head: None, blind: None },
+            HoleSpec { x: 10.0, y: 5.0, d: 4.0, head: None, blind: None },
+            HoleSpec { x: 30.0, y: 0.0, d: 3.0, head: None, blind: None },
         ];
         let found = group_holes(&all);
         assert_eq!(found, all.into_iter().map(HoleGroup::Single).collect::<Vec<_>>());
@@ -375,7 +378,7 @@ mod tests {
         let circle: Vec<HoleSpec> = (0..n)
             .map(|k: usize| 30.0 * k as f64 + 0.0135 * k.min(n - k) as f64)
             .map(f64::to_radians)
-            .map(|a| HoleSpec { x: snap(20.0 * a.cos()), y: snap(20.0 * a.sin()), d: 3.0, head: None })
+            .map(|a| HoleSpec { x: snap(20.0 * a.cos()), y: snap(20.0 * a.sin()), d: 3.0, head: None, blind: None })
             .collect();
         let found = group_holes(&circle);
         assert!(found.iter().all(|g| matches!(g, HoleGroup::Single(_))), "{found:?}");
@@ -389,13 +392,22 @@ mod tests {
     }
 
     #[test]
+    fn blind_holes_stay_single() {
+        let mut row = holes(&[(10.0, 10.0), (25.0, 10.0), (40.0, 10.0)], 4.0);
+        for hole in &mut row {
+            hole.blind = Some(crate::recognize::Blind { depth: 3.0, bottom: false });
+        }
+        assert!(group_holes(&row).iter().all(|g| matches!(g, HoleGroup::Single(_))));
+    }
+
+    #[test]
     fn groups_by_diameter() {
         let mut all = holes(&[(10.0, 10.0), (110.0, 10.0), (10.0, 70.0), (110.0, 70.0)], 5.0);
         all.extend(on_circle(6, 15.0, (60.0, 40.0), 0.0, 4.0));
-        all.push(HoleSpec { x: 60.0, y: 40.0, d: 10.0, head: None });
+        all.push(HoleSpec { x: 60.0, y: 40.0, d: 10.0, head: None, blind: None });
         let found = group_holes(&all);
         assert!(matches!(found[0], HoleGroup::Grid { nx: 2, ny: 2, .. }), "{found:?}");
         assert!(matches!(found[1], HoleGroup::Circle { n: 6, .. }), "{found:?}");
-        assert_eq!(found[2], HoleGroup::Single(HoleSpec { x: 60.0, y: 40.0, d: 10.0, head: None }));
+        assert_eq!(found[2], HoleGroup::Single(HoleSpec { x: 60.0, y: 40.0, d: 10.0, head: None, blind: None }));
     }
 }

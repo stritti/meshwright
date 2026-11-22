@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 
 use crate::mesh::{Mesh, Vec3, cross, length, sub};
-use crate::recognize::{HoleHead, HoleSpec, PlateSpec, ProfileSpec, Recognition};
+use crate::recognize::{Blind, HoleHead, HoleSpec, PlateSpec, ProfileSpec, Recognition};
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
 pub const MAX_VOLUME_ERROR: f64 = 0.01;
@@ -71,7 +71,7 @@ fn snap(value: f64) -> f64 {
 type P2 = [f64; 2];
 
 const NOT_FLAT: &str = "it is not a flat plate: some corners lie between its top and bottom faces \
-                        (steps, pockets, bosses and blind holes are not recognised yet)";
+                        (steps, pockets and bosses are not recognised yet)";
 
 /// A hole's rounded parameters, its circle as fitted, and the index of its loop.
 type FittedHole = (HoleSpec, (P2, f64), usize);
@@ -116,17 +116,61 @@ struct Stepped {
     counterbore: bool,
 }
 
+/// Whether `p` lies on the round wall standing on `wall`, a loop meshed round the circle about
+/// `centre` of radius `radius`: on the circle, or on one of the loop's chords.
+fn on_wall(p: P2, centre: P2, radius: f64, wall: &[P2], tol: f64) -> bool {
+    let r = distance(p, centre);
+    (r - radius).abs() <= tol
+        || (r < radius && r >= radius - sagitta(wall, radius) - tol && segments(wall).any(|(a, b)| segment_distance(p, a, b) <= tol))
+}
+
+/// A blind hole: a bore from the top or the bottom face down to a flat floor, in coordinates
+/// relative to the plate's lowest corner.
+#[derive(Debug, Clone)]
+struct BlindHole {
+    centre: P2,
+    r: f64,
+    /// The bore's loop as meshed where it meets the face.
+    ring: Vec<P2>,
+    /// The face it is drilled from, and which way is into the plate from it (as for [`Stepped`]).
+    face_z: f64,
+    inward: f64,
+    /// How deep the floor lies below the face.
+    depth: f64,
+}
+
+impl BlindHole {
+    fn reaches(&self, p: P2, tol: f64) -> bool {
+        distance(p, self.centre) <= self.r + tol
+    }
+
+    fn sagitta(&self) -> f64 {
+        sagitta(&self.ring, self.r)
+    }
+
+    /// Whether `p` lies on the hole's wall or its floor.
+    fn holds(&self, p: Vec3, tol: f64) -> bool {
+        let q = [p[0], p[1]];
+        let depth = (p[2] - self.face_z) * self.inward;
+        if depth < -tol || depth > self.depth + tol {
+            return false;
+        }
+        on_wall(q, self.centre, self.r, &self.ring, tol) || ((depth - self.depth).abs() <= tol && self.reaches(q, tol))
+    }
+
+    /// Whether the facet `cap` (facing up or down) is part of the floor.
+    fn holds_cap(&self, cap: &[Vec3; 3], tol: f64) -> bool {
+        cap.iter().all(|p| ((p[2] - self.face_z) * self.inward - self.depth).abs() <= tol && self.reaches([p[0], p[1]], tol))
+    }
+}
+
 impl Stepped {
     fn reaches(&self, p: P2, tol: f64) -> bool {
         distance(p, self.centre) <= self.head_r + tol
     }
 
-    /// Whether `p` lies on the wall standing on `wall`, a loop meshed round a circle of radius
-    /// `radius`: on the circle, or on one of the loop's chords.
     fn on_wall(&self, p: P2, radius: f64, wall: &[P2], tol: f64) -> bool {
-        let r = distance(p, self.centre);
-        (r - radius).abs() <= tol
-            || (r < radius && r >= radius - sagitta(wall, radius) - tol && segments(wall).any(|(a, b)| segment_distance(p, a, b) <= tol))
+        on_wall(p, self.centre, radius, wall, tol)
     }
 
     /// How far the longer facets of the bore's and the mouth's loops come inside their circles.
@@ -241,18 +285,28 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         loops.iter().enumerate().filter(|(_, l)| signed_area(l) < 0.0).map(|(k, l)| round_hole(l, tol).map(|(h, c)| (h, c, k))).collect()
     };
     let (tops, bottoms) = (fit(&loops)?, fit(&bottom_loops)?);
-    if tops.len() != bottoms.len() {
-        return Err("a hole does not go through (blind holes are not recognised yet)".into());
-    }
     let mut circles = Vec::new();
     let mut wall_loops = vec![outline.clone()];
     let mut holes = Vec::new();
     let mut stepped = Vec::new();
+    // A circle on one face only is a blind hole's mouth; its depth is found below.
+    let mouth = |centre: P2, r: f64, ring: &Vec<P2>, face_z: f64, inward: f64| BlindHole {
+        centre,
+        r,
+        ring: ring.clone(),
+        face_z,
+        inward,
+        depth: 0.0,
+    };
+    let mut mouths: Vec<(&HoleSpec, BlindHole)> = Vec::new();
+    let mut paired = vec![false; bottoms.len()];
     for (hole, (centre, top_r), loop_index) in &tops {
-        let (_, (bottom_centre, bottom_r), bottom_index) = bottoms
-            .iter()
-            .find(|(_, (c, _), _)| distance(*c, *centre) <= tol)
-            .ok_or("a hole does not go straight through (slanted and blind holes are not recognised yet)")?;
+        let Some(j) = bottoms.iter().position(|(_, (c, _), _)| distance(*c, *centre) <= tol) else {
+            mouths.push((hole, mouth(*centre, *top_r, &loops[*loop_index], size[2], -1.0)));
+            continue;
+        };
+        paired[j] = true;
+        let (_, (bottom_centre, bottom_r), bottom_index) = &bottoms[j];
         if (top_r - bottom_r).abs() <= tol {
             circles.push((*centre, *top_r));
             wall_loops.push(loops[*loop_index].clone());
@@ -293,15 +347,37 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         if s.depth <= tol || s.depth >= size[2] - tol {
             return Err("a hole's counterbore or countersink is as deep as the plate (stepped holes are not recognised yet)".into());
         }
-        holes.push(HoleSpec { x: snap(centre[0]), y: snap(centre[1]), d: snap(2.0 * bore_r), head: Some(s.head()) });
+        holes.push(HoleSpec { x: snap(centre[0]), y: snap(centre[1]), d: snap(2.0 * bore_r), head: Some(s.head()), blind: None });
         stepped.push(s);
+    }
+    for ((hole, (centre, r), k), _) in bottoms.iter().zip(&paired).filter(|(_, paired)| !**paired) {
+        mouths.push((hole, mouth(*centre, *r, &bottom_loops[*k], 0.0, 1.0)));
+    }
+    let mut blinds = Vec::new();
+    for (hole, mut b) in mouths {
+        let (face_z, inward) = (b.face_z, b.inward);
+        // Its floor: the facets facing up or down within its circle. That they are flat and
+        // all at one depth is checked with the other facets below.
+        let inside = |p: &Vec3| p[2] > tol && p[2] < size[2] - tol;
+        b.depth = faces
+            .caps
+            .iter()
+            .filter(|cap| cap.iter().all(|p| inside(p) && b.reaches([p[0], p[1]], tol)))
+            .flatten()
+            .map(|p| (p[2] - face_z) * inward)
+            .reduce(f64::max)
+            .ok_or(
+                "a hole neither goes straight through nor ends in a flat floor (slanted holes and drill points are not recognised yet)",
+            )?;
+        holes.push(HoleSpec { blind: Some(Blind { depth: snap(b.depth), bottom: inward > 0.0 }), ..hole.clone() });
+        blinds.push(b);
     }
     holes.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
 
     // Without stepped holes the mesh must be a prism over its top face: the two faces match, and
     // walls meshed in bands bulge only a little between the top face's corners (0.1%). A step
     // changes either by far more.
-    if stepped.is_empty() {
+    if stepped.is_empty() && blinds.is_empty() {
         let area = |t: &[[P2; 3]]| t.iter().map(|[a, b, c]| signed_area(&[*a, *b, *c])).sum::<f64>();
         let top_area = area(&faces.top);
         if !close(top_area, area(&faces.bottom), 1e-4) || !close(top_area * size[2], mesh_volume, 1e-3) {
@@ -311,7 +387,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     // A facet facing up or down between the faces must belong to a counterbore's floor or a
     // countersink's cone; anywhere else it is a floor or a ledge (of a blind hole, a step or a
     // pocket), even when its corners lie on a hole's circle.
-    if !faces.caps.iter().all(|cap| stepped.iter().any(|s| s.holds_cap(cap, tol))) {
+    if !faces.caps.iter().all(|cap| stepped.iter().any(|s| s.holds_cap(cap, tol)) || blinds.iter().any(|b| b.holds_cap(cap, tol))) {
         return Err(NOT_FLAT.into());
     }
     // Corners between the top and the bottom face, and the bottom ends of the walls, must lie on
@@ -319,17 +395,23 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     // they are a step, a pocket, a boss, or a wall that leans (a sheared prism has the same areas
     // and volume as a straight one).
     let walls = Walls::new(&corners, radius, &circles, &wall_loops, scale, tol);
-    let in_step = |p: Vec3| stepped.iter().any(|s| s.holds(p, tol));
+    let in_step = |p: Vec3| stepped.iter().any(|s| s.holds(p, tol)) || blinds.iter().any(|b| b.holds(p, tol));
     if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p)) {
         return Err(NOT_FLAT.into());
     }
     // A wall facet's edge in a stepped hole's mouth must follow the hole's surface too: its
     // middle within the sagitta of a chord two facets long, or the facet cuts across the bore.
-    let follows = |&(a, b, middle): &(P2, P2, Vec3)| match stepped.iter().find(|s| s.reaches(a, tol) && s.reaches(b, tol)) {
-        Some(s) => s.holds(middle, tol + 4.0 * s.sagitta()),
-        None => walls.holds_chord(a, b),
+    let follows = |&(a, b, middle): &(P2, P2, Vec3)| {
+        if let Some(s) = stepped.iter().find(|s| s.reaches(a, tol) && s.reaches(b, tol)) {
+            s.holds(middle, tol + 4.0 * s.sagitta())
+        } else if let Some(h) = blinds.iter().find(|h| h.reaches(a, tol) && h.reaches(b, tol)) {
+            h.holds(middle, tol + 4.0 * h.sagitta())
+        } else {
+            walls.holds_chord(a, b)
+        }
     };
-    if faces.rim.iter().any(|p| !walls.holds(*p) && !in_step([p[0], p[1], 0.0])) || !faces.chords.iter().all(follows) {
+    let on_blind_wall = |p: &P2| blinds.iter().any(|b| on_wall(*p, b.centre, b.r, &b.ring, tol));
+    if faces.rim.iter().any(|p| !walls.holds(*p) && !in_step([p[0], p[1], 0.0]) && !on_blind_wall(p)) || !faces.chords.iter().all(follows) {
         return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
     }
 
@@ -968,7 +1050,7 @@ fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
     if (around.abs() - 2.0 * PI).abs() > 1e-6 || steps.iter().any(|s| *s > MAX_HOLE_STEP || *s > MAX_STEP_RATIO * median) {
         return Err(not_round());
     }
-    Ok((HoleSpec { x: snap(cx), y: snap(cy), d: snap(2.0 * r), head: None }, ([cx, cy], r)))
+    Ok((HoleSpec { x: snap(cx), y: snap(cy), d: snap(2.0 * r), head: None, blind: None }, ([cx, cy], r)))
 }
 
 /// The least-squares circle through `points` (Kåsa's algebraic fit), as centre and radius.
@@ -1024,7 +1106,7 @@ mod tests {
             x: 80.0,
             y: 50.0,
             z: 5.0,
-            holes: holes.iter().map(|&(x, y, d)| HoleSpec { x, y, d, head: None }).collect(),
+            holes: holes.iter().map(|&(x, y, d)| HoleSpec { x, y, d, head: None, blind: None }).collect(),
             outline_fillet_r: r,
         }
     }
@@ -1034,7 +1116,10 @@ mod tests {
         ProfileSpec {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
-            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None }, HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None }],
+            holes: vec![
+                HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None },
+                HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None, blind: None },
+            ],
             outline_fillet_r: r,
         }
     }
@@ -1144,7 +1229,7 @@ mod tests {
         let expected = ProfileSpec {
             corners: vec![[0.0, 0.0], [50.0, 0.0], [60.0, 20.0], [25.0, 35.0], [0.0, 20.0]],
             z: 4.0,
-            holes: vec![HoleSpec { x: 25.0, y: 15.0, d: 8.0, head: None }],
+            holes: vec![HoleSpec { x: 25.0, y: 15.0, d: 8.0, head: None, blind: None }],
             outline_fillet_r: Some(3.0),
         };
         let mesh = synth::profile(&expected, 64, [0.0; 3]);
@@ -1241,12 +1326,12 @@ mod tests {
     }
 
     /// A 200 x 200 x 5 mm plate with a 2 mm blind hole 2.5 mm deep, its floor a fan of the rim's
-    /// corners: every corner between the faces lies on the hole's circle, but the floor is no wall.
+    /// corners: every corner between the faces lies on the hole's circle, and the floor is a floor.
     #[test]
-    fn a_blind_hole_is_no_through_hole() {
+    fn fanned_blind_floors_are_floors() {
         let (z, floor) = (5.0, 2.5);
         let outline = [[0.0, 0.0], [200.0, 0.0], [200.0, 200.0], [0.0, 200.0]];
-        let ring = synth::rings(&[HoleSpec { x: 100.0, y: 100.0, d: 2.0, head: None }], 16).remove(0);
+        let ring = synth::rings(&[HoleSpec { x: 100.0, y: 100.0, d: 2.0, head: None, blind: None }], 16).remove(0);
         let lift = |p: P2, h: f64| [p[0], p[1], h];
         let mut t: Vec<crate::mesh::Triangle> = Vec::new();
         for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&ring)) {
@@ -1272,8 +1357,10 @@ mod tests {
         }
         let mesh = Mesh::new(t);
         assert!(mesh.volume() > 0.0);
-        let why = reason(&mesh);
-        assert!(why.contains("not a flat plate") || why.contains("does not go through"), "{why}");
+        let (plate, _) = found(&mesh);
+        assert_eq!(plate.holes[0].blind, Some(Blind { depth: 2.5, bottom: false }));
+        // Its floor's fan is no through hole's wall.
+        assert!((plate.volume() - mesh.volume()).abs() / mesh.volume() < 1e-5);
     }
 
     /// A banded wall corner moved out to where the sharp corner would be is no wall: straight
@@ -1338,10 +1425,10 @@ mod tests {
     #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
     fn sheared_walls_are_not_vertical() {
         let outline = [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]];
-        let ring = synth::rings(&[HoleSpec { x: 40.0, y: 25.0, d: 8.0, head: None }], 32);
+        let ring = synth::rings(&[HoleSpec { x: 40.0, y: 25.0, d: 8.0, head: None, blind: None }], 32);
         let leaning_hole = sheared(&outline, &ring, 5.0, [0.0; 2], [0.5, 0.0]);
         let why = reason(&leaning_hole);
-        assert!(why.contains("not vertical") || why.contains("does not go straight through"), "{why}");
+        assert!(why.contains("not vertical") || why.contains("straight through"), "{why}");
         let leaning_block = sheared(&outline, &[], 5.0, [0.5, 0.0], [0.0; 2]);
         let why = reason(&leaning_block);
         assert!(why.contains("not vertical") || why.contains("faces differ"), "{why}");
@@ -1572,6 +1659,87 @@ mod tests {
         assert_eq!(plate.holes.len(), 2);
     }
 
+    /// A 60 x 40 x 8 plate exported from SolidCraft 0.45 with blind holes from the top (Ø6 x 4,
+    /// Ø3 x 6) and the bottom (Ø8 x 2.5) and an Ø5 hole through.
+    #[test]
+    fn recognises_blind_holes() {
+        let mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/blind-holes.stl")).expect("parses");
+        let (plate, _) = found(&mesh);
+        let blind = |depth: f64, bottom: bool| Some(Blind { depth, bottom });
+        let holes: Vec<(f64, f64, f64, Option<Blind>)> = plate.holes.iter().map(|h| (h.x, h.y, h.d, h.blind)).collect();
+        assert_eq!(
+            holes,
+            [
+                (15.0, 20.0, 6.0, blind(4.0, false)),
+                (30.0, 20.0, 5.0, None),
+                (45.0, 20.0, 8.0, blind(2.5, true)),
+                (45.0, 32.0, 3.0, blind(6.0, false))
+            ]
+        );
+        // SolidCraft measured 18,761.748 mm³ for the part it exported.
+        assert!((plate.volume() - 18_761.748).abs() < 0.001, "{}", plate.volume());
+    }
+
+    /// A blind hole's floor turned 0.5 mm off level is no floor.
+    #[test]
+    fn a_tilted_blind_floor_is_refused() {
+        let mut mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/blind-holes.stl")).expect("parses");
+        // Lower the floor corners of the Ø6 hole (at 15, 20; floor 4 mm down) on one side.
+        for t in &mut mesh.triangles {
+            for p in t.iter_mut() {
+                if (p[2] - 4.0).abs() < 1e-4 && p[0] > 15.0 && (p[0] - 15.0).hypot(p[1] - 20.0) < 3.1 {
+                    p[2] -= 0.5;
+                }
+            }
+        }
+        reason(&mesh);
+    }
+
+    /// A closed 60 x 40 x 8 plate with an Ø6 blind hole of `n` corners at (15, 20) from the top,
+    /// its wall `depth` deep and its end a flat floor or, with `tip`, a cone that far deeper.
+    fn blind_plate(depth: f64, tip: f64, n: usize) -> Mesh {
+        let ring = synth::rings(&[HoleSpec { x: 15.0, y: 20.0, d: 6.0, head: None, blind: None }], n).remove(0);
+        let (z, floor) = (8.0, 8.0 - depth);
+        let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+        let at = |p: P2, h: f64| [p[0], p[1], h];
+        let mut triangles = Vec::new();
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&ring)) {
+            triangles.push([at(a, z), at(b, z), at(c, z)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, &[]) {
+            triangles.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        if tip > 0.0 {
+            let apex = [15.0, 20.0, floor - tip];
+            for i in 0..n {
+                triangles.push([at(ring[i], floor), at(ring[(i + 1) % n], floor), apex]);
+            }
+        } else {
+            for [a, b, c] in synth::triangulate(&ring, &[]) {
+                triangles.push([at(a, floor), at(b, floor), at(c, floor)]);
+            }
+        }
+        let mut wall = |ring: &[P2], lo: f64, hi: f64| {
+            let m = ring.len();
+            for i in 0..m {
+                let (a, b) = (ring[i], ring[(i + 1) % m]);
+                triangles.extend([[at(a, lo), at(b, lo), at(b, hi)], [at(a, lo), at(b, hi), at(a, hi)]]);
+            }
+        };
+        wall(&outline, 0.0, z);
+        wall(&ring.iter().rev().copied().collect::<Vec<P2>>(), floor, z);
+        Mesh::new(triangles)
+    }
+
+    /// A blind hole of a synthetic mesh, flat-bottomed; one with a drill point is refused.
+    #[test]
+    fn blind_holes_need_flat_floors() {
+        let (plate, _) = found(&blind_plate(4.0, 0.0, 32));
+        assert_eq!(plate.holes, [HoleSpec { x: 15.0, y: 20.0, d: 6.0, head: None, blind: Some(Blind { depth: 4.0, bottom: false }) }]);
+        let why = reason(&blind_plate(4.0, 1.8, 32));
+        assert!(why.contains("not a flat plate") || why.contains("flat floor"), "{why}");
+    }
+
     /// A 60 x 40 x 8 plate exported from SolidCraft 0.45 with a counterbore and a countersink on
     /// the top face and a counterbore on the bottom face.
     #[test]
@@ -1636,7 +1804,7 @@ mod tests {
     /// meet, as an exporter refining a mesh would: the new corner lies on the chord. `twist` turns
     /// the bore's upper rim (at the floor) by that angle about the hole's axis.
     fn counterbored(bore: f64, head: f64, depth: f64, n: usize, split: bool, twist: f64) -> Mesh {
-        let ring = |d: f64| synth::rings(&[HoleSpec { x: 30.0, y: 30.0, d, head: None }], n).remove(0);
+        let ring = |d: f64| synth::rings(&[HoleSpec { x: 30.0, y: 30.0, d, head: None, blind: None }], n).remove(0);
         let (bore_ring, head_ring) = (ring(bore), ring(head));
         let (sin, cos) = twist.sin_cos();
         let turned: Vec<P2> = bore_ring
@@ -1776,8 +1944,13 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)] // the edge corners are the generator output, bit for bit
     fn split_hole_rims_stay_round() {
-        let expected =
-            PlateSpec { x: 60.0, y: 60.0, z: 8.0, holes: vec![HoleSpec { x: 30.0, y: 30.0, d: 10.0, head: None }], outline_fillet_r: None };
+        let expected = PlateSpec {
+            x: 60.0,
+            y: 60.0,
+            z: 8.0,
+            holes: vec![HoleSpec { x: 30.0, y: 30.0, d: 10.0, head: None, blind: None }],
+            outline_fillet_r: None,
+        };
         let mut mesh = synth::plate(&expected, 16, [0.0; 3]);
         let ring = synth::rings(&expected.holes, 16).remove(0);
         let (p, q) = ([ring[0][0], ring[0][1], 0.0], [ring[1][0], ring[1][1], 0.0]);
@@ -1810,7 +1983,10 @@ mod tests {
         let Recognition::Profile { profile, offset } = recognize(&mesh) else { panic!("not recognised: {:?}", recognize(&mesh)) };
         assert_eq!(offset, [20.0, 10.0, 0.0]);
         assert_eq!(profile.corners, [[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]]);
-        assert_eq!(profile.holes, [HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None }, HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None }]);
+        assert_eq!(
+            profile.holes,
+            [HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }, HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None, blind: None }]
+        );
         assert_eq!((profile.z, profile.outline_fillet_r), (5.0, Some(2.0)));
     }
 

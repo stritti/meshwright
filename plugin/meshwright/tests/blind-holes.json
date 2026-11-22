@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "blind-holes.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 7, "loss_report": {"summary": "A 60 x 40 x 8 mm plate with 4 holes"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 18761.747825}},
+    "tolerance": 1e-4
+  }
+}
