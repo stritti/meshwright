@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "stepped-holes.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 6, "loss_report": {"summary": "A 60 x 40 x 8 mm plate with 3 holes"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 18311.518328}},
+    "tolerance": 1e-4
+  }
+}

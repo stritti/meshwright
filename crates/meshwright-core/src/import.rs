@@ -142,7 +142,13 @@ mod tests {
     #[test]
     fn plate_import_writes_history_and_notes() {
         use crate::recognize::{HoleSpec, PlateSpec};
-        let spec = PlateSpec { x: 60.0, y: 40.0, z: 5.0, holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 10.0 }], outline_fillet_r: Some(4.0) };
+        let spec = PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 5.0,
+            holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 10.0, head: None }],
+            outline_fillet_r: Some(4.0),
+        };
         let bytes = stl::write_binary(&crate::synth::plate(&spec, 24, [-30.0, -20.0, 0.0]));
         let result = import(&bytes, "bracket.stl", &ImportOptions::default()).expect("imports");
         let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
@@ -172,6 +178,30 @@ mod tests {
         assert_eq!(json["features"][2]["translate"], serde_json::json!(["base_cx - base_x / 2", "base_cy - base_y / 2", "base_z0"]));
         assert_eq!(json["features"][3]["position"], serde_json::json!([0.0, 0.0, 5.0]));
         assert_eq!(json["features"][4]["edges"][0], serde_json::json!([-30.0, -20.0, 2.5]));
+    }
+
+    /// Counterbores and countersinks become SolidCraft's own hole kinds with mesh2cad's names; a
+    /// counterbore on the bottom face is drilled up from there.
+    #[test]
+    fn stepped_holes_become_hole_kinds() {
+        let bytes = include_bytes!("../../../plugin/meshwright/tests/stepped-holes.stl");
+        let result = import(bytes, "stepped-holes.stl", &ImportOptions::default()).expect("imports");
+        let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
+        let holes: Vec<&serde_json::Value> =
+            json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "hole").collect();
+        assert_eq!(
+            holes[0]["hole"],
+            serde_json::json!({"type": "counterbore", "cb_diameter": "hole_1_cbore_d", "cb_depth": "hole_1_cbore_depth"})
+        );
+        assert_eq!(holes[1]["direction"], serde_json::json!([0.0, 0.0, 1.0]));
+        assert_eq!(holes[1]["at"][2], "base_z0");
+        assert_eq!(
+            holes[2]["hole"],
+            serde_json::json!({"type": "countersink", "cs_diameter": "hole_3_csk_d", "cs_angle": "hole_3_csk_angle"})
+        );
+        let param = |name: &str| result.design.params.iter().find(|p| p.name == name).map(|p| p.expr.as_str());
+        assert_eq!(param("hole_2_cbore_depth"), Some("2.5 mm"));
+        assert_eq!(param("hole_3_csk_angle"), Some("90 deg"));
     }
 
     /// The plugin test's pattern plate: a grid, a row and a bolt circle become one hole and a
@@ -217,7 +247,7 @@ mod tests {
         let spec = ProfileSpec {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
-            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0 }],
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None }],
             outline_fillet_r: None,
         };
         let bytes = stl::write_binary(&crate::synth::profile(&spec, 32, [20.0, 10.0, 3.0]));

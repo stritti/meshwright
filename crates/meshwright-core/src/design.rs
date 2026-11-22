@@ -415,6 +415,20 @@ pub enum PatternKind {
 pub enum HoleKind {
     /// A plain through hole.
     Simple,
+    /// A through hole with a flat-bottomed recess at its mouth.
+    Counterbore {
+        /// The recess's diameter (an expression).
+        cb_diameter: String,
+        /// Its depth from the face (an expression).
+        cb_depth: String,
+    },
+    /// A through hole with a cone at its mouth.
+    Countersink {
+        /// The cone's diameter at the face (an expression).
+        cs_diameter: String,
+        /// The cone's full angle (an expression in degrees).
+        cs_angle: String,
+    },
 }
 
 /// Builds a [`Design`], handing out feature ids and body names in order.

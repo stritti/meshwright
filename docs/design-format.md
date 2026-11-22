@@ -37,7 +37,7 @@ to features (sketch dimensions) and are driven by an expression.
 |---|---|---|
 | `sketch` | `plane: {"type":"origin","name":"XY"}`, `sketch: {points, curves, constraints, counters}` | Point 0 is the fixed origin. Curves and constraints refer to points and curves by **index**. A `length` constraint names its model parameter in `param`. |
 | `extrude` | `sketch` (feature id), `profiles: {"type":"all"}`, `extent: {distance, convention:"total_distance", direction:"positive"}`, `operation: "new_body"` | `body_names` lists the body it creates. |
-| `hole` | `position` (numbers), `at` (three expressions), `direction`, `diameter`, `hole: {"type":"simple"}` | `at` follows parameters; `position` is the pick SolidCraft starts from. |
+| `hole` | `position` (numbers), `at` (three expressions), `direction`, `diameter`, `hole: {"type":"simple"}`, `{"type":"counterbore", cb_diameter, cb_depth}` or `{"type":"countersink", cs_diameter, cs_angle}` | `at` follows parameters; `position` is the pick SolidCraft starts from. A hole whose counterbore or countersink is on the bottom face starts there with `direction: [0, 0, 1]`. `cs_angle` is the cone's full angle; a parameter in degrees drives it. |
 | `fillet` | `edge_names`, `edges` (one point per edge), `radius` | See below. |
 | `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions) | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
@@ -92,6 +92,13 @@ bolt circle of six round a single bore) imports in `solidcraft-cli 0.45.0` to 55
 computed; with `hole_grid_1_nx = 3`, `hole_grid_1_pitch_x = 50`, `hole_row_1_n = 4`,
 `hole_circle_1_n = 8`, `hole_circle_1_r = 18` and `hole_circle_1_angle = 0` it rebuilt without
 errors or warnings to 55,566.66 mm³ with five more bores, again as computed.
+
+`stepped-holes.stl` (exported by SolidCraft: a 60 x 40 x 8 plate with an Ø5.5 / Ø10 x 3
+counterbore and an Ø6 / Ø12 90° countersink on top and an Ø4 / Ø8 x 2.5 counterbore on the
+bottom) imports to 18,311.518 mm³, the volume SolidCraft measured for the part it exported. With
+`hole_1_cbore_d = 12`, `hole_1_cbore_depth = 4`, `hole_2_cbore_depth = 3.5`, `hole_3_csk_d = 14`,
+`hole_3_csk_angle = 82` and `base_t = 10` it rebuilt without errors or warnings to
+22,614.14 mm³, as computed.
 
 In a polygon outline the fillet comes before the holes: an inside corner's rounding adds
 material, and a hole drilled before it would drill empty space. `l-inside-hole.stl` (5 mm
