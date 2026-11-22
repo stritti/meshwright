@@ -54,7 +54,7 @@ pub fn prism(outline: &[P2], holes: &[Vec<P2>], z: f64, offset: Vec3) -> Mesh {
 }
 
 /// Each hole as a counter-clockwise polygon of `segments` corners on its circle.
-fn rings(holes: &[HoleSpec], segments: usize) -> Vec<Vec<P2>> {
+pub(crate) fn rings(holes: &[HoleSpec], segments: usize) -> Vec<Vec<P2>> {
     holes
         .iter()
         .map(|h| {
@@ -68,7 +68,7 @@ fn rings(holes: &[HoleSpec], segments: usize) -> Vec<Vec<P2>> {
 
 /// The outline through `corners` (counter-clockwise) with every corner rounded with radius `r`,
 /// each arc faceted like a circle of `segments` facets (at least one facet per corner).
-fn rounded(corners: &[P2], r: Option<f64>, segments: usize) -> Vec<P2> {
+pub(crate) fn rounded(corners: &[P2], r: Option<f64>, segments: usize) -> Vec<P2> {
     let Some(r) = r else { return corners.to_vec() };
     let n = corners.len();
     let mut out = Vec::new();
@@ -119,7 +119,7 @@ fn crosses(a: P2, b: P2, ring: &[P2]) -> bool {
 }
 
 /// Ear clipping, after bridging each hole into the outline from its rightmost corner.
-fn triangulate(outline: &[P2], holes: &[Vec<P2>]) -> Vec<[P2; 3]> {
+pub(crate) fn triangulate(outline: &[P2], holes: &[Vec<P2>]) -> Vec<[P2; 3]> {
     let n = outline.len();
     if holes.is_empty() && (0..n).all(|i| orient(outline[(i + n - 1) % n], outline[i], outline[(i + 1) % n]) > 0.0) {
         // A convex outline: a fan from its first corner (and no cubic ear search for test
