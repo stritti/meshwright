@@ -69,8 +69,9 @@ type P2 = [f64; 2];
 const NOT_FLAT: &str = "it is not a flat plate: some corners lie between its top and bottom faces \
                         (steps, pockets, bosses and blind holes are not recognised yet)";
 
-/// The top face's triangles, the bottom face's area and the corners between the two faces.
-type Faces = (Vec<[P2; 3]>, f64, Vec<P2>);
+/// The top face's triangles, the bottom face's area, the corners between the two faces and the
+/// bottom corners of the walls that run from the top to the bottom.
+type Faces = (Vec<[P2; 3]>, f64, Vec<P2>, Vec<P2>);
 
 /// Looks for a plate in `mesh`. `Err` carries the reason in the user's words.
 pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
@@ -86,7 +87,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         return Err("the mesh is not closed or its faces point inwards".into());
     }
 
-    let (top, bottom_area, between) = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
+    let (top, bottom_area, between, rim) = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
     let top_area: f64 = top.iter().map(|[a, b, c]| signed_area(&[*a, *b, *c])).sum();
     let close = |a: f64, b: f64, rel: f64| (a - b).abs() <= rel * a.abs().max(b.abs());
     // An exporter may mesh the top and bottom faces apart, with their own corners on round
@@ -109,10 +110,15 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     let circles: Vec<(P2, f64)> = fitted.iter().map(|f| f.1).collect();
     let mut holes: Vec<HoleSpec> = fitted.into_iter().map(|f| f.0).collect();
     holes.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
-    // Corners between the top and the bottom face must lie on the walls the top face's
-    // boundary stands for; anywhere else they are a step, a pocket or a boss.
-    if between.iter().any(|p| !on_wall(*p, &corners, radius, &circles, tol)) {
+    // Corners between the top and the bottom face, and the bottom ends of the walls, must lie on
+    // the walls the top face's boundary stands for: anywhere else they are a step, a pocket, a
+    // boss, or a wall that leans (a sheared prism has the same areas and volume as a straight one).
+    let walls = Walls::new(&corners, radius, &circles, &loops, scale, tol);
+    if between.iter().any(|p| !walls.holds(*p)) {
         return Err(NOT_FLAT.into());
+    }
+    if rim.iter().any(|p| !walls.holds(*p)) {
+        return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
     }
 
     let offset = bounds.min.map(|c| if c.abs() <= tol { 0.0 } else { snap(c) });
@@ -153,6 +159,7 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
     let mut top = Vec::new();
     let mut bottom_area = 0.0;
     let mut between = Vec::new();
+    let mut rim = Vec::new();
     for triangle in &mesh.triangles {
         let [a, b, c] = *triangle;
         let normal = cross(sub(b, a), sub(c, a));
@@ -188,55 +195,109 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
             3 if nz > 0.0 || sliver => top.push(triangle.map(|p| [p[0] - min[0], p[1] - min[1]])),
             0 if nz < 0.0 || sliver => bottom_area -= normal[2] / 2.0,
             0 | 3 => return Err("some faces point inwards".into()),
-            // A wall from the top to the bottom: its corners lie on the top and bottom faces' own
-            // boundaries (a drafted wall shows as top and bottom faces that differ).
-            _ => {}
+            // A wall from the top to the bottom: its top corners lie on the top face's boundary,
+            // its bottom corners must lie under it (the caller checks; a sheared or drafted wall's
+            // do not).
+            _ => rim.extend(triangle.iter().filter(|p| (p[2] - min[2]).abs() <= tol).map(|p| [p[0] - min[0], p[1] - min[1]])),
         }
     }
-    Ok((top, bottom_area, between))
+    // A corner is shared by several facets; it needs checking once.
+    for points in [&mut between, &mut rim] {
+        points.sort_by(|p, q| p[0].total_cmp(&q[0]).then(p[1].total_cmp(&q[1])));
+        points.dedup();
+    }
+    Ok((top, bottom_area, between, rim))
 }
 
-/// Whether `p` (relative to the plate's corner) lies on a wall of the plate: on a hole's circle,
-/// on a side of the outline `corners` or, with rounded corners of radius `radius`, on a corner's
-/// arc.
-fn on_wall(p: P2, corners: &[P2], radius: Option<f64>, circles: &[(P2, f64)], tol: f64) -> bool {
-    if circles.iter().any(|(c, r)| (distance(p, *c) - r).abs() <= tol) {
-        return true;
-    }
-    let n = corners.len();
-    let r = radius.unwrap_or(0.0);
-    let unit = |p: P2, q: P2| {
-        let len = distance(p, q);
-        [(q[0] - p[0]) / len, (q[1] - p[1]) / len]
-    };
-    // Per corner: how far its arc's tangent points lie from it along the sides (0 when sharp),
-    // and the arc's centre (inside the turn, `r` from both sides).
-    let rounds: Vec<(f64, P2)> = (0..n)
-        .map(|i| {
-            let (a, c, b) = (corners[(i + n - 1) % n], corners[i], corners[(i + 1) % n]);
-            let (d1, d2) = (unit(a, c), unit(c, b));
-            let turn = (d1[0] * d2[1] - d1[1] * d2[0]).atan2(d1[0] * d2[0] + d1[1] * d2[1]);
-            let t = r * (turn.abs() / 2.0).tan();
-            let start = [c[0] - d1[0] * t, c[1] - d1[1] * t];
-            let side = r * turn.signum();
-            (t, [start[0] - d1[1] * side, start[1] + d1[0] * side])
-        })
-        .collect();
-    (0..n).any(|i| {
-        let (c, b) = (corners[i], corners[(i + 1) % n]);
-        let d = unit(c, b);
-        // The side's straight part, between the tangent points of its two corners' arcs.
-        let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
-        let from = [c[0] + d[0] * t0, c[1] + d[1] * t0];
-        let to = [b[0] - d[0] * t1, b[1] - d[1] * t1];
-        if segment_distance(p, from, to) <= tol {
-            return true;
+/// One piece of a plate's walls, seen from above.
+enum Wall {
+    /// A straight wall, or a facet of the top face's boundary as meshed.
+    Segment(P2, P2),
+    /// A rounded corner: on the circle about `centre` of radius `r`, no farther from the sharp
+    /// `corner` than its tangent points (`t`); the rest of the circle lies farther away.
+    Arc { centre: P2, r: f64, corner: P2, t: f64 },
+    /// A hole's bore, as fitted (not as its rounded parameters).
+    Circle(P2, f64),
+}
+
+/// The walls of a recognised plate, indexed on a grid so that checking a corner against them
+/// costs the same however many corners and holes the plate has.
+struct Walls {
+    pieces: Vec<Wall>,
+    cells: HashMap<(i64, i64), Vec<usize>>,
+    cell: f64,
+    tol: f64,
+}
+
+impl Walls {
+    /// The walls of the outline `corners` (rounded with `radius`), of the holes' `circles` and,
+    /// as meshed, of the top face's boundary `loops` (a facet's chord of an arc is no wall of the
+    /// true part, but its corners and its subdivisions lie on it).
+    fn new(corners: &[P2], radius: Option<f64>, circles: &[(P2, f64)], loops: &[Vec<P2>], size: f64, tol: f64) -> Self {
+        let n = corners.len();
+        let r = radius.unwrap_or(0.0);
+        let unit = |p: P2, q: P2| {
+            let len = distance(p, q);
+            [(q[0] - p[0]) / len, (q[1] - p[1]) / len]
+        };
+        // Per corner: how far its arc's tangent points lie from it along the sides (0 when
+        // sharp), and the arc's centre (inside the turn, `r` from both sides).
+        let rounds: Vec<(f64, P2)> = (0..n)
+            .map(|i| {
+                let (a, c, b) = (corners[(i + n - 1) % n], corners[i], corners[(i + 1) % n]);
+                let (d1, d2) = (unit(a, c), unit(c, b));
+                let turn = (d1[0] * d2[1] - d1[1] * d2[0]).atan2(d1[0] * d2[0] + d1[1] * d2[1]);
+                let t = r * (turn.abs() / 2.0).tan();
+                let start = [c[0] - d1[0] * t, c[1] - d1[1] * t];
+                let inward = r * turn.signum();
+                (t, [start[0] - d1[1] * inward, start[1] + d1[0] * inward])
+            })
+            .collect();
+        let mut walls = Vec::new();
+        for i in 0..n {
+            let (c, b) = (corners[i], corners[(i + 1) % n]);
+            let d = unit(c, b);
+            // The side's straight part, between the tangent points of its two corners' arcs.
+            let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
+            walls.push(Wall::Segment([c[0] + d[0] * t0, c[1] + d[1] * t0], [b[0] - d[0] * t1, b[1] - d[1] * t1]));
+            if r > 0.0 {
+                walls.push(Wall::Arc { centre: rounds[i].1, r, corner: c, t: rounds[i].0 });
+            }
         }
-        // The arc of corner `c`: on its circle, and no farther from the corner than its tangent
-        // points (the rest of the circle lies farther away).
-        let (t, centre) = rounds[i];
-        r > 0.0 && (distance(p, centre) - r).abs() <= tol && distance(p, c) <= t + tol
-    })
+        walls.extend(circles.iter().map(|&(c, r)| Wall::Circle(c, r)));
+        for ring in loops {
+            walls.extend((0..ring.len()).map(|i| Wall::Segment(ring[i], ring[(i + 1) % ring.len()])));
+        }
+        // About 256 cells across the plate, never finer than a few tolerances.
+        let cell = (size / 256.0).max(4.0 * tol);
+        let mut cells: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+        for (k, wall) in walls.iter().enumerate() {
+            let (lo, hi) = match *wall {
+                Wall::Segment(a, b) => ([a[0].min(b[0]), a[1].min(b[1])], [a[0].max(b[0]), a[1].max(b[1])]),
+                Wall::Arc { centre, r, .. } | Wall::Circle(centre, r) => ([centre[0] - r, centre[1] - r], [centre[0] + r, centre[1] + r]),
+            };
+            let at = |v: f64| ((v / cell).floor()) as i64;
+            for x in at(lo[0] - tol)..=at(hi[0] + tol) {
+                for y in at(lo[1] - tol)..=at(hi[1] + tol) {
+                    cells.entry((x, y)).or_default().push(k);
+                }
+            }
+        }
+        Self { pieces: walls, cells, cell, tol }
+    }
+
+    /// Whether `p` (relative to the plate's corner) lies on one of the walls.
+    fn holds(&self, p: P2) -> bool {
+        let key = ((p[0] / self.cell).floor() as i64, (p[1] / self.cell).floor() as i64);
+        let tol = self.tol;
+        self.cells.get(&key).is_some_and(|candidates| {
+            candidates.iter().any(|&k| match self.pieces[k] {
+                Wall::Segment(a, b) => segment_distance(p, a, b) <= tol,
+                Wall::Arc { centre, r, corner, t } => (distance(p, centre) - r).abs() <= tol && distance(p, corner) <= t + tol,
+                Wall::Circle(centre, r) => (distance(p, centre) - r).abs() <= tol,
+            })
+        })
+    }
 }
 
 /// The distance from `p` to the segment from `a` to `b`.
@@ -392,8 +453,12 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
             // meets the circle tangentially: the scan goes on at the first such corner, or after
             // the run when it has none.
             let on_one_circle = |(centre, r): (P2, f64)| v[i..=end].iter().all(|p| (distance(*p, centre) - r).abs() <= tol);
+            // A curve's facets are of a size; a long straight side and the first facets of a
+            // small round also fit one (huge) circle within the tolerance, and must not be
+            // skipped.
+            let (short, long) = (i..end).map(len).fold((f64::INFINITY, 0.0_f64), |(lo, hi), l| (lo.min(l), hi.max(l)));
             i = match fit.circle() {
-                Some((centre, r)) if end > i + 2 && on_one_circle((centre, r)) => {
+                Some((centre, r)) if end > i + 2 && long <= 4.0 * short && on_one_circle((centre, r)) => {
                     (i + 1..end).find(|&j| tangent(v[j - 1], v[j], centre, len(j - 1) / (2.0 * r))).unwrap_or(end)
                 }
                 _ => i + 1,
@@ -908,6 +973,71 @@ mod tests {
         }
         let why = reason(&mesh);
         assert!(why.contains("not a flat plate") || why.contains("faces differ"), "{why}");
+    }
+
+    /// A solid between a top face (`outline` with `holes`) and a bottom face made of the same
+    /// corners moved by `shift`, walls joining them corner to corner: a sheared prism.
+    #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
+    fn sheared(outline: &[P2], holes: &[Vec<P2>], z: f64, shift_outline: P2, shift_holes: P2) -> Mesh {
+        let at = |p: P2, s: P2, h: f64| [p[0] + s[0], p[1] + s[1], h];
+        let mut t: Vec<crate::mesh::Triangle> = Vec::new();
+        for [a, b, c] in synth::triangulate(outline, holes) {
+            t.push([at(a, [0.0; 2], z), at(b, [0.0; 2], z), at(c, [0.0; 2], z)]);
+        }
+        // The bottom face: the same triangulation, its outline and holes moved apart.
+        let moved = |p: P2| {
+            if holes.iter().flatten().any(|q| *q == p) { shift_holes } else { shift_outline }
+        };
+        for [a, b, c] in synth::triangulate(outline, holes) {
+            t.push([at(a, moved(a), 0.0), at(c, moved(c), 0.0), at(b, moved(b), 0.0)]);
+        }
+        let reversed: Vec<Vec<P2>> = holes.iter().map(|r| r.iter().rev().copied().collect()).collect();
+        for (ring, s) in std::iter::once((outline, shift_outline)).chain(reversed.iter().map(|r| (r.as_slice(), shift_holes))) {
+            for i in 0..ring.len() {
+                let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+                t.push([at(a, s, 0.0), at(b, s, 0.0), at(b, [0.0; 2], z)]);
+                t.push([at(a, s, 0.0), at(b, [0.0; 2], z), at(a, [0.0; 2], z)]);
+            }
+        }
+        Mesh::new(t)
+    }
+
+    /// Shearing keeps the faces' areas and the volume of a prism, so only the walls tell.
+    #[test]
+    #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
+    fn sheared_walls_are_not_vertical() {
+        let outline = [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]];
+        let ring = synth::rings(&[HoleSpec { x: 40.0, y: 25.0, d: 8.0 }], 32);
+        let leaning_hole = sheared(&outline, &ring, 5.0, [0.0; 2], [0.5, 0.0]);
+        assert!(reason(&leaning_hole).contains("not vertical"), "{}", reason(&leaning_hole));
+        let leaning_block = sheared(&outline, &[], 5.0, [0.5, 0.0], [0.0; 2]);
+        let why = reason(&leaning_block);
+        assert!(why.contains("not vertical") || why.contains("faces differ"), "{why}");
+    }
+
+    /// Small rounds of many facets next to long sides, in single precision.
+    #[test]
+    fn small_fine_rounds() {
+        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: Some(0.5) };
+        let mesh = crate::stl::parse(&crate::stl::write_binary(&synth::plate(&expected, 96, [0.0; 3]))).expect("round trip");
+        assert_eq!(found(&mesh).0, expected);
+    }
+
+    /// A cog of 2,000 sharp corners with walls in bands is checked in one pass over its corners.
+    #[test]
+    fn many_cornered_banded_outlines_are_quick() {
+        let n = 2000;
+        let cog: Vec<P2> = (0..n)
+            .map(|i| {
+                let a = 2.0 * PI * f64::from(i) / f64::from(n);
+                let r = if i % 2 == 0 { 40.0 } else { 38.0 };
+                [50.0 + r * a.cos(), 50.0 + r * a.sin()]
+            })
+            .collect();
+        let mesh = banded(&synth::prism(&cog, &[], 5.0, [0.0; 3]), 0.0, [50.0, 50.0]);
+        let started = std::time::Instant::now();
+        let _ = recognize(&mesh);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
     }
 
     /// Extra corners in the middle of the outline's facets (top and bottom alike) change nothing.
