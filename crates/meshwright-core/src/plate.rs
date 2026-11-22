@@ -66,6 +66,9 @@ fn snap(value: f64) -> f64 {
 
 type P2 = [f64; 2];
 
+const NOT_FLAT: &str = "it is not a flat plate: some corners lie between its top and bottom faces \
+                        (steps, pockets, bosses and blind holes are not recognised yet)";
+
 /// The top face's triangles, the bottom face's area and the corners between the two faces.
 type Faces = (Vec<[P2; 3]>, f64, Vec<P2>);
 
@@ -101,14 +104,15 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         return Err("the top face has more than one outline (several separate parts are not recognised yet)".into());
     }
     let (corners, radius) = outline_shape(outline, tol)?;
-    let mut holes = loops.iter().filter(|l| signed_area(l) < 0.0).map(|l| round_hole(l, tol)).collect::<Result<Vec<_>, _>>()?;
+    let fitted = loops.iter().filter(|l| signed_area(l) < 0.0).map(|l| round_hole(l, tol)).collect::<Result<Vec<_>, _>>()?;
+    // The walls are checked against the circles as fitted; the parameters are rounded.
+    let circles: Vec<(P2, f64)> = fitted.iter().map(|f| f.1).collect();
+    let mut holes: Vec<HoleSpec> = fitted.into_iter().map(|f| f.0).collect();
     holes.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     // Corners between the top and the bottom face must lie on the walls the top face's
     // boundary stands for; anywhere else they are a step, a pocket or a boss.
-    if between.iter().any(|p| !on_wall(*p, &corners, radius, &holes, tol)) {
-        return Err("it is not a flat plate: some corners lie between its top and bottom faces \
-                    (steps, pockets, bosses and blind holes are not recognised yet)"
-            .into());
+    if between.iter().any(|p| !on_wall(*p, &corners, radius, &circles, tol)) {
+        return Err(NOT_FLAT.into());
     }
 
     let offset = bounds.min.map(|c| if c.abs() <= tol { 0.0 } else { snap(c) });
@@ -162,6 +166,12 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
         let on_top = triangle.iter().filter(|p| (p[2] - top_z).abs() <= tol).count();
         let on_bottom = triangle.iter().filter(|p| (p[2] - min[2]).abs() <= tol).count();
         if on_top + on_bottom < 3 {
+            // A face between the top and the bottom that is not a wall is a floor or a ledge (of
+            // a blind hole, a step or a pocket), even when its corners lie on a hole's circle. A
+            // wall band's facets lean a little, never this much.
+            if !sliver && nz.abs() > 0.5 {
+                return Err(NOT_FLAT.into());
+            }
             // A wall band between the faces.
             between.extend(
                 triangle
@@ -189,8 +199,8 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
 /// Whether `p` (relative to the plate's corner) lies on a wall of the plate: on a hole's circle,
 /// on a side of the outline `corners` or, with rounded corners of radius `radius`, on a corner's
 /// arc.
-fn on_wall(p: P2, corners: &[P2], radius: Option<f64>, holes: &[HoleSpec], tol: f64) -> bool {
-    if holes.iter().any(|h| ((p[0] - h.x).hypot(p[1] - h.y) - h.d / 2.0).abs() <= tol) {
+fn on_wall(p: P2, corners: &[P2], radius: Option<f64>, circles: &[(P2, f64)], tol: f64) -> bool {
+    if circles.iter().any(|(c, r)| (distance(p, *c) - r).abs() <= tol) {
         return true;
     }
     let n = corners.len();
@@ -347,13 +357,11 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
             end += 1;
             fit.add(v[end]);
             let Some((centre, r)) = fit.circle() else { continue };
-            // An arc ends where its next corner leaves the circle: with facets of uneven length
-            // the next facet of the arc itself can look tangent.
-            let off = |p: P2| (distance(p, centre) - r).abs() > tol;
-            if off(v[(end + 1) % n])
-                && off(before)
-                && tangent(before, v[i], centre, len(i) / (2.0 * r))
-                && tangent(v[(end + 1) % n], v[end], centre, len(end - 1) / (2.0 * r))
+            // Each side is held to its own length: a chord of the circle turns from the tangent by
+            // half its own angle, a tangent side (however short) by nothing. Measured against a
+            // neighbouring facet instead, a shorter facet of the arc itself could pass for a side.
+            if tangent(before, v[i], centre, len(i + n - 1) / (2.0 * r))
+                && tangent(v[(end + 1) % n], v[end], centre, len(end) / (2.0 * r))
                 && v[i..=end].iter().all(|p| (distance(*p, centre) - r).abs() <= tol)
             {
                 found = Some((end, r));
@@ -508,7 +516,7 @@ fn intersect(a: P2, b: P2, c: P2, d: P2) -> Option<P2> {
 }
 
 /// Fits a circle to a hole's corners and checks that they all lie on it.
-fn round_hole(ring: &[P2], tol: f64) -> Result<HoleSpec, String> {
+fn round_hole(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
     if ring.len() < MIN_HOLE_SEGMENTS {
         return Err(format!(
             "a cut-out has only {} corners, so it is taken for a polygon, not a round hole (polygonal cut-outs are not recognised yet)",
@@ -542,7 +550,7 @@ fn round_hole(ring: &[P2], tol: f64) -> Result<HoleSpec, String> {
     if (around.abs() - 2.0 * PI).abs() > 1e-6 || steps.iter().any(|s| *s > MAX_HOLE_STEP || *s > MAX_STEP_RATIO * median) {
         return Err(not_round());
     }
-    Ok(HoleSpec { x: snap(cx), y: snap(cy), d: snap(2.0 * r) })
+    Ok((HoleSpec { x: snap(cx), y: snap(cy), d: snap(2.0 * r) }, ([cx, cy], r)))
 }
 
 /// The least-squares circle through `points` (Kåsa's algebraic fit), as centre and radius.
@@ -806,6 +814,61 @@ mod tests {
         let mesh = banded(&synth::plate(&spec(&[(20.0, 25.0, 8.0)], None), 32, [0.0; 3]), 0.5, [40.0, 25.0]);
         let why = reason(&mesh);
         assert!(why.contains("not a flat plate") || why.contains("faces differ"), "{why}");
+    }
+
+    /// A 200 x 200 x 5 mm plate with a 2 mm blind hole 2.5 mm deep, its floor a fan of the rim's
+    /// corners: every corner between the faces lies on the hole's circle, but the floor is no wall.
+    #[test]
+    fn a_blind_hole_is_no_through_hole() {
+        let (z, floor) = (5.0, 2.5);
+        let outline = [[0.0, 0.0], [200.0, 0.0], [200.0, 200.0], [0.0, 200.0]];
+        let ring = synth::rings(&[HoleSpec { x: 100.0, y: 100.0, d: 2.0 }], 16).remove(0);
+        let lift = |p: P2, h: f64| [p[0], p[1], h];
+        let mut t: Vec<crate::mesh::Triangle> = Vec::new();
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&ring)) {
+            t.push([lift(a, z), lift(b, z), lift(c, z)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, &[]) {
+            t.push([lift(a, 0.0), lift(c, 0.0), lift(b, 0.0)]);
+        }
+        for i in 0..4 {
+            let (a, b) = (outline[i], outline[(i + 1) % 4]);
+            t.push([lift(a, 0.0), lift(b, 0.0), lift(b, z)]);
+            t.push([lift(a, 0.0), lift(b, z), lift(a, z)]);
+        }
+        let m = ring.len();
+        for i in 0..m {
+            // The bore, seen from inside the hole, runs clockwise round the rim.
+            let (a, b) = (ring[(i + 1) % m], ring[i]);
+            t.push([lift(a, floor), lift(b, floor), lift(b, z)]);
+            t.push([lift(a, floor), lift(b, z), lift(a, z)]);
+        }
+        for i in 1..m - 1 {
+            t.push([lift(ring[0], floor), lift(ring[i], floor), lift(ring[i + 1], floor)]);
+        }
+        let mesh = Mesh::new(t);
+        assert!(mesh.volume() > 0.0);
+        assert!(reason(&mesh).contains("not a flat plate"));
+    }
+
+    /// Corners rounded almost all the way along the short sides leave short straight sides
+    /// between the arcs, whose far corners lie within the tolerance of the circle.
+    #[test]
+    fn short_sides_between_large_rounds() {
+        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: Some(24.95) };
+        assert_eq!(found(&synth::plate(&expected, 32, [0.0; 3])).0, expected);
+    }
+
+    /// Far from the origin single precision leaves hole corners about 0.2 µm off their circle;
+    /// rounding the hole's numbers must not add to that when the walls are checked.
+    #[test]
+    fn plates_far_from_the_origin() {
+        let expected = spec(&[(20.0, 25.0, 8.0), (60.0, 25.0, 5.0)], Some(3.0));
+        let mesh = synth::plate(&expected, 48, [4000.0, 4000.0, 0.0]);
+        let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+        let (plate, offset) = found(&reread);
+        assert_eq!(offset, [4000.0, 4000.0, 0.0]);
+        assert_eq!(plate.holes.len(), 2);
     }
 
     /// An L-bracket exported from SolidCraft 0.45 (`file.export_stl`, standard quality): walls in
