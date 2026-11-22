@@ -99,6 +99,20 @@ impl SlotGeometry {
         segment_distance(p, a, b)
     }
 
+    /// Its round ends as walls: four quarter circles, each bounded by the corner it rounds (the
+    /// end's inner half lies inside the slot, no wall).
+    fn quarters(&self) -> Vec<(P2, f64, P2, f64)> {
+        let [u, v] = [self.axis, [-self.axis[1], self.axis[0]]];
+        let mut out = Vec::new();
+        for (end, s) in self.ends().into_iter().zip([1.0, -1.0]) {
+            for t in [1.0, -1.0] {
+                let corner = [end[0] + self.r * (s * u[0] + t * v[0]), end[1] + self.r * (s * u[1] + t * v[1])];
+                out.push((end, self.r, corner, self.r));
+            }
+        }
+        out
+    }
+
     fn matches(&self, other: &Self, tol: f64) -> bool {
         let parallel = (self.axis[0] * other.axis[1] - self.axis[1] * other.axis[0]).abs() * self.half <= tol;
         distance(self.centre, other.centre) <= tol && (self.half - other.half).abs() <= tol && (self.r - other.r).abs() <= tol && parallel
@@ -328,13 +342,14 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     let mut circles = Vec::new();
     let mut wall_loops = vec![outline.clone()];
     let mut slots = Vec::new();
+    let mut slot_arcs = Vec::new();
     if top_slots.len() != bottom_slots.len()
         || !top_slots.iter().all(|(_, g, _)| bottom_slots.iter().any(|(_, other, _)| g.matches(other, tol)))
     {
         return Err("a slot does not go straight through (blind and slanted slots are not recognised yet)".into());
     }
     for (spec, g, k) in top_slots {
-        circles.extend(g.ends().map(|c| (c, g.r)));
+        slot_arcs.extend(g.quarters());
         wall_loops.push(loops[k].clone());
         slots.push(spec);
     }
@@ -447,7 +462,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     // the walls the top face's boundary stands for, or on a stepped hole's surface: anywhere else
     // they are a step, a pocket, a boss, or a wall that leans (a sheared prism has the same areas
     // and volume as a straight one).
-    let walls = Walls::new(&corners, radius, &circles, &wall_loops, scale, tol);
+    let walls = Walls::new(&corners, radius, &circles, &slot_arcs, &wall_loops, scale, tol);
     let in_step = |p: Vec3| stepped.iter().any(|s| s.holds(p, tol)) || blinds.iter().any(|b| b.holds(p, tol));
     if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p)) {
         return Err(NOT_FLAT.into());
@@ -611,7 +626,17 @@ impl Walls {
     /// The walls of the outline `corners` (rounded with `radius`), of the holes' `circles` and,
     /// as meshed, of the top face's boundary `loops` (a facet's chord of an arc is no wall of the
     /// true part, but its corners and its subdivisions lie on it).
-    fn new(corners: &[P2], radius: Option<f64>, circles: &[(P2, f64)], loops: &[Vec<P2>], size: f64, tol: f64) -> Self {
+    /// `arcs` are further bounded round walls: centre, radius, the corner each rounds and how far
+    /// from that corner it reaches.
+    fn new(
+        corners: &[P2],
+        radius: Option<f64>,
+        circles: &[(P2, f64)],
+        arcs: &[(P2, f64, P2, f64)],
+        loops: &[Vec<P2>],
+        size: f64,
+        tol: f64,
+    ) -> Self {
         let n = corners.len();
         let r = radius.unwrap_or(0.0);
         let unit = |p: P2, q: P2| {
@@ -643,6 +668,7 @@ impl Walls {
             }
         }
         walls.extend(circles.iter().map(|&(c, r)| Wall::Circle(c, r)));
+        walls.extend(arcs.iter().map(|&(centre, r, corner, t)| Wall::Arc { centre, r, corner, t }));
         for ring in loops {
             walls.extend((0..ring.len()).map(|i| Wall::Segment(ring[i], ring[(i + 1) % ring.len()])));
         }
@@ -1137,7 +1163,14 @@ fn slot_shape(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
     let (cx, cy) = (cx / a, cy / a);
     let (sxx, syy, sxy) = (xx / a - cx * cx, yy / a - cy * cy, xy / a - cx * cy);
     let centre = [o[0] + cx, o[1] + cy];
-    let fitted = (0.5 * (2.0 * sxy).atan2(sxx - syy)).to_degrees().rem_euclid(180.0);
+    let mut fitted = (0.5 * (2.0 * sxy).atan2(sxx - syy)).to_degrees().rem_euclid(180.0);
+    // The moments are only an estimate where the ends are faceted unevenly: the longest facet,
+    // a straight side unless the slot is very short, gives the axis exactly.
+    let (p, q) = (0..n).map(|i| (ring[i], ring[(i + 1) % n])).max_by(|a, b| distance(a.0, a.1).total_cmp(&distance(b.0, b.1)))?;
+    let side = (q[1] - p[1]).atan2(q[0] - p[0]).to_degrees().rem_euclid(180.0);
+    if ((side - fitted + 90.0).rem_euclid(180.0) - 90.0).abs() < 5.0 {
+        fitted = side;
+    }
     // Its angle as a parameter: exact along X or Y, else in whole degrees or hundredths, as long
     // as the ends move by no more than a micrometre.
     let reach = ring.iter().map(|p| distance(*p, centre)).fold(0.0, f64::max);
@@ -1147,12 +1180,18 @@ fn slot_shape(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
         .find(|a| close(*a))
         .map_or(fitted, |a| a.rem_euclid(180.0));
     let (sin, cos) = angle.to_radians().sin_cos();
+    // The straight sides lie the radius either side of the axis: halfway between them is the
+    // middle, across the slot (the centroid is not, where the ends are faceted unevenly).
+    let offset = |p: &P2| (p[1] - centre[1]) * cos - (p[0] - centre[0]) * sin;
+    let (lo, hi) = ring.iter().map(offset).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(t), hi.max(t)));
+    let mid = f64::midpoint(lo, hi);
+    let centre = [centre[0] - mid * sin, centre[1] + mid * cos];
     let along = |p: &P2| (p[0] - centre[0]) * cos + (p[1] - centre[1]) * sin;
     let across = |p: &P2| (p[1] - centre[1]) * cos - (p[0] - centre[0]) * sin;
-    // The straight sides' corners lie the radius off the axis. Each end's centre is where its
-    // corners say, `along - sqrt(r² - across²)` (the tip itself need not be a corner: an end
-    // of an odd number of facets has none there); the sides' corners lie short of it.
-    let r = ring.iter().map(|p| across(p).abs()).fold(0.0, f64::max);
+    let r = (hi - lo) / 2.0;
+    // Each end's centre is where its corners say, `along - sqrt(r² - across²)` (the tip itself
+    // need not be a corner: an end of an odd number of facets has none there); the sides'
+    // corners lie short of it.
     let end_centre = |side: f64| {
         ring.iter()
             .filter(|p| along(p) * side > 0.0)
@@ -1605,7 +1644,7 @@ mod tests {
     #[test]
     fn diagonal_walls_fill_few_cells() {
         let diamond = [[50.0, 0.0], [100.0, 50.0], [50.0, 100.0], [0.0, 50.0]];
-        let walls = Walls::new(&diamond, None, &[], &[], 100.0, 1e-3);
+        let walls = Walls::new(&diamond, None, &[], &[], &[], 100.0, 1e-3);
         assert!(walls.cells.len() < 10_000, "{} cells", walls.cells.len());
         assert!(walls.holds([75.0, 25.0]) && walls.holds([25.0, 75.0]));
         assert!(!walls.holds([50.0, 50.0]) && !walls.holds([75.0, 26.0]));
@@ -1872,6 +1911,49 @@ mod tests {
             let why = reason(&plate_with_cutout(cutout));
             assert!(why.contains("not round") || why.contains("corners"), "{why}");
         }
+    }
+
+    /// Ends faceted more finely below the axis than above it: the middle comes from the straight
+    /// sides, not the loop's centroid.
+    #[test]
+    fn unevenly_faceted_slot_ends() {
+        let full = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
+        // Every other corner above the axis left out, the straight sides' ends kept.
+        let uneven: Vec<P2> =
+            full.iter().enumerate().filter(|(i, p)| p[1] <= 25.0 || p[1] >= 28.5 - 1e-9 || i % 2 == 0).map(|(_, p)| *p).collect();
+        assert!(uneven.len() < full.len() - 6);
+        let (plate, _) = found(&plate_with_cutout(uneven));
+        assert_eq!(plate.slots, [SlotSpec { x: 40.0, y: 25.0, len: 18.0, w: 7.0, angle: 0.0 }]);
+    }
+
+    /// A slot's wall meshed in bands with one corner of a band folded into the slot is no wall:
+    /// the inner half of an end's circle lies inside the slot.
+    #[test]
+    #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
+    fn a_slot_wall_folded_inward_is_refused() {
+        let mesh = plate_with_cutout(stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16));
+        // Split every wall facet at Z = 3, then reflect the band corner of the right end's
+        // second rim corner across X = 49 (the end's centre).
+        let ring = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
+        let target = ring[1];
+        let banded = banded(&mesh, 0.0, [40.0, 25.0]);
+        let mut moved = 0;
+        let triangles = banded
+            .triangles
+            .iter()
+            .map(|t| {
+                t.map(|p| {
+                    if p[2] == 3.0 && (p[0] - target[0]).abs() < 1e-6 && (p[1] - target[1]).abs() < 1e-6 {
+                        moved += 1;
+                        [2.0 * 49.0 - p[0], p[1], p[2]]
+                    } else {
+                        p
+                    }
+                })
+            })
+            .collect();
+        assert!(moved > 0);
+        reason(&Mesh::new(triangles));
     }
 
     /// A slot through the top face that does not reach the bottom face is no through slot.

@@ -303,11 +303,23 @@ pub struct SketchPoint {
     /// The link (`j<n>`) that places it, for a point of linked geometry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
+    /// The expressions that place a fixed point, which follow the parameters they name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exprs: Option<PointExprs>,
+}
+
+/// Where a point placed by parameters lies: an expression for each coordinate.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PointExprs {
+    /// X.
+    pub x: String,
+    /// Y.
+    pub y: String,
 }
 
 impl SketchPoint {
     fn new(id: impl Into<String>, pos: [f64; 2], fixed: bool) -> Self {
-        Self { id: id.into(), pos, fixed, link: None }
+        Self { id: id.into(), pos, fixed, link: None, exprs: None }
     }
 }
 
@@ -689,18 +701,17 @@ pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
     Sketch { points, curves, constraints, links: vec![], counters }
 }
 
-/// The model parameters a slot's sketch dimensions are driven by: the distance between the end
-/// centres, the width, the middle's X and Y, and the long axis's angle from X.
+/// What drives a slot's sketch: model parameters for the distance between the end centres,
+/// the width and the long axis's angle from X, and expressions for where the middle lies.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlotDimensions {
     /// Between the end centres.
     pub len: String,
     /// The width (the ends' diameter).
     pub w: String,
-    /// The middle's distance from the origin along X (unsigned: an expression that is positive
-    /// on the side the middle lies on).
+    /// The middle's X, an expression (a point placed by it, not a dimension).
     pub x: String,
-    /// The middle's distance from the origin along Y, as `x`.
+    /// The middle's Y, as `x`.
     pub y: String,
     /// The long axis from X (in degrees); `None` holds a slot along X or Y horizontal or
     /// vertical instead.
@@ -709,9 +720,11 @@ pub struct SlotDimensions {
 
 /// A straight slot on the XY plane, as SolidCraft's centre-point slot tool draws it: lines `l1`
 /// and `l2` tangent to arcs `a1` (about the end at `+len / 2` along `angle`, in degrees) and
-/// `a2`, the construction line `l3` between the arc centres with its midpoint `p5` at `centre`,
-/// all driven by `dims`. A slot along neither axis has its angle measured from the sketch's X
-/// axis, linked in as `l4`.
+/// `a2`, and the construction line `l3` between the arc centres. Its midpoint `p5` coincides
+/// with `p6`, a point placed by the expressions `dims.x` and `dims.y` (SolidCraft's X and Y
+/// distances are unsigned, so a dimension could not follow a position across the origin). With
+/// an angle, it is measured from the sketch's X axis, linked in as `l4`; without, the slot is
+/// held horizontal or vertical.
 #[must_use]
 pub fn slot_sketch(centre: [f64; 2], len: f64, w: f64, angle: f64, dims: &SlotDimensions) -> Sketch {
     let (sin, cos) = angle.to_radians().sin_cos();
@@ -727,6 +740,7 @@ pub fn slot_sketch(centre: [f64; 2], len: f64, w: f64, angle: f64, dims: &SlotDi
         SketchPoint::new("a1.center", at(half, 0.0), false),
         SketchPoint::new("a2.center", at(-half, 0.0), false),
         SketchPoint::new("p5", centre, false),
+        SketchPoint { exprs: Some(PointExprs { x: dims.x.clone(), y: dims.y.clone() }), ..SketchPoint::new("p6", centre, true) },
     ];
     let line = |n: usize, a: usize, b: usize, construction: bool| SketchCurve::Line { id: format!("l{n}"), a, b, construction, link: None };
     let mut curves = vec![
@@ -749,18 +763,16 @@ pub fn slot_sketch(centre: [f64; 2], len: f64, w: f64, angle: f64, dims: &SlotDi
     add(&|id| Constraint::Midpoint { id, p: 7, l: 4 });
     add(&|id| Constraint::Length { id, l: 0, value: len, param: dims.len.clone(), text: None });
     add(&|id| Constraint::Diameter { id, c: 1, value: w, param: dims.w.clone() });
-    // SolidCraft's distances along X and Y are unsigned: the side is the one the point is drawn on.
-    add(&|id| Constraint::DistanceX { id, p: 0, q: 7, value: centre[0].abs(), param: dims.x.clone() });
-    add(&|id| Constraint::DistanceY { id, p: 0, q: 7, value: centre[1].abs(), param: dims.y.clone() });
+    add(&|id| Constraint::Coincident { id, p: 7, q: 8 });
     let mut links = vec![];
     match &dims.angle {
         None if sin.abs() < 0.5 => add(&|id| Constraint::Horizontal { id, l: 4 }),
         None => add(&|id| Constraint::Vertical { id, l: 4 }),
         Some(param) => {
             let axis = || Some("j1".to_owned());
-            points.push(SketchPoint { link: axis(), ..SketchPoint::new("p6", [-100.0, 0.0], true) });
-            points.push(SketchPoint { link: axis(), ..SketchPoint::new("p7", [100.0, 0.0], true) });
-            curves.push(SketchCurve::Line { id: "l4".into(), a: 8, b: 9, construction: true, link: axis() });
+            points.push(SketchPoint { link: axis(), ..SketchPoint::new("p7", [-100.0, 0.0], true) });
+            points.push(SketchPoint { link: axis(), ..SketchPoint::new("p8", [100.0, 0.0], true) });
+            curves.push(SketchCurve::Line { id: "l4".into(), a: 9, b: 10, construction: true, link: axis() });
             links.push(Link { id: "j1".into(), kind: "project", source: LinkSource { kind: "sketch_axis", name: "x" } });
             add(&|id| Constraint::Angle { id, a: 5, b: 4, value: angle.to_radians(), param: param.clone() });
         }

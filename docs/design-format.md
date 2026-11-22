@@ -52,7 +52,7 @@ arc centres, with its midpoint `p5`. Its constraints:
 
 - four `tangent` (`a`, `b`: curve indices), `equal` (the two arcs), `midpoint` (`p`, `l`)
 - `length` of `l1` and `diameter` (`c`) of `a1`, each with a model parameter
-- `distance_x` and `distance_y` (`p`, `q`: the origin and the midpoint). These distances are unsigned: the side is the one the point is drawn on, and a negative `value` fails the sketch ("invalid value: dimension value -75"). meshwright writes the magnitude, and for a slot left of or below the origin drives it by `-slot_<n>_x`. A distance of 0 works.
+- `coincident` (`p`, `q`) of the midpoint with `p6`, a point placed by the position parameters: `{"id": "p6", "pos": [x, y], "fixed": true, "exprs": {"x": "slot_1_x", "y": "slot_1_y"}}`. A `distance_x` / `distance_y` dimension from the origin would not do: those are unsigned (the side is the one the point is drawn on, a negative `value` fails the sketch with "invalid value: dimension value -75"), so a slot could not be moved across the origin.
 - `angle` (`a`, `b`: curve indices, `value` in radians, its model parameter in degrees) between `l3` and the sketch's X axis. The axis is linked in as `l4`: two fixed points and a construction line carrying `"link": "j1"`, and `links: [{"id": "j1", "kind": "project", "source": {"type": "sketch_axis", "name": "x"}}]` on the sketch. Angles of 0 and 90 degrees work.
 
 The sketch's `counters` then include `"a": 2` and `"j": 1`.
@@ -62,7 +62,8 @@ one along Y, a 16 x 5 one at 30 degrees and an Ø5 hole) imports to 28,497.522 m
 SolidCraft measured for the part it exported. Changing every slot's sizes, moving two of them,
 turning one to 45 degrees and setting `base_t = 10` rebuilt without errors to 34,129.978 mm³, as
 computed; turning the slots to 20, 0 and 90 degrees kept the volume. The same part moved to
-negative coordinates, and moved so that a slot's middle lies on the origin, rebuilt as well.
+negative coordinates, and moved so that a slot's middle lies on the origin, rebuilt as well, and
+a slot moved from X = 0 to X = -5 was there when the rebuilt part was exported and read again.
 
 Fields SolidCraft derives itself and that can be left out: `param_names`, `face_names`,
 `edge_refs`.

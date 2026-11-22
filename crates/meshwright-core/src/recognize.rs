@@ -371,14 +371,11 @@ fn slot_features(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3) {
             name
         };
         let centre = [snap_mm(at[0] + s.x), snap_mm(at[1] + s.y)];
-        // SolidCraft measures the middle's distance from the origin unsigned, on the side it is
-        // drawn: left of or below the origin the parameter's negative drives it.
-        let signed = |name: String, value: f64| if value < 0.0 { format!("-{name}") } else { name };
         let dims = SlotDimensions {
             len: model(format!("{p}_len"), false),
             w: model(format!("{p}_w"), false),
-            x: model(signed(format!("{p}_x"), centre[0]), false),
-            y: model(signed(format!("{p}_y"), centre[1]), false),
+            x: format!("{p}_x"),
+            y: format!("{p}_y"),
             angle: Some(model(format!("{p}_angle"), true)),
         };
         let n = i + 1;
@@ -658,9 +655,8 @@ mod tests {
     }
 
     /// A slot is a sketch with its angle measured from the linked X axis (along X too, so that
-    /// any slot can be turned), and a cut through everything. Positions left
-    /// of the origin are driven by the parameter's negative, as SolidCraft's distances are
-    /// unsigned.
+    /// any slot can be turned), and a cut through everything. Its middle is a point placed by
+    /// the position parameters, which may cross the origin.
     #[test]
     fn slots_become_sketches_and_cuts() {
         let slot = |x: f64, angle: f64| SlotSpec { x, y: 20.0, len: 16.0, w: 5.0, angle };
@@ -685,9 +681,12 @@ mod tests {
                 .to_owned()
         };
         // Slot 1 lies at X = -15, slot 2 at X = 10.
-        assert_eq!(model(&constraint(3, "distance_x")[0]["param"]), "-slot_1_x");
-        assert_eq!(constraint(3, "distance_x")[0]["value"], 15.0);
-        assert_eq!(model(&constraint(5, "distance_x")[0]["param"]), "slot_2_x");
+        let middle = |f: usize| features[f]["sketch"]["points"][8].clone();
+        assert_eq!(middle(3)["exprs"]["x"], "slot_1_x");
+        assert_eq!(middle(3)["pos"][0], -15.0);
+        assert_eq!(middle(5)["exprs"]["y"], "slot_2_y");
+        assert_eq!(constraint(3, "coincident").len(), 1);
+        assert_eq!(model(&constraint(5, "angle")[0]["param"]), "slot_2_angle");
         assert!(json["params"].as_array().expect("params").iter().any(|p| p["name"] == "slot_2_angle" && p["expr"] == "30 deg"));
         assert!((spec.volume() - (60.0 * 40.0 - 2.0 * (16.0 * 5.0 + std::f64::consts::PI * 6.25)) * 6.0).abs() < 1e-9);
         assert_eq!(spec.describe(), "A 60 x 40 x 6 mm plate with 2 slots");
