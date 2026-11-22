@@ -54,7 +54,7 @@ pub struct PlateSpec {
     pub outline_fillet_r: Option<f64>,
 }
 
-/// A vertical through hole.
+/// A vertical hole, through the plate or blind.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HoleSpec {
     /// Centre X.
@@ -65,6 +65,17 @@ pub struct HoleSpec {
     pub d: f64,
     /// A counterbore or countersink at one end, if it has one.
     pub head: Option<HoleHead>,
+    /// Where a blind hole stops; `None` for a hole through the plate.
+    pub blind: Option<Blind>,
+}
+
+/// A blind hole's end: a flat floor `depth` below the face it is drilled from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Blind {
+    /// Depth from the face.
+    pub depth: f64,
+    /// Whether it is drilled from the bottom face (else from the top).
+    pub bottom: bool,
 }
 
 /// The wider mouth of a hole, at the top or the bottom face.
@@ -96,7 +107,7 @@ impl HoleSpec {
     #[must_use]
     pub fn volume(&self, z: f64) -> f64 {
         let area = |d: f64| std::f64::consts::PI * d * d / 4.0;
-        let bore = area(self.d) * z;
+        let bore = area(self.d) * self.blind.map_or(z, |b| b.depth);
         match self.head {
             None => bore,
             Some(HoleHead::Counterbore { d, depth, .. }) => bore + (area(d) - area(self.d)) * depth,
@@ -329,6 +340,9 @@ fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3) {
                 b.param(Param::user(format!("{p}_x"), snap_mm(ax + h.x)))
                     .param(Param::user(format!("{p}_y"), snap_mm(ay + h.y)))
                     .param(Param::user(format!("{p}_d"), h.d));
+                if let Some(blind) = h.blind {
+                    b.param(Param::user(format!("{p}_depth"), blind.depth));
+                }
                 match h.head {
                     None => {}
                     Some(HoleHead::Counterbore { d, depth, .. }) => {
@@ -383,6 +397,7 @@ fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str,
                 at: [x, y, top.into()],
                 direction: [0.0, 0.0, -1.0],
                 diameter: d,
+                depth: None,
                 hole: HoleKind::Simple,
             },
         )
@@ -394,7 +409,7 @@ fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str,
             HoleGroup::Single(h) => {
                 singles += 1;
                 let (kind, from_bottom) = match h.head {
-                    None => (HoleKind::Simple, false),
+                    None => (HoleKind::Simple, h.blind.is_some_and(|b| b.bottom)),
                     Some(HoleHead::Counterbore { bottom, .. }) => {
                         (HoleKind::Counterbore { cb_diameter: format!("{p}_cbore_d"), cb_depth: format!("{p}_cbore_depth") }, bottom)
                     }
@@ -411,6 +426,7 @@ fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str,
                         at: [x, y, face.into()],
                         direction: [0.0, 0.0, direction],
                         diameter: d,
+                        depth: h.blind.map(|_| format!("{p}_depth")),
                         hole: kind,
                     },
                 );
@@ -547,7 +563,7 @@ mod tests {
     fn describes_plates() {
         let mut spec = PlateSpec { x: 70.0, y: 40.0, z: 6.0, holes: vec![], outline_fillet_r: Some(3.0) };
         assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 3 mm rounded corners");
-        spec.holes = vec![HoleSpec { x: 1.0, y: 1.0, d: 1.0, head: None }; 2];
+        spec.holes = vec![HoleSpec { x: 1.0, y: 1.0, d: 1.0, head: None, blind: None }; 2];
         assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 2 holes and 3 mm rounded corners");
     }
 
@@ -558,7 +574,7 @@ mod tests {
             x: 70.0,
             y: 40.0,
             z: 6.0,
-            holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None }],
+            holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
             outline_fillet_r: Some(3.0),
         };
         assert!((spec.volume() - 16_452.05).abs() < 0.01, "{}", spec.volume());
@@ -569,7 +585,7 @@ mod tests {
         let spec = ProfileSpec {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
-            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None }],
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
             outline_fillet_r: Some(2.0),
         };
         assert_eq!(spec.describe(), "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 2 mm rounded corners");
@@ -588,7 +604,7 @@ mod tests {
         let spec = ProfileSpec {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
-            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None }],
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
             outline_fillet_r: Some(2.0),
         };
         let corner = (4.0 - std::f64::consts::PI) / 4.0 * 4.0;
@@ -603,7 +619,7 @@ mod tests {
         let spec = ProfileSpec {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
-            holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4, head: None }],
+            holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4, head: None, blind: None }],
             outline_fillet_r: Some(5.0),
         };
         let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -625,7 +641,7 @@ mod tests {
             x: 70.0,
             y: 40.0,
             z: 6.0,
-            holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None }],
+            holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
             outline_fillet_r: Some(3.0),
         };
         let actual = spec.to_design("plate-with-hole").to_json_pretty();

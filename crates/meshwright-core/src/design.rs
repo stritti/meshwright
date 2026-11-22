@@ -155,6 +155,9 @@ pub enum FeatureKind {
         direction: [f64; 3],
         /// The diameter expression.
         diameter: String,
+        /// How deep a blind hole goes from the face (an expression); through all without it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        depth: Option<String>,
         /// The hole's kind.
         hole: HoleKind,
     },
