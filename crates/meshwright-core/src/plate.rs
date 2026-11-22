@@ -629,12 +629,26 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
             .ok_or("a cut-out does not go straight through (pockets other than rectangles and slanted cut-outs are not recognised yet)")?;
         Ok(BlindHole { foot: Footprint::Rect { lo, hi }, ring: ring.clone(), face_z, inward, depth: 0.0 })
     };
+    // Two rectangles matching on the faces are two pockets when floors lie between them, facets
+    // facing up or down inside the rectangle.
+    let floored = |ring: &[P2]| {
+        axis_rectangle(ring, tol).is_some_and(|(lo, hi)| {
+            let foot = Footprint::Rect { lo, hi };
+            faces.caps.iter().any(|cap| cap.iter().all(|p| p[2] > tol && p[2] < size[2] - tol && foot.contains([p[0], p[1]], tol)))
+        })
+    };
     for (c, k) in top_cutouts {
-        if let Some(j) = bottom_cutouts.iter().position(|(other, _)| same_polygon(&c, other)) {
-            paired_cutouts[j] = true;
-            through.push((c, k));
-        } else {
-            pocket_mouths.push(pocket(&loops[k], size[2], -1.0)?);
+        match bottom_cutouts.iter().position(|(other, _)| same_polygon(&c, other)) {
+            Some(j) if floored(&loops[k]) => {
+                paired_cutouts[j] = true;
+                pocket_mouths.push(pocket(&loops[k], size[2], -1.0)?);
+                pocket_mouths.push(pocket(&bottom_loops[bottom_cutouts[j].1], 0.0, 1.0)?);
+            }
+            Some(j) => {
+                paired_cutouts[j] = true;
+                through.push((c, k));
+            }
+            None => pocket_mouths.push(pocket(&loops[k], size[2], -1.0)?),
         }
     }
     for ((_, k), _) in bottom_cutouts.iter().zip(&paired_cutouts).filter(|(_, paired)| !**paired) {
@@ -736,8 +750,9 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     let mut pockets = Vec::new();
     for (hole, mut b) in mouths {
         let (face_z, inward) = (b.face_z, b.inward);
-        // Its floor: the facets facing up or down within its circle. That they are flat and
-        // all at one depth is checked with the other facets below.
+        // Its floor: the nearest facets facing up or down within its footprint (beyond them may
+        // lie the floor of a pocket facing it from the other face). That they are flat and all
+        // at one depth is checked with the other facets below.
         let inside = |p: &Vec3| p[2] > tol && p[2] < size[2] - tol;
         b.depth = faces
             .caps
@@ -745,7 +760,7 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
             .filter(|cap| cap.iter().all(|p| inside(p) && b.reaches([p[0], p[1]], tol)))
             .flatten()
             .map(|p| (p[2] - face_z) * inward)
-            .reduce(f64::max)
+            .reduce(f64::min)
             .ok_or(
                 "a hole neither goes straight through nor ends in a flat floor (slanted holes and drill points are not recognised yet)",
             )?;
@@ -796,11 +811,14 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     }
     // A wall facet's edge in a stepped hole's mouth must follow the hole's surface too: its
     // middle within the sagitta of a chord two facets long, or the facet cuts across the bore.
+    // (Pockets facing each other share a footprint: the edge must follow one of them.)
     let follows = |&(a, b, middle): &(P2, P2, Vec3)| {
-        if let Some(s) = stepped.iter().find(|s| s.reaches(a, tol) && s.reaches(b, tol)) {
-            s.holds(middle, tol + 4.0 * s.sagitta())
-        } else if let Some(h) = blinds.iter().find(|h| h.reaches(a, tol) && h.reaches(b, tol)) {
-            h.holds(middle, tol + 4.0 * h.sagitta())
+        let mut steps = stepped.iter().filter(|s| s.reaches(a, tol) && s.reaches(b, tol)).peekable();
+        let mut blind = blinds.iter().filter(|h| h.reaches(a, tol) && h.reaches(b, tol)).peekable();
+        if steps.peek().is_some() {
+            steps.any(|s| s.holds(middle, tol + 4.0 * s.sagitta()))
+        } else if blind.peek().is_some() {
+            blind.any(|h| h.holds(middle, tol + 4.0 * h.sagitta()))
         } else {
             walls.holds_chord(a, b)
         }
@@ -2338,6 +2356,40 @@ mod tests {
         assert_eq!(plate.pockets, [pocket(50.0, 15.0, 20.0, 14.0, 3.0, false), pocket(50.0, 30.0, 12.0, 8.0, 2.0, true)]);
         // SolidCraft measured 16,460.602 mm³ for the part it exported.
         assert!((plate.volume() - 16_460.602).abs() < 0.001, "{}", plate.volume());
+    }
+
+    /// Two pockets of one footprint in the top and the bottom face, a web between their floors.
+    #[test]
+    fn pockets_facing_each_other() {
+        let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+        let rect = vec![[20.0, 10.0], [40.0, 10.0], [40.0, 30.0], [20.0, 30.0]];
+        let at = |p: P2, z: f64| [p[0], p[1], z];
+        let mut t = Vec::new();
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&rect)) {
+            t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+            t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        for i in 0..4 {
+            let (a, b) = (outline[i], outline[(i + 1) % 4]);
+            t.extend([[at(a, 0.0), at(b, 0.0), at(b, 6.0)], [at(a, 0.0), at(b, 6.0), at(a, 6.0)]]);
+        }
+        // The top pocket's floor at Z = 4 faces up, the bottom one's at Z = 2 down.
+        let [a, b, c, d] = [rect[0], rect[1], rect[2], rect[3]];
+        t.extend([[at(a, 4.0), at(b, 4.0), at(c, 4.0)], [at(a, 4.0), at(c, 4.0), at(d, 4.0)]]);
+        t.extend([[at(a, 2.0), at(c, 2.0), at(b, 2.0)], [at(a, 2.0), at(d, 2.0), at(c, 2.0)]]);
+        for i in 0..4 {
+            let (p, q) = (rect[(i + 1) % 4], rect[i]);
+            t.extend([[at(p, 4.0), at(q, 4.0), at(q, 6.0)], [at(p, 4.0), at(q, 6.0), at(p, 6.0)]]);
+            t.extend([[at(p, 0.0), at(q, 0.0), at(q, 2.0)], [at(p, 0.0), at(q, 2.0), at(p, 2.0)]]);
+        }
+        let mesh = Mesh::new(t);
+        assert!(mesh.volume() > 0.0);
+        let (plate, _) = found(&mesh);
+        let pocket = |depth: f64, bottom: bool| PocketSpec { x: 30.0, y: 20.0, w: 20.0, l: 20.0, depth, bottom };
+        let mut pockets = plate.pockets.clone();
+        pockets.sort_by_key(|p| p.bottom);
+        assert_eq!(pockets, [pocket(2.0, false), pocket(2.0, true)]);
+        assert!((plate.volume() - mesh.volume()).abs() < 1e-6);
     }
 
     /// A pocket's floor turned off level, and a triangle sunk into the top face, are no pockets.
