@@ -37,12 +37,6 @@ impl Mesh {
         Self { triangles }
     }
 
-    /// Whether the mesh has no triangles.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.triangles.is_empty()
-    }
-
     /// The bounding box, or `None` for an empty mesh.
     #[must_use]
     pub fn bounds(&self) -> Option<Aabb> {
@@ -63,12 +57,6 @@ impl Mesh {
     #[must_use]
     pub fn volume(&self) -> f64 {
         self.triangles.iter().map(|[a, b, c]| dot(*a, cross(*b, *c))).sum::<f64>() / 6.0
-    }
-
-    /// The surface area in mm².
-    #[must_use]
-    pub fn area(&self) -> f64 {
-        self.triangles.iter().map(|[a, b, c]| length(cross(sub(*b, *a), sub(*c, *a))) / 2.0).sum()
     }
 }
 

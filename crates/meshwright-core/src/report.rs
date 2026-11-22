@@ -43,8 +43,6 @@ pub enum Severity {
     Info,
     /// Carried over in a lesser form.
     Degraded,
-    /// Not carried over.
-    Dropped,
 }
 
 /// One thing that was not carried over as it was.
