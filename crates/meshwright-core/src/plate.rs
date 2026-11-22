@@ -38,6 +38,9 @@ pub const MIN_HOLE_SEGMENTS: usize = 8;
 /// fewest, and the flat side of a D-shaped cut-out spans far more.
 const MAX_HOLE_STEP: f64 = 50.0 * PI / 180.0;
 
+/// Largest step round a hole's rim, as a multiple of the median step.
+const MAX_STEP_RATIO: f64 = 2.5;
+
 /// Largest turn between two facets of a rounded corner (50°): a quarter circle needs at least two
 /// facets, and a hexagon's corners (60°) stay corners.
 const MAX_FACET_TURN: f64 = 50.0 * PI / 180.0;
@@ -63,6 +66,9 @@ fn snap(value: f64) -> f64 {
 
 type P2 = [f64; 2];
 
+/// The top face's triangles, the bottom face's area and the corners between the two faces.
+type Faces = (Vec<[P2; 3]>, f64, Vec<P2>);
+
 /// Looks for a plate in `mesh`. `Err` carries the reason in the user's words.
 pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     let bounds = mesh.bounds().ok_or("the mesh has no triangles")?;
@@ -77,10 +83,14 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         return Err("the mesh is not closed or its faces point inwards".into());
     }
 
-    let (top, bottom_area) = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
+    let (top, bottom_area, between) = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
     let top_area: f64 = top.iter().map(|[a, b, c]| signed_area(&[*a, *b, *c])).sum();
-    let close = |a: f64, b: f64| (a - b).abs() <= 1e-5 * a.abs().max(b.abs());
-    if !close(top_area, bottom_area) || !close(top_area * size[2], mesh_volume) {
+    let close = |a: f64, b: f64, rel: f64| (a - b).abs() <= rel * a.abs().max(b.abs());
+    // An exporter may mesh the top and bottom faces apart, with their own corners on round
+    // edges, and walls meshed in bands bulge a little between the top face's corners: the faces
+    // must match to 0.01% and the volume a prism over the top face to 0.1%. A draft or a step
+    // changes either by far more.
+    if !close(top_area, bottom_area, 1e-4) || !close(top_area * size[2], mesh_volume, 1e-3) {
         return Err("the mesh is not closed, or its top and bottom faces differ".into());
     }
 
@@ -93,6 +103,13 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     let (corners, radius) = outline_shape(outline, tol)?;
     let mut holes = loops.iter().filter(|l| signed_area(l) < 0.0).map(|l| round_hole(l, tol)).collect::<Result<Vec<_>, _>>()?;
     holes.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    // Corners between the top and the bottom face must lie on the walls the top face's
+    // boundary stands for; anywhere else they are a step, a pocket or a boss.
+    if between.iter().any(|p| !on_wall(*p, &corners, radius, &holes, tol)) {
+        return Err("it is not a flat plate: some corners lie between its top and bottom faces \
+                    (steps, pockets, bosses and blind holes are not recognised yet)"
+            .into());
+    }
 
     let offset = bounds.min.map(|c| if c.abs() <= tol { 0.0 } else { snap(c) });
     let (z, outline_fillet_r) = (snap(size[2]), radius.map(snap));
@@ -121,44 +138,89 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
 }
 
 /// Sorts the triangles into the top face (returned in 2D, relative to `min`), the bottom face
-/// (only its area is needed) and vertical walls, and refuses anything else.
-fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<(Vec<[P2; 3]>, f64), String> {
+/// (only its area is needed) and vertical walls, and refuses anything else. Also returns every
+/// corner between the top and the bottom (in 2D, relative to `min`).
+///
+/// A wall may have corners between the top and the bottom: some exporters (SolidCraft's own
+/// among them) mesh a tall wall in several bands, whose facets lean a little as their corners
+/// lie on a curved wall at different heights and angles. The caller checks that those corners
+/// lie on the walls; anywhere else they are a step, a pocket or a boss.
+fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, String> {
     let mut top = Vec::new();
     let mut bottom_area = 0.0;
+    let mut between = Vec::new();
     for triangle in &mesh.triangles {
-        let mut on_top = 0;
-        for p in triangle {
-            if (p[2] - top_z).abs() <= tol {
-                on_top += 1;
-            } else if (p[2] - min[2]).abs() > tol {
-                return Err("it is not a flat plate: some corners lie between its top and bottom faces \
-                            (steps, pockets, bosses and blind holes are not recognised yet)"
-                    .into());
-            }
-        }
         let [a, b, c] = *triangle;
         let normal = cross(sub(b, a), sub(c, a));
         let len = length(normal);
-        if len == 0.0 {
-            continue;
-        }
-        let nz = normal[2] / len;
         // A sliver flatter than the tolerance can come out turned over once its corners are
         // rounded to single precision; its corners still join its neighbours as they should, so
         // only its direction is not trusted.
         let longest = [length(sub(b, a)), length(sub(c, b)), length(sub(a, c))].into_iter().fold(0.0, f64::max);
-        let sliver = len / longest <= tol;
+        let sliver = len == 0.0 || len / longest <= tol;
+        let nz = if len == 0.0 { 0.0 } else { normal[2] / len };
+        let on_top = triangle.iter().filter(|p| (p[2] - top_z).abs() <= tol).count();
+        let on_bottom = triangle.iter().filter(|p| (p[2] - min[2]).abs() <= tol).count();
+        if on_top + on_bottom < 3 {
+            // A wall band between the faces.
+            between.extend(
+                triangle
+                    .iter()
+                    .filter(|p| (p[2] - top_z).abs() > tol && (p[2] - min[2]).abs() > tol)
+                    .map(|p| [p[0] - min[0], p[1] - min[1]]),
+            );
+            continue;
+        }
+        if len == 0.0 {
+            continue;
+        }
         match on_top {
             3 if nz > 0.0 || sliver => top.push(triangle.map(|p| [p[0] - min[0], p[1] - min[1]])),
             0 if nz < 0.0 || sliver => bottom_area -= normal[2] / 2.0,
             0 | 3 => return Err("some faces point inwards".into()),
-            _ if nz.abs() > 1e-3 && !sliver => {
-                return Err("some side walls are not vertical (drafts and chamfers are not recognised yet)".into());
-            }
-            _ => {}
+            // A wall from the top to the bottom: its corners must lie on the walls too (a drafted
+            // wall's do not, and its top and bottom faces differ).
+            _ => between.extend(triangle.iter().map(|p| [p[0] - min[0], p[1] - min[1]])),
         }
     }
-    Ok((top, bottom_area))
+    Ok((top, bottom_area, between))
+}
+
+/// Whether `p` (relative to the plate's corner) lies on a wall of the plate: on a hole's circle,
+/// on a side of the outline `corners` or, with rounded corners of radius `radius`, on a corner's
+/// arc.
+fn on_wall(p: P2, corners: &[P2], radius: Option<f64>, holes: &[HoleSpec], tol: f64) -> bool {
+    if holes.iter().any(|h| ((p[0] - h.x).hypot(p[1] - h.y) - h.d / 2.0).abs() <= tol) {
+        return true;
+    }
+    let n = corners.len();
+    (0..n).any(|i| {
+        let (a, c, b) = (corners[(i + n - 1) % n], corners[i], corners[(i + 1) % n]);
+        if segment_distance(p, c, b) <= tol {
+            return true;
+        }
+        let Some(r) = radius else { return false };
+        // The arc of corner `c`: tangent to both sides, its centre r from each, inside the turn.
+        let unit = |p: P2, q: P2| {
+            let len = distance(p, q);
+            [(q[0] - p[0]) / len, (q[1] - p[1]) / len]
+        };
+        let (d1, d2) = (unit(a, c), unit(c, b));
+        let turn = (d1[0] * d2[1] - d1[1] * d2[0]).atan2(d1[0] * d2[0] + d1[1] * d2[1]);
+        let t = r * (turn.abs() / 2.0).tan();
+        let start = [c[0] - d1[0] * t, c[1] - d1[1] * t];
+        let side = r * turn.signum();
+        let centre = [start[0] - d1[1] * side, start[1] + d1[0] * side];
+        (distance(p, centre) - r).abs() <= tol
+    })
+}
+
+/// The distance from `p` to the segment from `a` to `b`.
+fn segment_distance(p: P2, a: P2, b: P2) -> f64 {
+    let (u, w) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
+    let len2 = u[0] * u[0] + u[1] * u[1];
+    let t = if len2 == 0.0 { 0.0 } else { ((w[0] * u[0] + w[1] * u[1]) / len2).clamp(0.0, 1.0) };
+    distance(p, [a[0] + t * u[0], a[1] + t * u[1]])
 }
 
 /// The closed boundary loops of a set of counter-clockwise triangles: outlines run
@@ -226,6 +288,7 @@ fn signed_area(ring: &[P2]) -> f64 {
 /// Reads `outline` (counter-clockwise) as a polygon of straight sides whose corners are all
 /// sharp or all rounded with one radius. Returns the corners as if they were sharp, and the
 /// radius.
+#[allow(clippy::too_many_lines)] // one scan, read best in one piece
 fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), String> {
     let mut v = merge_collinear(outline);
     let n = v.len();
@@ -268,11 +331,28 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
         fit.add(v[i + 1]);
         let mut found = None;
         let mut end = i + 1;
-        while end + 1 < n && carries_on(i, end) {
+        // Some exporters (SolidCraft among them) start or end an arc with a facet of another
+        // length; a facet that turns the same small way and whose far corner keeps the run's
+        // first and last corners on one circle carries the run on too.
+        let on_fit = |fit: &CircleSums, end: usize| {
+            let same_way = turn(end).abs() <= MAX_FACET_TURN && (end == i + 1 || turn(end) * turn(i + 1) > 0.0) && turn(i + 1) != 0.0;
+            same_way && {
+                let mut with = fit.clone();
+                with.add(v[(end + 1) % n]);
+                with.circle()
+                    .is_some_and(|(centre, r)| [v[i], v[end], v[(end + 1) % n]].iter().all(|p| (distance(*p, centre) - r).abs() <= tol))
+            }
+        };
+        while end + 1 < n && (carries_on(i, end) || on_fit(&fit, end)) {
             end += 1;
             fit.add(v[end]);
             let Some((centre, r)) = fit.circle() else { continue };
-            if tangent(before, v[i], centre, len(i) / (2.0 * r))
+            // An arc ends where its next corner leaves the circle: with facets of uneven length
+            // the next facet of the arc itself can look tangent.
+            let off = |p: P2| (distance(p, centre) - r).abs() > tol;
+            if off(v[(end + 1) % n])
+                && off(before)
+                && tangent(before, v[i], centre, len(i) / (2.0 * r))
                 && tangent(v[(end + 1) % n], v[end], centre, len(end - 1) / (2.0 * r))
                 && v[i..=end].iter().all(|p| (distance(*p, centre) - r).abs() <= tol)
             {
@@ -336,6 +416,7 @@ fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>), Str
 
 /// Running sums for a least-squares circle (Kåsa's algebraic fit) through points added one at a
 /// time, around a nearby origin to keep the sums small.
+#[derive(Clone)]
 struct CircleSums {
     origin: P2,
     n: f64,
@@ -456,7 +537,9 @@ fn round_hole(ring: &[P2], tol: f64) -> Result<HoleSpec, String> {
     let mut sorted = steps.clone();
     sorted.sort_by(f64::total_cmp);
     let median = sorted[n / 2];
-    if (around.abs() - 2.0 * PI).abs() > 1e-6 || steps.iter().any(|s| *s > MAX_HOLE_STEP || *s > 1.5 * median) {
+    // Some exporters (SolidCraft among them) space a rim's corners unevenly, a step up to about
+    // twice another; a flat side is several steps long.
+    if (around.abs() - 2.0 * PI).abs() > 1e-6 || steps.iter().any(|s| *s > MAX_HOLE_STEP || *s > MAX_STEP_RATIO * median) {
         return Err(not_round());
     }
     Ok(HoleSpec { x: snap(cx), y: snap(cy), d: snap(2.0 * r) })
@@ -687,11 +770,63 @@ mod tests {
         assert!(reason(&synth::plate(&spec(&[(40.0, 25.0, 10.0)], None), 6, [0.0; 3])).contains("6 corners"));
     }
 
+    /// Splits every wall facet at the middle of its vertical edge, moved `inward` mm towards
+    /// the plate's middle, as an exporter that meshes walls in bands would (with `inward` 0).
+    #[allow(clippy::float_cmp)] // the generator puts a wall's corners exactly above each other
+    fn banded(mesh: &Mesh, inward: f64, middle: P2) -> Mesh {
+        let mut out = Vec::new();
+        for t in &mesh.triangles {
+            let vertical_edge = (0..3).find(|&k| {
+                let (p, q) = (t[k], t[(k + 1) % 3]);
+                p[0] == q[0] && p[1] == q[1] && p[2] != q[2]
+            });
+            let Some(k) = vertical_edge else {
+                out.push(*t);
+                continue;
+            };
+            let (p, q, r) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3]);
+            let toward = [middle[0] - p[0], middle[1] - p[1]];
+            let len = toward[0].hypot(toward[1]);
+            let m = [p[0] + toward[0] / len * inward, p[1] + toward[1] / len * inward, f64::midpoint(p[2], q[2])];
+            out.push([p, m, r]);
+            out.push([m, q, r]);
+        }
+        Mesh::new(out)
+    }
+
+    #[test]
+    fn recognises_walls_meshed_in_bands() {
+        let expected = spec(&[(20.0, 25.0, 8.0), (60.0, 25.0, 6.0)], Some(4.0));
+        let mesh = banded(&synth::plate(&expected, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
+        assert_eq!(found(&mesh).0, expected);
+    }
+
+    #[test]
+    fn a_dent_in_a_banded_wall_is_no_plate() {
+        let mesh = banded(&synth::plate(&spec(&[(20.0, 25.0, 8.0)], None), 32, [0.0; 3]), 0.5, [40.0, 25.0]);
+        let why = reason(&mesh);
+        assert!(why.contains("not a flat plate") || why.contains("faces differ"), "{why}");
+    }
+
+    /// An L-bracket exported from SolidCraft 0.45 (`file.export_stl`, standard quality): walls in
+    /// bands, top and bottom faces meshed apart, arcs and rims of uneven facets.
+    #[test]
+    fn recognises_solidcraft_exports() {
+        let mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/solidcraft-l-bracket.stl")).expect("parses");
+        let Recognition::Profile { profile, offset } = recognize(&mesh) else { panic!("not recognised: {:?}", recognize(&mesh)) };
+        assert_eq!(offset, [20.0, 10.0, 0.0]);
+        assert_eq!(profile.corners, [[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]]);
+        assert_eq!(profile.holes, [HoleSpec { x: 7.5, y: 30.0, d: 5.0 }, HoleSpec { x: 45.0, y: 7.5, d: 6.0 }]);
+        assert_eq!((profile.z, profile.outline_fillet_r), (5.0, Some(2.0)));
+    }
+
     #[test]
     fn standing_plate_is_not_recognised() {
         let mesh = synth::plate(&spec(&[(40.0, 25.0, 10.0)], None), 32, [0.0; 3]);
         let turned = Mesh::new(mesh.triangles.iter().map(|t| t.map(|p| [p[0], p[2], -p[1]])).collect());
-        assert!(reason(&turned).contains("not a flat plate"));
+        // Seen along Z it is a strip with a hole through its side: no prism over its top face.
+        let why = reason(&turned);
+        assert!(why.contains("not a flat plate") || why.contains("faces differ"), "{why}");
     }
 
     #[test]

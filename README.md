@@ -56,7 +56,8 @@ part that is not recognised arrives as a mesh body, and the report says why. To 
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 
-The parameter names are mesh2cad's, and the part stays where it is in the file. Change
+The parameter names are mesh2cad's, and the part stays where it is in the file. STL files
+exported by SolidCraft itself, or by other tools that mesh walls in bands, are recognised too. Change
 `hole_row_1_n` or `hole_circle_1_r` and every hole of that pattern follows. A grid wins over a
 bolt circle (four corner holes are both), two holes are never a pattern, and a pattern with one
 hole missing or out of place stays single holes. A row's direction is fixed (mesh2cad's

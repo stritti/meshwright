@@ -47,6 +47,13 @@ xtask/                 component wrapping, packaging, plugin tests
   (facet corners on the true surfaces), within 1 µm or 10⁻⁵ of the part's size, whichever is
   larger, and the rebuilt part must match the mesh's volume within 1%. Anything less certain
   stays a mesh, with the reason in the loss report.
+- **Take exporters as they are.** Exporters differ in how they mesh: SolidCraft's own STL
+  export meshes tall walls in bands (corners between the top and the bottom face, facets that
+  lean a little on a curved wall), meshes the top and bottom faces apart, and spaces the corners
+  of arcs and rims unevenly. So a corner between the faces is checked against the walls
+  themselves (it must lie on a hole's circle, a side or a corner's arc), not against its facet's
+  normal, and arcs and holes are read from where their corners lie, not from equal facets.
+  `plugin/meshwright/tests/solidcraft-l-bracket.stl` is such an export.
 - **Deterministic numerics.** No threads and no system randomness in the sandbox: algorithms
   such as RANSAC use a fixed seed.
 
