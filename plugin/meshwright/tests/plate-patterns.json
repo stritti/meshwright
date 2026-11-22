@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "plate-patterns.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 11, "loss_report": {"summary": "A 120 x 80 x 6 mm plate with 14 holes and 4 mm rounded corners"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 55995.491254}},
+    "tolerance": 1e-4
+  }
+}

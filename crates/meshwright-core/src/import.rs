@@ -174,6 +174,43 @@ mod tests {
         assert_eq!(json["features"][4]["edges"][0], serde_json::json!([-30.0, -20.0, 2.5]));
     }
 
+    /// The plugin test's pattern plate: a grid, a row and a bolt circle become one hole and a
+    /// pattern feature each, the bore stays a single hole.
+    #[test]
+    fn hole_patterns_become_pattern_features() {
+        let bytes = include_bytes!("../../../plugin/meshwright/tests/plate-patterns.stl");
+        let result = import(bytes, "plate-patterns.stl", &ImportOptions::default()).expect("imports");
+        let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
+        let names: Vec<&str> = json["features"].as_array().expect("features").iter().filter_map(|f| f["name"].as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Sketch1",
+                "Extrude1",
+                "Move1",
+                "HoleGrid1",
+                "HoleGrid1Pattern",
+                "HoleRow1",
+                "HoleRow1Pattern",
+                "HoleCircle1",
+                "HoleCircle1Pattern",
+                "Hole1",
+                "Fillet1"
+            ]
+        );
+        let grid = &json["features"][4];
+        assert_eq!(grid["features"], serde_json::json!([4]));
+        assert_eq!(grid["pattern"]["count2"], "hole_grid_1_ny");
+        let circle = &json["features"][8]["pattern"];
+        assert_eq!(circle["type"], "circular");
+        assert_eq!(circle["origin"], serde_json::json!(["hole_circle_1_cx", "hole_circle_1_cy", "0"]));
+        let param = |name: &str| result.design.params.iter().find(|p| p.name == name).map(|p| p.expr.as_str());
+        assert_eq!(param("hole_grid_1_nx"), Some("2"));
+        assert_eq!(param("hole_row_1_pitch"), Some("15 mm"));
+        assert_eq!(param("hole_circle_1_angle"), Some("15 deg"));
+        assert_eq!(param("hole_1_d"), Some("10 mm"));
+    }
+
     #[test]
     fn profile_import_keeps_its_place() {
         use crate::recognize::{HoleSpec, ProfileSpec};

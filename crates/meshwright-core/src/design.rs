@@ -85,6 +85,19 @@ impl Param {
     pub fn model(name: impl Into<String>, expr: impl Into<String>) -> Self {
         Self { name: name.into(), expr: expr.into(), unit: "mm", model: true }
     }
+
+    /// A user parameter without a unit, such as a pattern's count (SolidCraft refuses a length
+    /// as a count).
+    #[must_use]
+    pub fn count(name: impl Into<String>, count: usize) -> Self {
+        Self { name: name.into(), expr: count.to_string(), unit: "", model: false }
+    }
+
+    /// A user parameter in degrees.
+    #[must_use]
+    pub fn angle(name: impl Into<String>, degrees: f64) -> Self {
+        Self { name: name.into(), expr: format!("{} deg", fmt_number(degrees)), unit: "deg", model: false }
+    }
 }
 
 /// One timeline entry.
@@ -144,6 +157,13 @@ pub enum FeatureKind {
         diameter: String,
         /// The hole's kind.
         hole: HoleKind,
+    },
+    /// Copies of earlier features (holes), in a row, a grid or round an axis.
+    Pattern {
+        /// The ids of the features it repeats.
+        features: Vec<u32>,
+        /// Where the copies go.
+        pattern: PatternKind,
     },
     /// A move of whole bodies, by a translation whose three parts are expressions.
     Move {
@@ -351,6 +371,42 @@ impl Extent {
 pub enum Operation {
     /// Makes a new body.
     NewBody,
+}
+
+/// Where a pattern puts its copies. Counts, spacings and the origin are expressions.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PatternKind {
+    /// `count1` copies `spacing1` apart along `dir1`, and as many rows of them `spacing2` apart
+    /// along `dir2`; the counts include the original.
+    Rectangular {
+        /// First direction.
+        dir1: [f64; 3],
+        /// Copies along it, the original included.
+        count1: String,
+        /// Their spacing.
+        spacing1: String,
+        /// Second direction, for a grid.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dir2: Option<[f64; 3]>,
+        /// Copies along it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        count2: Option<String>,
+        /// Their spacing.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        spacing2: Option<String>,
+    },
+    /// `count` copies spread over `angle` about the axis through `origin`.
+    Circular {
+        /// A point on the axis.
+        origin: [String; 3],
+        /// The axis direction.
+        axis: [f64; 3],
+        /// Copies, the original included.
+        count: String,
+        /// The angle they spread over (`"360 deg"`: all the way round).
+        angle: String,
+    },
 }
 
 /// A hole's kind.
