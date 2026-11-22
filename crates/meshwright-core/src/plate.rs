@@ -272,16 +272,34 @@ impl Walls {
         }
         // About 256 cells across the plate, never finer than a few tolerances.
         let cell = (size / 256.0).max(4.0 * tol);
+        // Each wall goes into the cells along it, not into every cell of its bounding box (a long
+        // diagonal side or a large circle would fill thousands): points on it half a cell apart,
+        // each with the cells around it, cover every cell within a tolerance of it.
         let mut cells: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
         for (k, wall) in walls.iter().enumerate() {
-            let (lo, hi) = match *wall {
-                Wall::Segment(a, b) => ([a[0].min(b[0]), a[1].min(b[1])], [a[0].max(b[0]), a[1].max(b[1])]),
-                Wall::Arc { centre, r, .. } | Wall::Circle(centre, r) => ([centre[0] - r, centre[1] - r], [centre[0] + r, centre[1] + r]),
+            #[allow(clippy::cast_sign_loss)] // counts of half cells along a wall, never negative
+            let samples: Vec<P2> = match *wall {
+                Wall::Segment(a, b) => {
+                    let steps = (distance(a, b) / (0.5 * cell)).ceil().max(1.0) as usize;
+                    (0..=steps).map(|s| s as f64 / steps as f64).map(|t| [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]).collect()
+                }
+                Wall::Arc { centre, r, .. } | Wall::Circle(centre, r) => {
+                    let steps = ((2.0 * PI * r) / (0.5 * cell)).ceil().max(8.0) as usize;
+                    (0..steps)
+                        .map(|s| 2.0 * PI * s as f64 / steps as f64)
+                        .map(|a| [centre[0] + r * a.cos(), centre[1] + r * a.sin()])
+                        .collect()
+                }
             };
-            let at = |v: f64| ((v / cell).floor()) as i64;
-            for x in at(lo[0] - tol)..=at(hi[0] + tol) {
-                for y in at(lo[1] - tol)..=at(hi[1] + tol) {
-                    cells.entry((x, y)).or_default().push(k);
+            for p in samples {
+                let (x, y) = ((p[0] / cell).floor() as i64, (p[1] / cell).floor() as i64);
+                for key in
+                    [(x - 1, y - 1), (x, y - 1), (x + 1, y - 1), (x - 1, y), (x, y), (x + 1, y), (x - 1, y + 1), (x, y + 1), (x + 1, y + 1)]
+                {
+                    let list = cells.entry(key).or_default();
+                    if list.last() != Some(&k) {
+                        list.push(k);
+                    }
                 }
             }
         }
@@ -1035,6 +1053,17 @@ mod tests {
         }
         let why = reason(&mesh);
         assert!(why.contains("not vertical"), "{why}");
+    }
+
+    /// A diamond's long diagonal sides go into the cells along them only, not into every cell
+    /// of their bounding boxes (about 256 x 256 here).
+    #[test]
+    fn diagonal_walls_fill_few_cells() {
+        let diamond = [[50.0, 0.0], [100.0, 50.0], [50.0, 100.0], [0.0, 50.0]];
+        let walls = Walls::new(&diamond, None, &[], &[], 100.0, 1e-3);
+        assert!(walls.cells.len() < 10_000, "{} cells", walls.cells.len());
+        assert!(walls.holds([75.0, 25.0]) && walls.holds([25.0, 75.0]));
+        assert!(!walls.holds([50.0, 50.0]) && !walls.holds([75.0, 26.0]));
     }
 
     /// Small rounds of many facets next to long sides, in single precision.
