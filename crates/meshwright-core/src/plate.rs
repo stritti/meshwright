@@ -179,7 +179,9 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
             if !sliver && nz.abs() > 0.5 {
                 return Err(NOT_FLAT.into());
             }
-            // A wall band between the faces.
+            // A wall band between the faces; its corners on the bottom must lie under the walls
+            // too, like those of a wall that runs all the way.
+            rim.extend(triangle.iter().filter(|p| (p[2] - min[2]).abs() <= tol).map(|p| [p[0] - min[0], p[1] - min[1]]));
             between.extend(
                 triangle
                     .iter()
@@ -1013,6 +1015,26 @@ mod tests {
         let leaning_block = sheared(&outline, &[], 5.0, [0.5, 0.0], [0.0; 2]);
         let why = reason(&leaning_block);
         assert!(why.contains("not vertical") || why.contains("faces differ"), "{why}");
+    }
+
+    /// A banded wall whose bottom band is shifted: the band corners lie on the wall, the bottom
+    /// ones do not.
+    #[test]
+    #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
+    fn a_shifted_bottom_band_is_not_vertical() {
+        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: None };
+        let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
+        // Shift the whole bottom 0.5 mm along X: the mesh stays closed, the faces keep their
+        // areas and the volume stays that of a prism, so only the walls' bottom corners tell.
+        for t in &mut mesh.triangles {
+            for p in t.iter_mut() {
+                if p[2] == 0.0 {
+                    p[0] += 0.5;
+                }
+            }
+        }
+        let why = reason(&mesh);
+        assert!(why.contains("not vertical"), "{why}");
     }
 
     /// Small rounds of many facets next to long sides, in single precision.
