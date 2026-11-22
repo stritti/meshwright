@@ -334,16 +334,18 @@ impl Walls {
     fn holds_chord(&self, a: P2, b: P2) -> bool {
         let p = [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1])];
         let half2 = distance(a, b).powi(2) / 4.0;
-        let key = ((p[0] / self.cell).floor() as i64, (p[1] / self.cell).floor() as i64);
         let tol = self.tol;
-        // The middle of a chord lies `r - sqrt(r² - (len/2)²)` inside its circle.
+        // The middle of a chord lies `r - sqrt(r² - (len/2)²)` inside its circle, maybe cells away
+        // from it; the walls are looked up at the chord's ends, which lie on them.
         let on_circle = |centre: P2, r: f64| r * r > half2 && (distance(p, centre) - (r * r - half2).sqrt()).abs() <= tol;
-        self.cells.get(&key).is_some_and(|candidates| {
-            candidates.iter().any(|&k| match self.pieces[k] {
-                Wall::Segment(s, e) => segment_distance(p, s, e) <= tol,
-                Wall::Arc { centre, r, corner, t } => on_circle(centre, r) && distance(p, corner) <= t + tol,
-                Wall::Circle(centre, r) => on_circle(centre, r),
-            })
+        let follows = |k: usize| match self.pieces[k] {
+            Wall::Segment(s, e) => segment_distance(p, s, e) <= tol,
+            Wall::Arc { centre, r, corner, t } => on_circle(centre, r) && distance(p, corner) <= t + tol,
+            Wall::Circle(centre, r) => on_circle(centre, r),
+        };
+        [a, b, p].iter().any(|q| {
+            let key = ((q[0] / self.cell).floor() as i64, (q[1] / self.cell).floor() as i64);
+            self.cells.get(&key).is_some_and(|candidates| candidates.iter().any(|&k| follows(k)))
         })
     }
 
@@ -1175,6 +1177,59 @@ mod tests {
         assert!(mesh.volume() > 0.0);
         let why = reason(&mesh);
         assert!(why.contains("not vertical"), "{why}");
+    }
+
+    /// A large 8-sided bore whose bottom rim is turned half a step against its top rim: the
+    /// wall's bottom edges are chords whose middles lie 3 mm inside the circle, cells away from
+    /// it, and still follow the wall.
+    #[test]
+    fn chords_of_independently_meshed_rims_follow_the_bore() {
+        let (s, z, r) = (400.0, 5.0, 40.0);
+        let outline = [[0.0, 0.0], [s, 0.0], [s, s], [0.0, s]];
+        let ring = |phase: f64| -> Vec<P2> {
+            (0..8).map(|i| (f64::from(i) + phase) * PI / 4.0).map(|a| [200.0 + r * a.cos(), 200.0 + r * a.sin()]).collect()
+        };
+        let (top_ring, bottom_ring) = (ring(0.0), ring(0.5));
+        let lift = |p: P2, h: f64| [p[0], p[1], h];
+        let mut t: Vec<crate::mesh::Triangle> = Vec::new();
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&top_ring)) {
+            t.push([lift(a, z), lift(b, z), lift(c, z)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&bottom_ring)) {
+            t.push([lift(a, 0.0), lift(c, 0.0), lift(b, 0.0)]);
+        }
+        for i in 0..4 {
+            let (a, b) = (outline[i], outline[(i + 1) % 4]);
+            t.push([lift(a, 0.0), lift(b, 0.0), lift(b, z)]);
+            t.push([lift(a, 0.0), lift(b, z), lift(a, z)]);
+        }
+        for i in 0..8 {
+            let (t0, t1, b0) = (top_ring[i], top_ring[(i + 1) % 8], bottom_ring[i]);
+            let b_prev = bottom_ring[(i + 7) % 8];
+            t.push([lift(t0, z), lift(b0, 0.0), lift(t1, z)]);
+            t.push([lift(t0, z), lift(b_prev, 0.0), lift(b0, 0.0)]);
+        }
+        // Hole walls face the hole's axis, the others away from the plate's middle.
+        for tri in &mut t {
+            let n = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]));
+            let centre = [
+                (tri[0][0] + tri[1][0] + tri[2][0]) / 3.0,
+                (tri[0][1] + tri[1][1] + tri[2][1]) / 3.0,
+                (tri[0][2] + tri[1][2] + tri[2][2]) / 3.0,
+            ];
+            let in_bore = tri.iter().all(|p| ((p[0] - 200.0).hypot(p[1] - 200.0) - r).abs() < 1e-6);
+            let away = if in_bore { [200.0 - centre[0], 200.0 - centre[1], 0.0] } else { sub(centre, [200.0, 200.0, z / 2.0]) };
+            if (in_bore || n[2].abs() < 0.5) && crate::mesh::dot(n, away) < 0.0 {
+                tri.swap(1, 2);
+            }
+        }
+        let mesh = Mesh::new(t);
+        assert!(mesh.volume() > 0.0);
+        let walls = {
+            let (plate, _) = found(&mesh);
+            plate.holes
+        };
+        assert_eq!(walls.len(), 1);
     }
 
     /// Small rounds of many facets next to long sides, in single precision.
