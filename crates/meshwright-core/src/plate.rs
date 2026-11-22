@@ -70,8 +70,8 @@ const NOT_FLAT: &str = "it is not a flat plate: some corners lie between its top
                         (steps, pockets, bosses and blind holes are not recognised yet)";
 
 /// The top face's triangles, the bottom face's area, the corners between the two faces and the
-/// bottom corners of the walls that run from the top to the bottom.
-type Faces = (Vec<[P2; 3]>, f64, Vec<P2>, Vec<P2>);
+/// bottom corners of the walls, and the wall facets' edges that do not run along the top face.
+type Faces = (Vec<[P2; 3]>, f64, Vec<P2>, Vec<P2>, Vec<(P2, P2)>);
 
 /// Looks for a plate in `mesh`. `Err` carries the reason in the user's words.
 pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
@@ -87,7 +87,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         return Err("the mesh is not closed or its faces point inwards".into());
     }
 
-    let (top, bottom_area, between, rim) = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
+    let (top, bottom_area, between, rim, chords) = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
     let top_area: f64 = top.iter().map(|[a, b, c]| signed_area(&[*a, *b, *c])).sum();
     let close = |a: f64, b: f64, rel: f64| (a - b).abs() <= rel * a.abs().max(b.abs());
     // An exporter may mesh the top and bottom faces apart, with their own corners on round
@@ -117,7 +117,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     if between.iter().any(|p| !walls.holds(*p)) {
         return Err(NOT_FLAT.into());
     }
-    if rim.iter().any(|p| !walls.holds(*p)) {
+    if rim.iter().any(|p| !walls.holds(*p)) || chords.iter().any(|&(a, b)| !walls.holds_chord(a, b)) {
         return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
     }
 
@@ -160,6 +160,20 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
     let mut bottom_area = 0.0;
     let mut between = Vec::new();
     let mut rim = Vec::new();
+    let mut chords = Vec::new();
+    let flat = |p: &Vec3| [p[0] - min[0], p[1] - min[1]];
+    // A wall facet's edges that do not run along the top face: seen from above they must follow
+    // the walls between their corners too, or a facet could cut across a corner.
+    let mut wall_edges = |t: &crate::mesh::Triangle| {
+        for k in 0..3 {
+            let (p, q) = (t[k], t[(k + 1) % 3]);
+            let on_top = |v: Vec3| (v[2] - top_z).abs() <= tol;
+            let (a, b) = (flat(&p), flat(&q));
+            if !(on_top(p) && on_top(q)) && distance(a, b) > tol {
+                chords.push(if a < b { (a, b) } else { (b, a) });
+            }
+        }
+    };
     for triangle in &mesh.triangles {
         let [a, b, c] = *triangle;
         let normal = cross(sub(b, a), sub(c, a));
@@ -182,6 +196,7 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
             // A wall band between the faces; its corners on the bottom must lie under the walls
             // too, like those of a wall that runs all the way.
             rim.extend(triangle.iter().filter(|p| (p[2] - min[2]).abs() <= tol).map(|p| [p[0] - min[0], p[1] - min[1]]));
+            wall_edges(triangle);
             between.extend(
                 triangle
                     .iter()
@@ -200,15 +215,22 @@ fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Result<Faces, St
             // A wall from the top to the bottom: its top corners lie on the top face's boundary,
             // its bottom corners must lie under it (the caller checks; a sheared or drafted wall's
             // do not).
-            _ => rim.extend(triangle.iter().filter(|p| (p[2] - min[2]).abs() <= tol).map(|p| [p[0] - min[0], p[1] - min[1]])),
+            _ => {
+                rim.extend(triangle.iter().filter(|p| (p[2] - min[2]).abs() <= tol).map(|p| [p[0] - min[0], p[1] - min[1]]));
+                wall_edges(triangle);
+            }
         }
     }
-    // A corner is shared by several facets; it needs checking once.
+    // A corner or an edge is shared by several facets; it needs checking once.
     for points in [&mut between, &mut rim] {
         points.sort_by(|p, q| p[0].total_cmp(&q[0]).then(p[1].total_cmp(&q[1])));
         points.dedup();
     }
-    Ok((top, bottom_area, between, rim))
+    chords.sort_by(|p, q| {
+        p.0[0].total_cmp(&q.0[0]).then(p.0[1].total_cmp(&q.0[1])).then(p.1[0].total_cmp(&q.1[0])).then(p.1[1].total_cmp(&q.1[1]))
+    });
+    chords.dedup();
+    Ok((top, bottom_area, between, rim, chords))
 }
 
 /// One piece of a plate's walls, seen from above.
@@ -304,6 +326,25 @@ impl Walls {
             }
         }
         Self { pieces: walls, cells, cell, tol }
+    }
+
+    /// Whether the straight edge from `a` to `b` (both on the walls, relative to the plate's
+    /// corner) follows a wall: its middle lies on a side or the meshed boundary, or within its
+    /// own sagitta of a circle (a chord of a round wall bows inward by `len² / 8r`).
+    fn holds_chord(&self, a: P2, b: P2) -> bool {
+        let p = [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1])];
+        let half2 = distance(a, b).powi(2) / 4.0;
+        let key = ((p[0] / self.cell).floor() as i64, (p[1] / self.cell).floor() as i64);
+        let tol = self.tol;
+        // The middle of a chord lies `r - sqrt(r² - (len/2)²)` inside its circle.
+        let on_circle = |centre: P2, r: f64| r * r > half2 && (distance(p, centre) - (r * r - half2).sqrt()).abs() <= tol;
+        self.cells.get(&key).is_some_and(|candidates| {
+            candidates.iter().any(|&k| match self.pieces[k] {
+                Wall::Segment(s, e) => segment_distance(p, s, e) <= tol,
+                Wall::Arc { centre, r, corner, t } => on_circle(centre, r) && distance(p, corner) <= t + tol,
+                Wall::Circle(centre, r) => on_circle(centre, r),
+            })
+        })
     }
 
     /// Whether `p` (relative to the plate's corner) lies on one of the walls.
@@ -1092,6 +1133,48 @@ mod tests {
         }
         let mesh = synth::prism(&outline, &[], 5.0, [0.0; 3]);
         reason(&mesh);
+    }
+
+    /// A 200 x 200 x 5 plate whose bottom corner is clipped from (1, 0, 0) to (0, 1, 0), a slanted
+    /// facet joining them to (0, 0, 5): its corners all lie on the sides, its bottom edge does not.
+    #[test]
+    fn a_facet_across_a_corner_is_no_wall() {
+        let (s, z) = (200.0, 5.0);
+        let mut t: Vec<crate::mesh::Triangle> = vec![
+            // Top and bottom.
+            [[0.0, 0.0, z], [s, 0.0, z], [s, s, z]],
+            [[0.0, 0.0, z], [s, s, z], [0.0, s, z]],
+            [[1.0, 0.0, 0.0], [s, 0.0, 0.0], [s, s, 0.0]],
+            [[1.0, 0.0, 0.0], [s, s, 0.0], [0.0, s, 0.0]],
+            [[1.0, 0.0, 0.0], [0.0, s, 0.0], [0.0, 1.0, 0.0]],
+            // Walls, the clipped corner among them.
+            [[1.0, 0.0, 0.0], [s, 0.0, 0.0], [s, 0.0, z]],
+            [[1.0, 0.0, 0.0], [s, 0.0, z], [0.0, 0.0, z]],
+            [[s, 0.0, 0.0], [s, s, 0.0], [s, s, z]],
+            [[s, 0.0, 0.0], [s, s, z], [s, 0.0, z]],
+            [[s, s, 0.0], [0.0, s, 0.0], [0.0, s, z]],
+            [[s, s, 0.0], [0.0, s, z], [s, s, z]],
+            [[0.0, s, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, z]],
+            [[0.0, s, 0.0], [0.0, 0.0, z], [0.0, s, z]],
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, z]],
+        ];
+        // Turn every facet to face away from the middle (the solid is convex).
+        let middle = [s / 2.0, s / 2.0, z / 2.0];
+        for tri in &mut t {
+            let n = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]));
+            let centre = [
+                (tri[0][0] + tri[1][0] + tri[2][0]) / 3.0,
+                (tri[0][1] + tri[1][1] + tri[2][1]) / 3.0,
+                (tri[0][2] + tri[1][2] + tri[2][2]) / 3.0,
+            ];
+            if crate::mesh::dot(n, sub(centre, middle)) < 0.0 {
+                tri.swap(1, 2);
+            }
+        }
+        let mesh = Mesh::new(t);
+        assert!(mesh.volume() > 0.0);
+        let why = reason(&mesh);
+        assert!(why.contains("not vertical"), "{why}");
     }
 
     /// Small rounds of many facets next to long sides, in single precision.
