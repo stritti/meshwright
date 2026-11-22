@@ -86,6 +86,12 @@ impl Param {
         Self { name: name.into(), expr: expr.into(), unit: "mm", model: true }
     }
 
+    /// A model parameter for an angle dimension, driven by `expr` (in degrees).
+    #[must_use]
+    pub fn model_angle(name: impl Into<String>, expr: impl Into<String>) -> Self {
+        Self { name: name.into(), expr: expr.into(), unit: "deg", model: true }
+    }
+
     /// A user parameter without a unit, such as a pattern's count (SolidCraft refuses a length
     /// as a count).
     #[must_use]
@@ -263,7 +269,26 @@ pub struct Sketch {
     pub curves: Vec<SketchCurve>,
     /// Constraints, referring to points and curves by index.
     pub constraints: Vec<Constraint>,
+    /// Geometry linked from outside the sketch, such as its X axis.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<Link>,
     counters: Counters,
+}
+
+/// Geometry a sketch takes from elsewhere: `j<n>`, a projection of one of the sketch's own axes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Link {
+    /// `j<n>`.
+    pub id: String,
+    kind: &'static str,
+    source: LinkSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct LinkSource {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    name: &'static str,
 }
 
 /// A sketch point.
@@ -275,6 +300,15 @@ pub struct SketchPoint {
     pub pos: [f64; 2],
     /// Whether the solver may move it.
     pub fixed: bool,
+    /// The link (`j<n>`) that places it, for a point of linked geometry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+}
+
+impl SketchPoint {
+    fn new(id: impl Into<String>, pos: [f64; 2], fixed: bool) -> Self {
+        Self { id: id.into(), pos, fixed, link: None }
+    }
 }
 
 /// A sketch curve.
@@ -285,6 +319,22 @@ pub enum SketchCurve {
     Line {
         /// `l<n>`.
         id: String,
+        /// Start point index.
+        a: usize,
+        /// End point index.
+        b: usize,
+        /// Construction geometry makes no profile.
+        construction: bool,
+        /// The link (`j<n>`) it comes from, for linked geometry.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        link: Option<String>,
+    },
+    /// An arc about centre `c`, counter-clockwise from point `a` to point `b`.
+    Arc {
+        /// `a<n>`.
+        id: String,
+        /// Centre point index.
+        c: usize,
         /// Start point index.
         a: usize,
         /// End point index.
@@ -332,15 +382,102 @@ pub enum Constraint {
         /// The model parameter that drives it.
         param: String,
         /// Where the dimension text sits, relative to the line.
-        text: [f64; 2],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<[f64; 2]>,
+    },
+    /// Curves `a` and `b` are tangent where they meet.
+    Tangent {
+        /// `k<n>`.
+        id: String,
+        /// Curve index.
+        a: usize,
+        /// Curve index.
+        b: usize,
+    },
+    /// Curves `a` and `b` are equal (two arcs: one radius).
+    Equal {
+        /// `k<n>`.
+        id: String,
+        /// Curve index.
+        a: usize,
+        /// Curve index.
+        b: usize,
+    },
+    /// Point `p` is the midpoint of line `l`.
+    Midpoint {
+        /// `k<n>`.
+        id: String,
+        /// Point index.
+        p: usize,
+        /// Curve index.
+        l: usize,
+    },
+    /// Arc or circle `c` has a diameter driven by `param`.
+    Diameter {
+        /// `k<n>`.
+        id: String,
+        /// Curve index.
+        c: usize,
+        /// The diameter now.
+        value: f64,
+        /// The model parameter that drives it.
+        param: String,
+    },
+    /// Point `q` lies `value` along X from point `p`, driven by `param`.
+    DistanceX {
+        /// `k<n>`.
+        id: String,
+        /// Point index.
+        p: usize,
+        /// Point index.
+        q: usize,
+        /// The distance now.
+        value: f64,
+        /// The model parameter that drives it.
+        param: String,
+    },
+    /// Point `q` lies `value` along Y from point `p`, driven by `param`.
+    DistanceY {
+        /// `k<n>`.
+        id: String,
+        /// Point index.
+        p: usize,
+        /// Point index.
+        q: usize,
+        /// The distance now.
+        value: f64,
+        /// The model parameter that drives it.
+        param: String,
+    },
+    /// Line `b` is turned `value` (radians) from line `a`, driven by `param` (in degrees).
+    Angle {
+        /// `k<n>`.
+        id: String,
+        /// Curve index.
+        a: usize,
+        /// Curve index.
+        b: usize,
+        /// The angle now, in radians.
+        value: f64,
+        /// The model parameter that drives it.
+        param: String,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct Counters {
+    #[serde(skip_serializing_if = "is_zero")]
+    a: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    j: usize,
     k: usize,
     l: usize,
     p: usize,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Which profiles of a sketch an extrusion uses.
@@ -358,13 +495,21 @@ pub struct Extent {
     pub distance: String,
     convention: &'static str,
     direction: &'static str,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    through_all: bool,
 }
 
 impl Extent {
     /// `distance` along the sketch normal.
     #[must_use]
     pub fn positive(distance: impl Into<String>) -> Self {
-        Self { distance: distance.into(), convention: "total_distance", direction: "positive" }
+        Self { distance: distance.into(), convention: "total_distance", direction: "positive", through_all: false }
+    }
+
+    /// Through everything, both ways from the sketch plane.
+    #[must_use]
+    pub fn through_all() -> Self {
+        Self { distance: "0".into(), convention: "total_distance", direction: "symmetric", through_all: true }
     }
 }
 
@@ -374,6 +519,8 @@ impl Extent {
 pub enum Operation {
     /// Makes a new body.
     NewBody,
+    /// Cuts the profile out of existing bodies.
+    Cut,
 }
 
 /// Where a pattern puts its copies. Counts, spacings and the origin are expressions.
@@ -456,6 +603,12 @@ impl DesignBuilder {
         self
     }
 
+    /// A name for the next model parameter, `d<n>`, that no parameter has yet.
+    #[must_use]
+    pub fn next_model_param_name(&self) -> String {
+        (1..=self.params.len() + 1).map(|n| format!("d{n}")).find(|name| self.params.iter().all(|p| &p.name != name)).unwrap_or_default()
+    }
+
     /// Appends a feature and returns its id.
     pub fn feature(&mut self, name: impl Into<String>, body_names: Vec<String>, kind: FeatureKind) -> u32 {
         let id = self.features.last().map_or(1, |f| f.id + 1);
@@ -486,8 +639,8 @@ impl DesignBuilder {
 /// `l3` (top) and `l4` (left).
 #[must_use]
 pub fn rectangle_sketch(width: f64, height: f64) -> Sketch {
-    let point = |id: &str, pos: [f64; 2], fixed: bool| SketchPoint { id: id.into(), pos, fixed };
-    let line = |n: usize, a: usize, b: usize| SketchCurve::Line { id: format!("l{n}"), a, b, construction: false };
+    let point = SketchPoint::new;
+    let line = |n: usize, a: usize, b: usize| SketchCurve::Line { id: format!("l{n}"), a, b, construction: false, link: None };
     Sketch {
         points: vec![
             point("origin", [0.0, 0.0], true),
@@ -503,10 +656,11 @@ pub fn rectangle_sketch(width: f64, height: f64) -> Sketch {
             Constraint::Vertical { id: "k3".into(), l: 1 },
             Constraint::Vertical { id: "k4".into(), l: 3 },
             Constraint::Coincident { id: "k5".into(), p: 0, q: 1 },
-            Constraint::Length { id: "k6".into(), l: 0, value: width, param: "d1".into(), text: [0.0, -5.0] },
-            Constraint::Length { id: "k7".into(), l: 1, value: height, param: "d2".into(), text: [0.0, -5.0] },
+            Constraint::Length { id: "k6".into(), l: 0, value: width, param: "d1".into(), text: Some([0.0, -5.0]) },
+            Constraint::Length { id: "k7".into(), l: 1, value: height, param: "d2".into(), text: Some([0.0, -5.0]) },
         ],
-        counters: Counters { k: 7, l: 4, p: 4 },
+        links: vec![],
+        counters: Counters { a: 0, j: 0, k: 7, l: 4, p: 4 },
     }
 }
 
@@ -516,10 +670,11 @@ pub fn rectangle_sketch(width: f64, height: f64) -> Sketch {
 #[must_use]
 pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
     let n = corners.len();
-    let mut points = vec![SketchPoint { id: "origin".into(), pos: [0.0, 0.0], fixed: true }];
-    points.extend(corners.iter().enumerate().map(|(i, c)| SketchPoint { id: format!("p{}", i + 1), pos: *c, fixed: false }));
-    let curves =
-        (0..n).map(|i| SketchCurve::Line { id: format!("l{}", i + 1), a: i + 1, b: (i + 1) % n + 1, construction: false }).collect();
+    let mut points = vec![SketchPoint::new("origin", [0.0, 0.0], true)];
+    points.extend(corners.iter().enumerate().map(|(i, c)| SketchPoint::new(format!("p{}", i + 1), *c, false)));
+    let curves = (0..n)
+        .map(|i| SketchCurve::Line { id: format!("l{}", i + 1), a: i + 1, b: (i + 1) % n + 1, construction: false, link: None })
+        .collect();
     let mut constraints = Vec::new();
     for i in 0..n {
         let (a, b) = (corners[i], corners[(i + 1) % n]);
@@ -530,8 +685,88 @@ pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
             constraints.push(Constraint::Vertical { id, l: i });
         }
     }
-    let counters = Counters { k: constraints.len(), l: n, p: n };
-    Sketch { points, curves, constraints, counters }
+    let counters = Counters { a: 0, j: 0, k: constraints.len(), l: n, p: n };
+    Sketch { points, curves, constraints, links: vec![], counters }
+}
+
+/// The model parameters a slot's sketch dimensions are driven by: the distance between the end
+/// centres, the width, the middle's X and Y, and the long axis's angle from X.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlotDimensions {
+    /// Between the end centres.
+    pub len: String,
+    /// The width (the ends' diameter).
+    pub w: String,
+    /// The middle's distance from the origin along X (unsigned: an expression that is positive
+    /// on the side the middle lies on).
+    pub x: String,
+    /// The middle's distance from the origin along Y, as `x`.
+    pub y: String,
+    /// The long axis from X (in degrees); `None` holds a slot along X or Y horizontal or
+    /// vertical instead.
+    pub angle: Option<String>,
+}
+
+/// A straight slot on the XY plane, as SolidCraft's centre-point slot tool draws it: lines `l1`
+/// and `l2` tangent to arcs `a1` (about the end at `+len / 2` along `angle`, in degrees) and
+/// `a2`, the construction line `l3` between the arc centres with its midpoint `p5` at `centre`,
+/// all driven by `dims`. A slot along neither axis has its angle measured from the sketch's X
+/// axis, linked in as `l4`.
+#[must_use]
+pub fn slot_sketch(centre: [f64; 2], len: f64, w: f64, angle: f64, dims: &SlotDimensions) -> Sketch {
+    let (sin, cos) = angle.to_radians().sin_cos();
+    let (u, v, r) = ([cos, sin], [-sin, cos], w / 2.0);
+    let at = |s: f64, t: f64| [centre[0] + s * u[0] + t * v[0], centre[1] + s * u[1] + t * v[1]];
+    let half = len / 2.0;
+    let mut points = vec![
+        SketchPoint::new("origin", [0.0, 0.0], true),
+        SketchPoint::new("p1", at(-half, -r), false),
+        SketchPoint::new("p2", at(half, -r), false),
+        SketchPoint::new("p3", at(half, r), false),
+        SketchPoint::new("p4", at(-half, r), false),
+        SketchPoint::new("a1.center", at(half, 0.0), false),
+        SketchPoint::new("a2.center", at(-half, 0.0), false),
+        SketchPoint::new("p5", centre, false),
+    ];
+    let line = |n: usize, a: usize, b: usize, construction: bool| SketchCurve::Line { id: format!("l{n}"), a, b, construction, link: None };
+    let mut curves = vec![
+        line(1, 1, 2, false),
+        SketchCurve::Arc { id: "a1".into(), c: 5, a: 2, b: 3, construction: false },
+        line(2, 3, 4, false),
+        SketchCurve::Arc { id: "a2".into(), c: 6, a: 4, b: 1, construction: false },
+        line(3, 6, 5, true),
+    ];
+    let mut constraints: Vec<Constraint> = Vec::new();
+    let mut add = |make: &dyn Fn(String) -> Constraint| {
+        let id = format!("k{}", constraints.len() + 1);
+        constraints.push(make(id));
+    };
+    add(&|id| Constraint::Tangent { id, a: 0, b: 1 });
+    add(&|id| Constraint::Tangent { id, a: 2, b: 1 });
+    add(&|id| Constraint::Tangent { id, a: 0, b: 3 });
+    add(&|id| Constraint::Tangent { id, a: 2, b: 3 });
+    add(&|id| Constraint::Equal { id, a: 3, b: 1 });
+    add(&|id| Constraint::Midpoint { id, p: 7, l: 4 });
+    add(&|id| Constraint::Length { id, l: 0, value: len, param: dims.len.clone(), text: None });
+    add(&|id| Constraint::Diameter { id, c: 1, value: w, param: dims.w.clone() });
+    // SolidCraft's distances along X and Y are unsigned: the side is the one the point is drawn on.
+    add(&|id| Constraint::DistanceX { id, p: 0, q: 7, value: centre[0].abs(), param: dims.x.clone() });
+    add(&|id| Constraint::DistanceY { id, p: 0, q: 7, value: centre[1].abs(), param: dims.y.clone() });
+    let mut links = vec![];
+    match &dims.angle {
+        None if sin.abs() < 0.5 => add(&|id| Constraint::Horizontal { id, l: 4 }),
+        None => add(&|id| Constraint::Vertical { id, l: 4 }),
+        Some(param) => {
+            let axis = || Some("j1".to_owned());
+            points.push(SketchPoint { link: axis(), ..SketchPoint::new("p6", [-100.0, 0.0], true) });
+            points.push(SketchPoint { link: axis(), ..SketchPoint::new("p7", [100.0, 0.0], true) });
+            curves.push(SketchCurve::Line { id: "l4".into(), a: 8, b: 9, construction: true, link: axis() });
+            links.push(Link { id: "j1".into(), kind: "project", source: LinkSource { kind: "sketch_axis", name: "x" } });
+            add(&|id| Constraint::Angle { id, a: 5, b: 4, value: angle.to_radians(), param: param.clone() });
+        }
+    }
+    let counters = Counters { a: 2, j: links.len(), k: constraints.len(), l: curves.len() - 2, p: points.len() - 3 };
+    Sketch { points, curves, constraints, links, counters }
 }
 
 /// A number as SolidCraft writes it in an expression: no trailing `.0`.

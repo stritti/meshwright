@@ -15,6 +15,7 @@ fn main() {
         y: 40.0,
         z: 6.0,
         holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
+        slots: vec![],
         outline_fillet_r: Some(3.0),
     };
     println!("{}", spec.to_design("plate-with-hole").to_json_pretty());
