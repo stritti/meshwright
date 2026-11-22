@@ -34,6 +34,8 @@ fn plate() -> PlateSpec {
             HoleSpec { x: 60.0, y: 30.0, d: 4.5, head: None, blind: None },
         ],
         cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(3.0),
@@ -50,6 +52,8 @@ fn bracket() -> ProfileSpec {
             HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None, blind: None },
         ],
         cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(2.0),
@@ -74,7 +78,18 @@ fn patterns() -> PlateSpec {
         let snap = |v: f64| (v * 1000.0).round() / 1000.0;
         HoleSpec { x: snap(60.0 + 15.0 * a.cos()), y: snap(40.0 + 15.0 * a.sin()), d: 4.0, head: None, blind: None }
     }));
-    PlateSpec { x: 120.0, y: 80.0, z: 6.0, holes, cutouts: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(4.0) }
+    PlateSpec {
+        x: 120.0,
+        y: 80.0,
+        z: 6.0,
+        holes,
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_r: Some(4.0),
+    }
 }
 
 /// The L in `l-inside-hole.stl`.

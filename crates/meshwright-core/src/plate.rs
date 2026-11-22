@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 
 use crate::mesh::{Mesh, Vec3, cross, length, sub};
-use crate::recognize::{Blind, BossSpec, HoleHead, HoleSpec, PlateSpec, ProfileSpec, Recognition, SlotSpec};
+use crate::recognize::{Blind, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
 pub const MAX_VOLUME_ERROR: f64 = 0.01;
@@ -173,13 +173,98 @@ fn on_wall(p: P2, centre: P2, radius: f64, wall: &[P2], tol: f64) -> bool {
         || (r < radius && r >= radius - sagitta(wall, radius) - tol && segments(wall).any(|(a, b)| segment_distance(p, a, b) <= tol))
 }
 
-/// A blind hole: a bore from the top or the bottom face down to a flat floor, in coordinates
-/// relative to the plate's lowest corner.
+/// What a blind hole, a pocket, a boss or a pad stands on, seen from above: a circle, or a
+/// rectangle along X and Y.
+#[derive(Debug, Clone, Copy)]
+enum Footprint {
+    Round { centre: P2, r: f64 },
+    Rect { lo: P2, hi: P2 },
+}
+
+impl Footprint {
+    /// Whether `p` lies on or inside it.
+    fn contains(&self, p: P2, tol: f64) -> bool {
+        match *self {
+            Self::Round { centre, r } => distance(p, centre) <= r + tol,
+            Self::Rect { lo, hi } => p[0] >= lo[0] - tol && p[0] <= hi[0] + tol && p[1] >= lo[1] - tol && p[1] <= hi[1] + tol,
+        }
+    }
+
+    /// Whether `p` lies on the wall standing on it, `ring` its loop as meshed (a round wall
+    /// follows that loop's chords).
+    fn on_wall(&self, p: P2, ring: &[P2], tol: f64) -> bool {
+        match *self {
+            Self::Round { centre, r } => on_wall(p, centre, r, ring, tol),
+            Self::Rect { lo, hi } => {
+                self.contains(p, tol)
+                    && ((p[0] - lo[0]).abs() <= tol
+                        || (p[0] - hi[0]).abs() <= tol
+                        || (p[1] - lo[1]).abs() <= tol
+                        || (p[1] - hi[1]).abs() <= tol)
+            }
+        }
+    }
+
+    /// Whether `p` lies within `inward` inside the wall, or on it: the middle of a wall facet's
+    /// edge, which bows in by the chord's sagitta on a round wall.
+    fn near_wall(&self, p: P2, inward: f64, tol: f64) -> bool {
+        match *self {
+            Self::Round { centre, r } => {
+                let d = distance(p, centre);
+                d <= r + tol && d >= r - inward - tol
+            }
+            Self::Rect { .. } => self.on_wall(p, &[], tol),
+        }
+    }
+
+    /// How far a round wall's facets come inside the circle, `ring` its loop as meshed; a
+    /// rectangle's walls are flat.
+    fn sagitta(&self, ring: &[P2]) -> f64 {
+        match *self {
+            Self::Round { r, .. } => sagitta(ring, r),
+            Self::Rect { .. } => 0.0,
+        }
+    }
+
+    /// Its area: the loop's as meshed for a circle (the facets' polygon), the rectangle's.
+    fn area(&self, ring: &[P2]) -> f64 {
+        match *self {
+            Self::Round { .. } => signed_area(ring).abs(),
+            Self::Rect { lo, hi } => (hi[0] - lo[0]) * (hi[1] - lo[1]),
+        }
+    }
+
+    fn middle(&self) -> P2 {
+        match *self {
+            Self::Round { centre, .. } => centre,
+            Self::Rect { lo, hi } => [f64::midpoint(lo[0], hi[0]), f64::midpoint(lo[1], hi[1])],
+        }
+    }
+}
+
+/// A loop that is a rectangle along X and Y (once the corners an exporter added along its sides
+/// are left out): its lowest and highest corner.
+fn axis_rectangle(ring: &[P2], tol: f64) -> Option<(P2, P2)> {
+    let corners = drop_collinear(ring, tol);
+    if corners.len() != 4 {
+        return None;
+    }
+    let along_axes = (0..4).all(|i| {
+        let (a, b) = (corners[i], corners[(i + 1) % 4]);
+        (a[0] - b[0]).abs() <= tol || (a[1] - b[1]).abs() <= tol
+    });
+    let lo = [corners.iter().map(|c| c[0]).fold(f64::INFINITY, f64::min), corners.iter().map(|c| c[1]).fold(f64::INFINITY, f64::min)];
+    let hi =
+        [corners.iter().map(|c| c[0]).fold(f64::NEG_INFINITY, f64::max), corners.iter().map(|c| c[1]).fold(f64::NEG_INFINITY, f64::max)];
+    (along_axes && hi[0] - lo[0] > tol && hi[1] - lo[1] > tol).then_some((lo, hi))
+}
+
+/// A blind hole or pocket: a bore or a rectangle from the top or the bottom face down to a flat
+/// floor, in coordinates relative to the plate's lowest corner.
 #[derive(Debug, Clone)]
 struct BlindHole {
-    centre: P2,
-    r: f64,
-    /// The bore's loop as meshed where it meets the face.
+    foot: Footprint,
+    /// Its loop as meshed where it meets the face.
     ring: Vec<P2>,
     /// The face it is drilled from, and which way is into the plate from it (as for [`Stepped`]).
     face_z: f64,
@@ -190,11 +275,11 @@ struct BlindHole {
 
 impl BlindHole {
     fn reaches(&self, p: P2, tol: f64) -> bool {
-        distance(p, self.centre) <= self.r + tol
+        self.foot.contains(p, tol)
     }
 
     fn sagitta(&self) -> f64 {
-        sagitta(&self.ring, self.r)
+        self.foot.sagitta(&self.ring)
     }
 
     /// Whether `p` lies on the hole's wall or its floor.
@@ -204,7 +289,7 @@ impl BlindHole {
         if depth < -tol || depth > self.depth + tol {
             return false;
         }
-        on_wall(q, self.centre, self.r, &self.ring, tol) || ((depth - self.depth).abs() <= tol && self.reaches(q, tol))
+        self.foot.on_wall(q, &self.ring, tol) || ((depth - self.depth).abs() <= tol && self.reaches(q, tol))
     }
 
     /// Whether the facet `cap` (facing up or down) is part of the floor.
@@ -311,18 +396,24 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         Recognition::Profile { profile, offset } => (*offset, offset[2] + profile.z),
         Recognition::Unrecognized { .. } => return Err(why),
     };
-    let mut bosses: Vec<BossSpec> = found
-        .iter()
-        .map(|b| BossSpec { x: snap(b.centre[0] - offset[0]), y: snap(b.centre[1] - offset[1]), d: snap(2.0 * b.r), h: snap(b.top - top) })
-        .collect();
+    let (mut bosses, mut pads) = (Vec::new(), Vec::new());
+    for b in &found {
+        let [x, y] = [snap(b.foot.middle()[0] - offset[0]), snap(b.foot.middle()[1] - offset[1])];
+        let h = snap(b.top - top);
+        match b.foot {
+            Footprint::Round { r, .. } => bosses.push(BossSpec { x, y, d: snap(2.0 * r), h }),
+            Footprint::Rect { lo, hi } => pads.push(PadSpec { x, y, w: snap(hi[0] - lo[0]), l: snap(hi[1] - lo[1]), h }),
+        }
+    }
     bosses.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    pads.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     let volume = match &mut recognised {
         Recognition::Plate { plate, .. } => {
-            plate.bosses = bosses;
+            (plate.bosses, plate.pads) = (bosses, pads);
             plate.volume()
         }
         Recognition::Profile { profile, .. } => {
-            profile.bosses = bosses;
+            (profile.bosses, profile.pads) = (bosses, pads);
             profile.volume()
         }
         Recognition::Unrecognized { .. } => unreachable!("handled above"),
@@ -338,14 +429,13 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
 /// its footprint loop in the plate's top face as meshed, and that loop without the corners an
 /// exporter may have added on its facets (the chords its wall follows).
 struct FoundBoss {
-    centre: P2,
-    r: f64,
+    foot: Footprint,
     top: f64,
     footprint: Vec<P2>,
     ring: Vec<P2>,
 }
 
-const NO_BOSS: &str = "something stands on the top face that is no straight round boss \
+const NO_BOSS: &str = "something stands on the top face that is neither a straight round boss nor a rectangular pad \
                        (other shapes on the top face are not recognised yet)";
 
 /// The plate under round bosses: the mesh without what stands on its top face, that face closed
@@ -408,11 +498,17 @@ fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Option<(Mesh, Ve
     let upper: Vec<&crate::mesh::Triangle> = mesh.triangles.iter().filter(|t| t.iter().any(above)).collect();
     let mut bosses = Vec::new();
     for ring in loops.iter().filter(|l| signed_area(l) < 0.0) {
-        let Ok((_, (centre, r))) = round_hole(ring, tol) else { continue };
-        let on = |p: &Vec3| distance(flat(p), centre) <= r + tol;
+        let foot = match round_hole(ring, tol) {
+            Ok((_, (centre, r))) => Footprint::Round { centre, r },
+            Err(_) => match axis_rectangle(ring, tol) {
+                Some((lo, hi)) => Footprint::Rect { lo, hi },
+                None => continue,
+            },
+        };
+        let on = |p: &Vec3| foot.contains(flat(p), tol);
         if let Some(top) = upper.iter().flat_map(|t| t.iter()).filter(|p| on(p)).map(|p| p[2]).reduce(f64::max) {
             // Its walls follow the loop's chords as meshed, before any exporter split them.
-            bosses.push(FoundBoss { centre, r, top, footprint: ring.clone(), ring: drop_collinear(ring, tol) });
+            bosses.push(FoundBoss { foot, top, footprint: ring.clone(), ring: drop_collinear(ring, tol) });
         }
     }
     if bosses.is_empty() {
@@ -422,7 +518,7 @@ fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Option<(Mesh, Ve
     // every edge's middle on the wall (an edge two facets long at most), or of its flat top.
     let mut tops = vec![0.0; bosses.len()];
     for t in &upper {
-        let k = bosses.iter().position(|b| t.iter().all(|p| distance(flat(p), b.centre) <= b.r + tol)).ok_or(NO_BOSS)?;
+        let k = bosses.iter().position(|b| t.iter().all(|p| b.foot.contains(flat(p), tol))).ok_or(NO_BOSS)?;
         let b = &bosses[k];
         let (len, nz) = facing(t);
         if nz > 0.5 {
@@ -433,24 +529,21 @@ fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Option<(Mesh, Ve
         } else if nz < -0.5 {
             return Err(NO_BOSS.into());
         } else {
-            let slack = tol + 4.0 * sagitta(&b.ring, b.r);
-            let on_wall_3d = |p: Vec3, tol: f64| {
-                let r = distance(flat(&p), b.centre);
-                p[2] >= top_z - tol && p[2] <= b.top + tol && r <= b.r + tol && r >= b.r - tol.max(sagitta(&b.ring, b.r) + tol)
-            };
-            let corner_on = |p: &Vec3| on_wall(flat(p), b.centre, b.r, &b.ring, tol) && on_wall_3d(*p, tol);
+            let between = |p: &Vec3| p[2] >= top_z - tol && p[2] <= b.top + tol;
+            let corner_on = |p: &Vec3| b.foot.on_wall(flat(p), &b.ring, tol) && between(p);
             let middle = |i: usize| {
                 let (p, q) = (t[i], t[(i + 1) % 3]);
                 [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])]
             };
-            if !t.iter().all(corner_on) || !(0..3).all(|i| on_wall_3d(middle(i), slack)) {
+            let middle_on = |p: Vec3| between(&p) && b.foot.near_wall(flat(&p), 4.0 * b.foot.sagitta(&b.ring), tol);
+            if !t.iter().all(corner_on) || !(0..3).all(|i| middle_on(middle(i))) {
                 return Err(NO_BOSS.into());
             }
         }
     }
     // Each top covers its footprint (the two may be meshed apart, with their own corners).
     for (b, area) in bosses.iter().zip(&tops) {
-        if b.top - top_z <= tol || (area - signed_area(&b.ring).abs()).abs() > 1e-3 * area.max(tol) {
+        if b.top - top_z <= tol || (area - b.foot.area(&b.ring)).abs() > 1e-3 * area.max(tol) {
             return Err(NO_BOSS.into());
         }
     }
@@ -459,7 +552,8 @@ fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Option<(Mesh, Ve
     // Each footprint is closed by a fan from its centre over its corners as meshed, so that the
     // top face's loop is joined edge for edge.
     for b in &bosses {
-        let (c, n) = ([b.centre[0], b.centre[1], top_z], b.footprint.len());
+        let middle = b.foot.middle();
+        let (c, n) = ([middle[0], middle[1], top_z], b.footprint.len());
         for i in 0..n {
             // The footprint runs clockwise (a hole in the top face): its fan, seen from above,
             // runs the other way.
@@ -524,11 +618,41 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         Ok((holes, slots, polygons))
     };
     let ((tops, top_slots, top_cutouts), (bottoms, bottom_slots, bottom_cutouts)) = (fit(&loops)?, fit(&bottom_loops)?);
+    // A cut-out on both faces goes through; a rectangle along X and Y on one face only is a
+    // pocket's mouth, its floor found with the blind holes'.
     let same_polygon = |a: &[P2], b: &[P2]| a.len() == b.len() && a.iter().all(|p| b.iter().any(|q| distance(*p, *q) <= tol));
-    if top_cutouts.len() != bottom_cutouts.len()
-        || !top_cutouts.iter().all(|(c, _)| bottom_cutouts.iter().any(|(other, _)| same_polygon(c, other)))
-    {
-        return Err("a cut-out does not go straight through (pockets and slanted cut-outs are not recognised yet)".into());
+    let mut through = Vec::new();
+    let mut pocket_mouths = Vec::new();
+    let mut paired_cutouts = vec![false; bottom_cutouts.len()];
+    let pocket = |ring: &Vec<P2>, face_z: f64, inward: f64| -> Result<BlindHole, String> {
+        let (lo, hi) = axis_rectangle(ring, tol)
+            .ok_or("a cut-out does not go straight through (pockets other than rectangles and slanted cut-outs are not recognised yet)")?;
+        Ok(BlindHole { foot: Footprint::Rect { lo, hi }, ring: ring.clone(), face_z, inward, depth: 0.0 })
+    };
+    // Two rectangles matching on the faces are two pockets when floors lie between them, facets
+    // facing up or down inside the rectangle.
+    let floored = |ring: &[P2]| {
+        axis_rectangle(ring, tol).is_some_and(|(lo, hi)| {
+            let foot = Footprint::Rect { lo, hi };
+            faces.caps.iter().any(|cap| cap.iter().all(|p| p[2] > tol && p[2] < size[2] - tol && foot.contains([p[0], p[1]], tol)))
+        })
+    };
+    for (c, k) in top_cutouts {
+        match bottom_cutouts.iter().position(|(other, _)| same_polygon(&c, other)) {
+            Some(j) if floored(&loops[k]) => {
+                paired_cutouts[j] = true;
+                pocket_mouths.push(pocket(&loops[k], size[2], -1.0)?);
+                pocket_mouths.push(pocket(&bottom_loops[bottom_cutouts[j].1], 0.0, 1.0)?);
+            }
+            Some(j) => {
+                paired_cutouts[j] = true;
+                through.push((c, k));
+            }
+            None => pocket_mouths.push(pocket(&loops[k], size[2], -1.0)?),
+        }
+    }
+    for ((_, k), _) in bottom_cutouts.iter().zip(&paired_cutouts).filter(|(_, paired)| !**paired) {
+        pocket_mouths.push(pocket(&bottom_loops[*k], 0.0, 1.0)?);
     }
     let mut circles = Vec::new();
     let mut wall_loops = vec![outline.clone()];
@@ -549,7 +673,7 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     // Cut-outs: their walls stand on their loops; each is written counter-clockwise from its
     // lowest corner, the leftmost of those.
     let mut cutouts: Vec<Vec<P2>> = Vec::new();
-    for (corners, k) in top_cutouts {
+    for (corners, k) in through {
         wall_loops.push(loops[k].clone());
         let mut c: Vec<P2> = corners.iter().rev().map(|p| p.map(snap)).collect();
         let first = (0..c.len()).min_by(|&a, &b| c[a][1].total_cmp(&c[b][1]).then(c[a][0].total_cmp(&c[b][0])));
@@ -561,18 +685,17 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     let mut stepped = Vec::new();
     // A circle on one face only is a blind hole's mouth; its depth is found below.
     let mouth = |centre: P2, r: f64, ring: &Vec<P2>, face_z: f64, inward: f64| BlindHole {
-        centre,
-        r,
+        foot: Footprint::Round { centre, r },
         ring: ring.clone(),
         face_z,
         inward,
         depth: 0.0,
     };
-    let mut mouths: Vec<(&HoleSpec, BlindHole)> = Vec::new();
+    let mut mouths: Vec<(Option<&HoleSpec>, BlindHole)> = pocket_mouths.into_iter().map(|b| (None, b)).collect();
     let mut paired = vec![false; bottoms.len()];
     for (hole, (centre, top_r), loop_index) in &tops {
         let Some(j) = bottoms.iter().position(|(_, (c, _), _)| distance(*c, *centre) <= tol) else {
-            mouths.push((hole, mouth(*centre, *top_r, &loops[*loop_index], size[2], -1.0)));
+            mouths.push((Some(hole), mouth(*centre, *top_r, &loops[*loop_index], size[2], -1.0)));
             continue;
         };
         paired[j] = true;
@@ -621,13 +744,15 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         stepped.push(s);
     }
     for ((hole, (centre, r), k), _) in bottoms.iter().zip(&paired).filter(|(_, paired)| !**paired) {
-        mouths.push((hole, mouth(*centre, *r, &bottom_loops[*k], 0.0, 1.0)));
+        mouths.push((Some(hole), mouth(*centre, *r, &bottom_loops[*k], 0.0, 1.0)));
     }
     let mut blinds = Vec::new();
+    let mut pockets = Vec::new();
     for (hole, mut b) in mouths {
         let (face_z, inward) = (b.face_z, b.inward);
-        // Its floor: the facets facing up or down within its circle. That they are flat and
-        // all at one depth is checked with the other facets below.
+        // Its floor: the nearest facets facing up or down within its footprint (beyond them may
+        // lie the floor of a pocket facing it from the other face). That they are flat and all
+        // at one depth is checked with the other facets below.
         let inside = |p: &Vec3| p[2] > tol && p[2] < size[2] - tol;
         b.depth = faces
             .caps
@@ -635,14 +760,29 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
             .filter(|cap| cap.iter().all(|p| inside(p) && b.reaches([p[0], p[1]], tol)))
             .flatten()
             .map(|p| (p[2] - face_z) * inward)
-            .reduce(f64::max)
+            .reduce(f64::min)
             .ok_or(
                 "a hole neither goes straight through nor ends in a flat floor (slanted holes and drill points are not recognised yet)",
             )?;
-        holes.push(HoleSpec { blind: Some(Blind { depth: snap(b.depth), bottom: inward > 0.0 }), ..hole.clone() });
+        match (hole, b.foot) {
+            (Some(hole), _) => holes.push(HoleSpec { blind: Some(Blind { depth: snap(b.depth), bottom: inward > 0.0 }), ..hole.clone() }),
+            (None, Footprint::Rect { lo, hi }) => {
+                let [x, y] = b.foot.middle().map(snap);
+                pockets.push(PocketSpec {
+                    x,
+                    y,
+                    w: snap(hi[0] - lo[0]),
+                    l: snap(hi[1] - lo[1]),
+                    depth: snap(b.depth),
+                    bottom: inward > 0.0,
+                });
+            }
+            (None, Footprint::Round { .. }) => unreachable!("a round mouth is a hole's"),
+        }
         blinds.push(b);
     }
     holes.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    pockets.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
 
     // Without stepped holes the mesh must be a prism over its top face: the two faces match, and
     // walls meshed in bands bulge only a little between the top face's corners (0.1%). A step
@@ -671,16 +811,19 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     }
     // A wall facet's edge in a stepped hole's mouth must follow the hole's surface too: its
     // middle within the sagitta of a chord two facets long, or the facet cuts across the bore.
+    // (Pockets facing each other share a footprint: the edge must follow one of them.)
     let follows = |&(a, b, middle): &(P2, P2, Vec3)| {
-        if let Some(s) = stepped.iter().find(|s| s.reaches(a, tol) && s.reaches(b, tol)) {
-            s.holds(middle, tol + 4.0 * s.sagitta())
-        } else if let Some(h) = blinds.iter().find(|h| h.reaches(a, tol) && h.reaches(b, tol)) {
-            h.holds(middle, tol + 4.0 * h.sagitta())
+        let mut steps = stepped.iter().filter(|s| s.reaches(a, tol) && s.reaches(b, tol)).peekable();
+        let mut blind = blinds.iter().filter(|h| h.reaches(a, tol) && h.reaches(b, tol)).peekable();
+        if steps.peek().is_some() {
+            steps.any(|s| s.holds(middle, tol + 4.0 * s.sagitta()))
+        } else if blind.peek().is_some() {
+            blind.any(|h| h.holds(middle, tol + 4.0 * h.sagitta()))
         } else {
             walls.holds_chord(a, b)
         }
     };
-    let on_blind_wall = |p: &P2| blinds.iter().any(|b| on_wall(*p, b.centre, b.r, &b.ring, tol));
+    let on_blind_wall = |p: &P2| blinds.iter().any(|b| b.foot.on_wall(*p, &b.ring, tol));
     if faces.rim.iter().any(|p| !walls.holds(*p) && !in_step([p[0], p[1], 0.0]) && !on_blind_wall(p)) || !faces.chords.iter().all(follows) {
         return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
     }
@@ -694,7 +837,18 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         && corners.len() == 4
         && box_corners.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol));
     let (found, volume) = if rectangle {
-        let plate = PlateSpec { x: snap(size[0]), y: snap(size[1]), z, holes, slots, bosses: vec![], cutouts, outline_fillet_r };
+        let plate = PlateSpec {
+            x: snap(size[0]),
+            y: snap(size[1]),
+            z,
+            holes,
+            slots,
+            pads: vec![],
+            pockets,
+            bosses: vec![],
+            cutouts,
+            outline_fillet_r,
+        };
         let volume = plate.volume();
         (Recognition::Plate { plate, offset }, volume)
     } else {
@@ -703,7 +857,7 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
         corners.rotate_left(first.unwrap_or(0));
-        let profile = ProfileSpec { corners, z, holes, slots, bosses: vec![], cutouts, outline_fillet_r };
+        let profile = ProfileSpec { corners, z, holes, slots, pads: vec![], pockets, bosses: vec![], cutouts, outline_fillet_r };
         let volume = profile.volume();
         (Recognition::Profile { profile, offset }, volume)
     };
@@ -1538,6 +1692,8 @@ mod tests {
             z: 5.0,
             holes: holes.iter().map(|&(x, y, d)| HoleSpec { x, y, d, head: None, blind: None }).collect(),
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: r,
@@ -1554,6 +1710,8 @@ mod tests {
                 HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None, blind: None },
             ],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: r,
@@ -1667,6 +1825,8 @@ mod tests {
             z: 4.0,
             holes: vec![HoleSpec { x: 25.0, y: 15.0, d: 8.0, head: None, blind: None }],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(3.0),
@@ -1683,7 +1843,17 @@ mod tests {
         let corners = vec![[5.0, 0.0], [75.0, 0.0], [80.0, 5.0], [80.0, 45.0], [75.0, 50.0], [5.0, 50.0], [0.0, 45.0], [0.0, 5.0]];
         assert_eq!(
             profile,
-            ProfileSpec { corners, z: 5.0, holes: vec![], cutouts: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None }
+            ProfileSpec {
+                corners,
+                z: 5.0,
+                holes: vec![],
+                cutouts: vec![],
+                pads: vec![],
+                pockets: vec![],
+                bosses: vec![],
+                slots: vec![],
+                outline_fillet_r: None
+            }
         );
     }
 
@@ -1821,6 +1991,8 @@ mod tests {
             z: 5.0,
             holes: vec![],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(1.0),
@@ -1895,8 +2067,18 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
     fn a_shifted_bottom_band_is_not_vertical() {
-        let spec =
-            PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], cutouts: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
+        let spec = PlateSpec {
+            x: 80.0,
+            y: 50.0,
+            z: 5.0,
+            holes: vec![],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: None,
+        };
         let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
         // Shift the whole bottom 0.5 mm along X: the mesh stays closed, the faces keep their
         // areas and the volume stays that of a prism, so only the walls' bottom corners tell.
@@ -2043,6 +2225,8 @@ mod tests {
             z: 5.0,
             holes: vec![],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(0.5),
@@ -2077,6 +2261,8 @@ mod tests {
             z: 5.0,
             holes: vec![],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(3.0),
@@ -2124,6 +2310,8 @@ mod tests {
             z: 5.0,
             holes: vec![],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(24.95),
@@ -2155,6 +2343,89 @@ mod tests {
         assert_eq!(plate.cutouts[1].len(), 6);
         // SolidCraft measured 13,998.356 mm³; the hexagon's corners are rounded to 0.01 mm.
         assert!((plate.volume() - 13_998.356).abs() < 0.05, "{}", plate.volume());
+    }
+
+    /// A 70 x 40 x 6 plate exported from SolidCraft 0.45 with a 16 x 12 x 4 pad on its top face, a
+    /// 20 x 14 x 3 pocket in the top face, a 12 x 8 x 2 one in the bottom face and an Ø4 hole.
+    #[test]
+    fn recognises_pads_and_pockets() {
+        let mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/pockets.stl")).expect("parses");
+        let (plate, _) = found(&mesh);
+        assert_eq!(plate.pads, [PadSpec { x: 20.0, y: 20.0, w: 16.0, l: 12.0, h: 4.0 }]);
+        let pocket = |x: f64, y: f64, w: f64, l: f64, depth: f64, bottom: bool| PocketSpec { x, y, w, l, depth, bottom };
+        assert_eq!(plate.pockets, [pocket(50.0, 15.0, 20.0, 14.0, 3.0, false), pocket(50.0, 30.0, 12.0, 8.0, 2.0, true)]);
+        // SolidCraft measured 16,460.602 mm³ for the part it exported.
+        assert!((plate.volume() - 16_460.602).abs() < 0.001, "{}", plate.volume());
+    }
+
+    /// Two pockets of one footprint in the top and the bottom face, a web between their floors.
+    #[test]
+    fn pockets_facing_each_other() {
+        let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+        let rect = vec![[20.0, 10.0], [40.0, 10.0], [40.0, 30.0], [20.0, 30.0]];
+        let at = |p: P2, z: f64| [p[0], p[1], z];
+        let mut t = Vec::new();
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&rect)) {
+            t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+            t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        for i in 0..4 {
+            let (a, b) = (outline[i], outline[(i + 1) % 4]);
+            t.extend([[at(a, 0.0), at(b, 0.0), at(b, 6.0)], [at(a, 0.0), at(b, 6.0), at(a, 6.0)]]);
+        }
+        // The top pocket's floor at Z = 4 faces up, the bottom one's at Z = 2 down.
+        let [a, b, c, d] = [rect[0], rect[1], rect[2], rect[3]];
+        t.extend([[at(a, 4.0), at(b, 4.0), at(c, 4.0)], [at(a, 4.0), at(c, 4.0), at(d, 4.0)]]);
+        t.extend([[at(a, 2.0), at(c, 2.0), at(b, 2.0)], [at(a, 2.0), at(d, 2.0), at(c, 2.0)]]);
+        for i in 0..4 {
+            let (p, q) = (rect[(i + 1) % 4], rect[i]);
+            t.extend([[at(p, 4.0), at(q, 4.0), at(q, 6.0)], [at(p, 4.0), at(q, 6.0), at(p, 6.0)]]);
+            t.extend([[at(p, 0.0), at(q, 0.0), at(q, 2.0)], [at(p, 0.0), at(q, 2.0), at(p, 2.0)]]);
+        }
+        let mesh = Mesh::new(t);
+        assert!(mesh.volume() > 0.0);
+        let (plate, _) = found(&mesh);
+        let pocket = |depth: f64, bottom: bool| PocketSpec { x: 30.0, y: 20.0, w: 20.0, l: 20.0, depth, bottom };
+        let mut pockets = plate.pockets.clone();
+        pockets.sort_by_key(|p| p.bottom);
+        assert_eq!(pockets, [pocket(2.0, false), pocket(2.0, true)]);
+        assert!((plate.volume() - mesh.volume()).abs() < 1e-6);
+    }
+
+    /// A pocket's floor turned off level, and a triangle sunk into the top face, are no pockets.
+    #[test]
+    fn pockets_need_flat_floors_and_rectangles() {
+        let mut mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/pockets.stl")).expect("parses");
+        for t in &mut mesh.triangles {
+            for p in t.iter_mut() {
+                if (p[2] - 3.0).abs() < 1e-4 && p[0] > 55.0 && p[1] < 22.0 {
+                    p[2] -= 0.4;
+                }
+            }
+        }
+        reason(&mesh);
+        let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+        let triangle = vec![[20.0, 10.0], [40.0, 10.0], [30.0, 25.0]];
+        let at = |p: P2, z: f64| [p[0], p[1], z];
+        let mut t = Vec::new();
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&triangle)) {
+            t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, &[]) {
+            t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        for i in 0..4 {
+            let (a, b) = (outline[i], outline[(i + 1) % 4]);
+            t.extend([[at(a, 0.0), at(b, 0.0), at(b, 6.0)], [at(a, 0.0), at(b, 6.0), at(a, 6.0)]]);
+        }
+        let [a, b, c] = [triangle[0], triangle[1], triangle[2]];
+        t.push([at(a, 3.0), at(b, 3.0), at(c, 3.0)]);
+        for i in 0..3 {
+            let (p, q) = (triangle[(i + 1) % 3], triangle[i]);
+            t.extend([[at(p, 3.0), at(q, 3.0), at(q, 6.0)], [at(p, 3.0), at(q, 6.0), at(p, 6.0)]]);
+        }
+        let why = reason(&Mesh::new(t));
+        assert!(why.contains("pockets other than rectangles"), "{why}");
     }
 
     /// A 70 x 40 x 6 plate exported from SolidCraft 0.45 with an Ø10 x 5 and an Ø8 x 3 boss on
@@ -2204,8 +2475,8 @@ mod tests {
         (0..n).map(|i| 2.0 * PI * i as f64 / n as f64).map(|a| [centre[0] + r * a.cos(), centre[1] + r * a.sin()]).collect()
     }
 
-    /// A straight round boss of a synthetic mesh; a drafted one, a twisted one, a square block
-    /// and a boss on a footprint that is not round are refused.
+    /// A straight round boss of a synthetic mesh; a drafted one, a twisted one and a block that
+    /// is no rectangle along X and Y are refused (a square block along them is a pad).
     #[test]
     fn bosses_must_be_straight_and_round() {
         let foot = circle([20.0, 20.0], 5.0, 32);
@@ -2215,7 +2486,13 @@ mod tests {
         let (sin, cos) = (PI / 4.0).sin_cos();
         let twist = |p: P2| [20.0 + (p[0] - 20.0) * cos - (p[1] - 20.0) * sin, 20.0 + (p[0] - 20.0) * sin + (p[1] - 20.0) * cos];
         let block = [[15.0, 15.0], [25.0, 15.0], [25.0, 25.0], [15.0, 25.0]];
-        for mesh in [standing(&foot, &draft, 4.0), standing(&foot, &twist, 4.0), standing(&block, &|p| p, 4.0)] {
+        let (plate, _) = found(&standing(&block, &|p| p, 4.0));
+        assert_eq!(plate.pads, [PadSpec { x: 20.0, y: 20.0, w: 10.0, l: 10.0, h: 4.0 }]);
+        let diamond = [[20.0, 14.0], [26.0, 20.0], [20.0, 26.0], [14.0, 20.0]];
+        let pad_draft = |p: P2| [20.0 + (p[0] - 20.0) * 0.9, 20.0 + (p[1] - 20.0) * 0.9];
+        for mesh in
+            [standing(&foot, &draft, 4.0), standing(&foot, &twist, 4.0), standing(&diamond, &|p| p, 4.0), standing(&block, &pad_draft, 4.0)]
+        {
             reason(&mesh);
         }
     }
@@ -2757,6 +3034,8 @@ mod tests {
             z: 8.0,
             holes: vec![HoleSpec { x: 30.0, y: 30.0, d: 10.0, head: None, blind: None }],
             cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: None,

@@ -188,6 +188,20 @@ pub enum FeatureKind {
         /// What it does to existing bodies.
         operation: Operation,
     },
+    /// A box primitive from its lowest `corner` (three expressions), `length` along X, `width`
+    /// along Y and `height` along Z.
+    Box {
+        /// The lowest corner.
+        corner: [String; 3],
+        /// Along X.
+        length: String,
+        /// Along Y.
+        width: String,
+        /// Along Z.
+        height: String,
+        /// What it does to existing bodies.
+        operation: Operation,
+    },
     /// A move of whole bodies, by a translation whose three parts are expressions.
     Move {
         /// The bodies it moves.
