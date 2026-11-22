@@ -140,7 +140,8 @@ impl Stepped {
         let q = [p[0], p[1]];
         let r = distance(q, self.centre);
         let depth = (p[2] - self.face_z) * self.inward;
-        if depth >= -tol && self.on_wall(q, self.bore_r, &self.bore, tol) {
+        // The bore starts where the mouth ends.
+        if depth >= self.depth - tol && self.on_wall(q, self.bore_r, &self.bore, tol) {
             return true;
         }
         if depth < -tol || depth > self.depth + tol {
@@ -152,8 +153,12 @@ impl Stepped {
                     && r >= self.bore_r - sagitta(&self.bore, self.bore_r) - tol
                     && r <= self.head_r + tol)
         } else {
+            // The cone's facets run between the mouth's and the bore's loops and come inside the
+            // cone as their chords come inside the circles; a corner an exporter adds within a
+            // facet lies there too. Allow chords two facets long, as for the walls' edges.
             let cone = self.head_r - depth * (self.head_r - self.bore_r) / self.depth;
-            (r - cone).abs() <= tol
+            let inside = 4.0 * (sagitta(&self.mouth, self.head_r) / self.head_r).max(sagitta(&self.bore, self.bore_r) / self.bore_r);
+            r <= cone + tol && r >= cone * (1.0 - inside) - tol
         }
     }
 
@@ -172,7 +177,12 @@ impl Stepped {
                 && r <= self.head_r + tol
         } else {
             let (low, high) = cap.iter().map(depth).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
-            cap.iter().all(|p| self.holds(*p, tol) && depth(p) <= self.depth + tol) && high - low > tol
+            // Its corners, the middles of its edges and its centroid on the cone: a facet joining
+            // corners far apart round the axis cuts across the hole.
+            let middle = |a: &Vec3, b: &Vec3| [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), f64::midpoint(a[2], b[2])];
+            let centroid = [centroid[0], centroid[1], (cap[0][2] + cap[1][2] + cap[2][2]) / 3.0];
+            let inner = [middle(&cap[0], &cap[1]), middle(&cap[1], &cap[2]), middle(&cap[2], &cap[0]), centroid];
+            cap.iter().chain(&inner).all(|p| self.holds(*p, tol) && depth(p) <= self.depth + tol) && high - low > tol
         }
     }
 
@@ -1702,6 +1712,63 @@ mod tests {
         assert!(why.contains("not vertical"), "{why}");
         let half_step = Some(HoleHead::Counterbore { d: 10.0, depth: 3.0, bottom: false });
         assert_eq!(counterbore_of(&counterbored(5.5, 10.0, 3.0, 32, false, PI / 32.0)), half_step);
+    }
+
+    /// A closed 60 x 60 x 8 plate with an Ø5.5 bore at (30, 30) under an Ø10 90° countersink, each
+    /// loop of `n` corners, the bore (both its rims) turned by `twist` against the mouth.
+    fn countersunk(n: usize, twist: f64) -> Mesh {
+        let ring = |d: f64, turn: f64| -> Vec<P2> {
+            (0..n).map(|i| 2.0 * PI * i as f64 / n as f64 + turn).map(|a| [30.0 + d / 2.0 * a.cos(), 30.0 + d / 2.0 * a.sin()]).collect()
+        };
+        let (bore, mouth) = (ring(5.5, twist), ring(10.0, 0.0));
+        let (z, cone) = (8.0, 8.0 - 2.25);
+        let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 60.0], [0.0, 60.0]];
+        let at = |p: P2, h: f64| [p[0], p[1], h];
+        let mut triangles = Vec::new();
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&mouth)) {
+            triangles.push([at(a, z), at(b, z), at(c, z)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&bore)) {
+            triangles.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        let mut wall = |lower: &[P2], upper: &[P2], lo: f64, hi: f64| {
+            let m = lower.len();
+            for i in 0..m {
+                let (a, b, c, d) = (at(lower[i], lo), at(lower[(i + 1) % m], lo), at(upper[(i + 1) % m], hi), at(upper[i], hi));
+                triangles.extend([[a, b, c], [a, c, d]]);
+            }
+        };
+        wall(&outline, &outline, 0.0, z);
+        let reversed = |r: &[P2]| r.iter().rev().copied().collect::<Vec<P2>>();
+        wall(&reversed(&bore), &reversed(&bore), 0.0, cone);
+        wall(&reversed(&bore), &reversed(&mouth), cone, z);
+        Mesh::new(triangles)
+    }
+
+    /// A countersink's cone joining a mouth and a bore turned a quarter turn apart narrows the
+    /// hole: its facets cut inside the cone, although their corners lie on it.
+    #[test]
+    fn a_twisted_countersink_is_refused() {
+        let head = Some(HoleHead::Countersink { d: 10.0, angle: 90.0, bottom: false });
+        assert_eq!(counterbore_of(&countersunk(32, 0.0)), head);
+        assert_eq!(counterbore_of(&countersunk(32, PI / 32.0)), head);
+        reason(&countersunk(32, PI / 2.0));
+    }
+
+    /// A facet of a countersink's cone split into three at its centroid leaves a corner on the
+    /// facet, inside the cone.
+    #[test]
+    fn split_countersink_facets() {
+        let mut mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/stepped-holes.stl")).expect("parses");
+        let on_cone = |t: &[Vec3; 3]| {
+            t.iter().all(|p| (2.9..6.1).contains(&(p[0] - 45.0).hypot(p[1] - 20.0)) && p[2] > 4.9)
+                && t.iter().any(|p| (p[2] - 8.0).abs() > 0.1)
+        };
+        let k = mesh.triangles.iter().position(|t| on_cone(t) && t.iter().any(|p| (p[2] - 8.0).abs() < 1e-4)).expect("a cone facet");
+        let [a, b, c] = mesh.triangles.swap_remove(k);
+        let m = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0];
+        mesh.triangles.extend([[a, b, m], [b, c, m], [c, a, m]]);
+        assert_eq!(found(&mesh).0.holes.len(), 3);
     }
 
     /// A rim edge of a hole's bottom loop split in the middle (both facets on it) leaves a corner
