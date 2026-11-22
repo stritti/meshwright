@@ -21,6 +21,12 @@ use crate::recognize::HoleSpec;
 /// a micrometre; this allows a few of those.
 pub const TOLERANCE: f64 = 0.005;
 
+/// A direction component below which it counts as zero.
+const AXIS_EPS: f64 = 1e-12;
+
+/// Slack when an angle is compared against the half-step boundary.
+const ANGLE_EPS: f64 = 1e-9;
+
 /// A plate's holes, grouped.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HoleGroup {
@@ -221,7 +227,7 @@ fn row(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     }
     let mut dir = [(centres[b][0] - centres[a][0]) / far, (centres[b][1] - centres[a][1]) / far];
     // Run from left to right (or upwards along a vertical row), so the angle is in (-90, 90].
-    if dir[0] < -1e-12 || (dir[0].abs() <= 1e-12 && dir[1] < 0.0) {
+    if dir[0] < -AXIS_EPS || (dir[0].abs() <= AXIS_EPS && dir[1] < 0.0) {
         dir = [-dir[0], -dir[1]];
     }
     let start = if (centres[b][0] - centres[a][0]) * dir[0] + (centres[b][1] - centres[a][1]) * dir[1] > 0.0 { a } else { b };
@@ -268,7 +274,7 @@ fn circle(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     let first = angles.iter().copied().min_by(|p, q| p.abs().total_cmp(&q.abs())).unwrap_or(0.0);
     let half = 180.0 / n as f64;
     let mut angle = first.to_degrees();
-    if angle <= -half + 1e-9 {
+    if angle <= -half + ANGLE_EPS {
         angle += 2.0 * half;
     }
     keep_rounded(

@@ -6,6 +6,7 @@
 //! rectangular outline becomes a [`PlateSpec`], driven by its sizes; any other a [`ProfileSpec`].
 //! Slots, counterbores and pockets follow; whatever is not recognised stays a mesh.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::design::{
@@ -590,18 +591,19 @@ fn block_features(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec
 /// mesh2cad gives it: `hole_<n>`, `hole_row_<n>`, `hole_grid_<n>` or `hole_circle_<n>`, numbered
 /// per kind.
 fn hole_groups(holes: &[HoleSpec]) -> Vec<(String, HoleGroup)> {
-    let mut counts = [0usize; 4];
+    let mut counts: HashMap<&'static str, usize> = HashMap::new();
     group_holes(holes)
         .into_iter()
         .map(|group| {
-            let (slot, kind) = match group {
-                HoleGroup::Single(_) => (0, "hole"),
-                HoleGroup::Row { .. } => (1, "hole_row"),
-                HoleGroup::Grid { .. } => (2, "hole_grid"),
-                HoleGroup::Circle { .. } => (3, "hole_circle"),
+            let prefix = match &group {
+                HoleGroup::Single(_) => "hole",
+                HoleGroup::Row { .. } => "hole_row",
+                HoleGroup::Grid { .. } => "hole_grid",
+                HoleGroup::Circle { .. } => "hole_circle",
             };
-            counts[slot] += 1;
-            (format!("{kind}_{}", counts[slot]), group)
+            let n = counts.entry(prefix).or_insert(0);
+            *n += 1;
+            (format!("{prefix}_{n}"), group)
         })
         .collect()
 }
