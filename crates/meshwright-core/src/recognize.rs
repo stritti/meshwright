@@ -61,8 +61,54 @@ pub struct HoleSpec {
     pub x: f64,
     /// Centre Y.
     pub y: f64,
-    /// Diameter.
+    /// Diameter (of the bore, below a counterbore or countersink).
     pub d: f64,
+    /// A counterbore or countersink at one end, if it has one.
+    pub head: Option<HoleHead>,
+}
+
+/// The wider mouth of a hole, at the top or the bottom face.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HoleHead {
+    /// A flat-bottomed recess: `d` wide and `depth` deep from the face it opens on.
+    Counterbore {
+        /// Diameter.
+        d: f64,
+        /// Depth from the face.
+        depth: f64,
+        /// Whether it opens on the bottom face (else on the top).
+        bottom: bool,
+    },
+    /// A cone: `d` wide at the face it opens on, narrowing at `angle` (degrees, the cone's full
+    /// angle) down to the bore.
+    Countersink {
+        /// Diameter at the face.
+        d: f64,
+        /// The cone's full angle, degrees.
+        angle: f64,
+        /// Whether it opens on the bottom face (else on the top).
+        bottom: bool,
+    },
+}
+
+impl HoleSpec {
+    /// The material the hole removes from a plate `z` thick, in mm³.
+    #[must_use]
+    pub fn volume(&self, z: f64) -> f64 {
+        let area = |d: f64| std::f64::consts::PI * d * d / 4.0;
+        let bore = area(self.d) * z;
+        match self.head {
+            None => bore,
+            Some(HoleHead::Counterbore { d, depth, .. }) => bore + (area(d) - area(self.d)) * depth,
+            Some(HoleHead::Countersink { d, angle, .. }) => {
+                // The frustum from the face down to where the cone meets the bore, less the bore
+                // it overlaps.
+                let (big, small) = (d / 2.0, self.d / 2.0);
+                let h = (big - small) / (angle.to_radians() / 2.0).tan();
+                bore + std::f64::consts::PI * h / 3.0 * (big * big + big * small + small * small) - area(self.d) * h
+            }
+        }
+    }
 }
 
 impl PlateSpec {
@@ -108,7 +154,7 @@ impl PlateSpec {
                 translate: ["base_cx - base_x / 2".into(), "base_cy - base_y / 2".into(), "base_z0".into()],
             },
         );
-        hole_features(&mut b, &self.holes, at, "base_z0 + base_t", self.z);
+        hole_features(&mut b, &self.holes, at, "base_z0 + base_t", "base_z0", self.z);
         if self.outline_fillet_r.is_some() {
             let mid = at[2] + self.z / 2.0;
             let side = |a: u32, b: u32| format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}");
@@ -137,8 +183,8 @@ impl PlateSpec {
     #[must_use]
     pub fn volume(&self) -> f64 {
         let corners = self.outline_fillet_r.map_or(0.0, crate::plate::corner_loss);
-        let holes: f64 = self.holes.iter().map(|h| std::f64::consts::PI * h.d * h.d / 4.0).sum();
-        (self.x * self.y - corners - holes) * self.z
+        let holes: f64 = self.holes.iter().map(|h| h.volume(self.z)).sum();
+        (self.x * self.y - corners) * self.z - holes
     }
 }
 
@@ -213,7 +259,7 @@ impl ProfileSpec {
             let edges = self.corners.iter().map(|c| [at[0] + c[0], at[1] + c[1], at[2] + self.z / 2.0]).collect();
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
         }
-        hole_features(&mut b, &self.holes, at, "extrude_0 + extrude_len", self.z);
+        hole_features(&mut b, &self.holes, at, "extrude_0 + extrude_len", "extrude_0", self.z);
         b.build()
     }
 
@@ -248,8 +294,8 @@ impl ProfileSpec {
                 area -= crate::plate::fillet_loss(a, c, b, r);
             }
         }
-        let holes: f64 = self.holes.iter().map(|h| std::f64::consts::PI * h.d * h.d / 4.0).sum();
-        (area - holes) * self.z
+        let holes: f64 = self.holes.iter().map(|h| h.volume(self.z)).sum();
+        area * self.z - holes
     }
 }
 
@@ -283,6 +329,15 @@ fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3) {
                 b.param(Param::user(format!("{p}_x"), snap_mm(ax + h.x)))
                     .param(Param::user(format!("{p}_y"), snap_mm(ay + h.y)))
                     .param(Param::user(format!("{p}_d"), h.d));
+                match h.head {
+                    None => {}
+                    Some(HoleHead::Counterbore { d, depth, .. }) => {
+                        b.param(Param::user(format!("{p}_cbore_d"), d)).param(Param::user(format!("{p}_cbore_depth"), depth));
+                    }
+                    Some(HoleHead::Countersink { d, angle, .. }) => {
+                        b.param(Param::user(format!("{p}_csk_d"), d)).param(Param::angle(format!("{p}_csk_angle"), angle));
+                    }
+                }
             }
             HoleGroup::Row { n, pitch, d, x, y, .. } => {
                 b.param(Param::count(format!("{p}_n"), n))
@@ -314,9 +369,10 @@ fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3) {
 
 /// A through hole per hole, or per pattern a hole and a pattern feature that repeats it, drilled
 /// down from the top face at height `top` (its expression) of a plate `z` thick whose corner is
-/// at `at`.
+/// at `at`; a hole with a counterbore or countersink on the bottom face (at height `bottom`) is
+/// drilled up from there.
 #[allow(clippy::many_single_char_names)] // x, y, d, r as in the parameter names
-fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str, z: f64) {
+fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str, bottom: &str, z: f64) {
     let top_z = at[2] + z;
     let hole = |b: &mut DesignBuilder, name: String, position: [f64; 2], x: String, y: String, d: String| {
         b.feature(
@@ -337,7 +393,27 @@ fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str,
         match group {
             HoleGroup::Single(h) => {
                 singles += 1;
-                hole(b, format!("Hole{singles}"), [at[0] + h.x, at[1] + h.y], x, y, d);
+                let (kind, from_bottom) = match h.head {
+                    None => (HoleKind::Simple, false),
+                    Some(HoleHead::Counterbore { bottom, .. }) => {
+                        (HoleKind::Counterbore { cb_diameter: format!("{p}_cbore_d"), cb_depth: format!("{p}_cbore_depth") }, bottom)
+                    }
+                    Some(HoleHead::Countersink { bottom, .. }) => {
+                        (HoleKind::Countersink { cs_diameter: format!("{p}_csk_d"), cs_angle: format!("{p}_csk_angle") }, bottom)
+                    }
+                };
+                let (face_z, face, direction) = if from_bottom { (at[2], bottom, 1.0) } else { (top_z, top, -1.0) };
+                b.feature(
+                    format!("Hole{singles}"),
+                    vec![],
+                    FeatureKind::Hole {
+                        position: [at[0] + h.x, at[1] + h.y, face_z],
+                        at: [x, y, face.into()],
+                        direction: [0.0, 0.0, direction],
+                        diameter: d,
+                        hole: kind,
+                    },
+                );
             }
             HoleGroup::Row { x: hx, y: hy, angle, .. } => {
                 rows += 1;
@@ -471,14 +547,20 @@ mod tests {
     fn describes_plates() {
         let mut spec = PlateSpec { x: 70.0, y: 40.0, z: 6.0, holes: vec![], outline_fillet_r: Some(3.0) };
         assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 3 mm rounded corners");
-        spec.holes = vec![HoleSpec { x: 1.0, y: 1.0, d: 1.0 }; 2];
+        spec.holes = vec![HoleSpec { x: 1.0, y: 1.0, d: 1.0, head: None }; 2];
         assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 2 holes and 3 mm rounded corners");
     }
 
     /// The volume SolidCraft measured for the golden design (docs/design-format.md).
     #[test]
     fn plate_volume_matches_solidcraft() {
-        let spec = PlateSpec { x: 70.0, y: 40.0, z: 6.0, holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0 }], outline_fillet_r: Some(3.0) };
+        let spec = PlateSpec {
+            x: 70.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None }],
+            outline_fillet_r: Some(3.0),
+        };
         assert!((spec.volume() - 16_452.05).abs() < 0.01, "{}", spec.volume());
     }
 
@@ -487,7 +569,7 @@ mod tests {
         let spec = ProfileSpec {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
-            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0 }],
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None }],
             outline_fillet_r: Some(2.0),
         };
         assert_eq!(spec.describe(), "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 2 mm rounded corners");
@@ -506,7 +588,7 @@ mod tests {
         let spec = ProfileSpec {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
-            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0 }],
+            holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None }],
             outline_fillet_r: Some(2.0),
         };
         let corner = (4.0 - std::f64::consts::PI) / 4.0 * 4.0;
@@ -521,7 +603,7 @@ mod tests {
         let spec = ProfileSpec {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
-            holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4 }],
+            holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4, head: None }],
             outline_fillet_r: Some(5.0),
         };
         let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -539,7 +621,13 @@ mod tests {
     /// after changing `base_x` and `hole_1_d`.
     #[test]
     fn plate_design_matches_golden_file() {
-        let spec = PlateSpec { x: 70.0, y: 40.0, z: 6.0, holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0 }], outline_fillet_r: Some(3.0) };
+        let spec = PlateSpec {
+            x: 70.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None }],
+            outline_fillet_r: Some(3.0),
+        };
         let actual = spec.to_design("plate-with-hole").to_json_pretty();
         let golden = include_str!("../tests/data/plate-with-hole.json");
         assert_eq!(actual.trim(), golden.trim(), "regenerate with `cargo run -p meshwright-core --example plate_design`");
