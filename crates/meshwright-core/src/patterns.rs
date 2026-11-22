@@ -10,6 +10,8 @@
 //! In SolidCraft a pattern is one hole feature and a pattern feature that repeats it, so a
 //! change of `hole_row_1_n` or `hole_circle_1_r` rebuilds every hole of the pattern.
 
+#![allow(clippy::many_single_char_names)] // n, d, r, x, y as in mesh2cad's parameter names
+
 use std::f64::consts::PI;
 
 use crate::recognize::HoleSpec;
@@ -76,24 +78,62 @@ pub enum HoleGroup {
 /// come out as [`HoleGroup::Single`], in their order.
 #[must_use]
 pub fn group_holes(holes: &[HoleSpec]) -> Vec<HoleGroup> {
-    let mut buckets: Vec<Vec<&HoleSpec>> = Vec::new();
-    for hole in holes {
-        match buckets.iter_mut().find(|b| (b[0].d - hole.d).abs() <= TOLERANCE) {
-            Some(bucket) => bucket.push(hole),
-            None => buckets.push(vec![hole]),
+    // Holes of one diameter, by their index in `holes`.
+    let mut buckets: Vec<Vec<usize>> = Vec::new();
+    for (i, hole) in holes.iter().enumerate() {
+        match buckets.iter_mut().find(|b| (holes[b[0]].d - hole.d).abs() <= TOLERANCE) {
+            Some(bucket) => bucket.push(i),
+            None => buckets.push(vec![i]),
         }
     }
-    let mut groups = Vec::new();
+    // Each group with the index of its first hole, so that the groups, and the single holes
+    // among them, keep the order of `holes`.
+    let mut groups: Vec<(usize, HoleGroup)> = Vec::new();
     for bucket in buckets {
-        let centres: Vec<[f64; 2]> = bucket.iter().map(|h| [h.x, h.y]).collect();
-        let d = bucket[0].d;
+        let centres: Vec<[f64; 2]> = bucket.iter().map(|&i| [holes[i].x, holes[i].y]).collect();
+        let d = holes[bucket[0]].d;
         if let Some(group) = grid(&centres, d).or_else(|| row(&centres, d)).or_else(|| circle(&centres, d)) {
-            groups.push(group);
+            groups.push((bucket[0], group));
         } else {
-            groups.extend(bucket.into_iter().cloned().map(HoleGroup::Single));
+            groups.extend(bucket.into_iter().map(|i| (i, HoleGroup::Single(holes[i].clone()))));
         }
     }
-    groups
+    groups.sort_by_key(|(first, _)| *first);
+    groups.into_iter().map(|(_, group)| group).collect()
+}
+
+/// Whether every one of `centres` lies within the tolerance of one of `predicted`, one each.
+fn matches(centres: &[[f64; 2]], predicted: &[[f64; 2]]) -> bool {
+    let mut used = vec![false; predicted.len()];
+    centres.len() == predicted.len()
+        && centres.iter().all(|c| {
+            let hit =
+                predicted.iter().enumerate().find(|(k, p)| !used[*k] && (p[0] - c[0]).hypot(p[1] - c[1]) <= TOLERANCE).map(|(k, _)| k);
+            hit.inspect(|&k| used[k] = true).is_some()
+        })
+}
+
+/// The holes `group` stands for, from its own (rounded) numbers.
+fn predicted(group: &HoleGroup) -> Vec<[f64; 2]> {
+    match *group {
+        HoleGroup::Single(ref h) => vec![[h.x, h.y]],
+        HoleGroup::Row { n, pitch, x, y, angle, .. } => {
+            let (sin, cos) = angle.to_radians().sin_cos();
+            (0..n).map(|i| [x + i as f64 * pitch * cos, y + i as f64 * pitch * sin]).collect()
+        }
+        HoleGroup::Grid { nx, ny, pitch_x, pitch_y, x, y, .. } => {
+            (0..ny).flat_map(|j| (0..nx).map(move |i| [x + i as f64 * pitch_x, y + j as f64 * pitch_y])).collect()
+        }
+        HoleGroup::Circle { n, r, cx, cy, angle, .. } => {
+            (0..n).map(|k| (angle + 360.0 * k as f64 / n as f64).to_radians()).map(|a| [cx + r * a.cos(), cy + r * a.sin()]).collect()
+        }
+    }
+}
+
+/// `rounded` if the holes it stands for are still `centres` (rounding a pitch or an angle adds
+/// up along a long row), else `exact`.
+fn keep_rounded(centres: &[[f64; 2]], rounded: HoleGroup, exact: HoleGroup) -> HoleGroup {
+    if matches(centres, &predicted(&rounded)) { rounded } else { exact }
 }
 
 /// `degrees` rounded to the coarsest of 1°, 0.5°, 0.1°, 0.01° and 0.001° that moves a point at
@@ -148,7 +188,12 @@ fn grid(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
             return None;
         }
     }
-    Some(HoleGroup::Grid { nx: xs.len(), ny: ys.len(), pitch_x: snap(pitch_x), pitch_y: snap(pitch_y), d, x: xs[0], y: ys[0] })
+    let (nx, ny, x, y) = (xs.len(), ys.len(), xs[0], ys[0]);
+    Some(keep_rounded(
+        centres,
+        HoleGroup::Grid { nx, ny, pitch_x: snap(pitch_x), pitch_y: snap(pitch_y), d, x, y },
+        HoleGroup::Grid { nx, ny, pitch_x, pitch_y, d, x, y },
+    ))
 }
 
 fn row(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
@@ -186,8 +231,13 @@ fn row(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     }
     along.sort_by(f64::total_cmp);
     let pitch = even_step(&along)?;
-    let angle = snap_angle(dir[1].atan2(dir[0]).to_degrees(), far);
-    Some(HoleGroup::Row { n, pitch: snap(pitch), d, x: origin[0], y: origin[1], angle })
+    let angle = dir[1].atan2(dir[0]).to_degrees();
+    let (x, y) = (origin[0], origin[1]);
+    Some(keep_rounded(
+        centres,
+        HoleGroup::Row { n, pitch: snap(pitch), d, x, y, angle: snap_angle(angle, far) },
+        HoleGroup::Row { n, pitch, d, x, y, angle },
+    ))
 }
 
 fn circle(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
@@ -216,7 +266,11 @@ fn circle(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     if angle <= -half + 1e-9 {
         angle += 2.0 * half;
     }
-    Some(HoleGroup::Circle { n, d, r: snap(r), cx: snap(centre[0]), cy: snap(centre[1]), angle: snap_angle(angle, r) })
+    Some(keep_rounded(
+        centres,
+        HoleGroup::Circle { n, d, r: snap(r), cx: snap(centre[0]), cy: snap(centre[1]), angle: snap_angle(angle, r) },
+        HoleGroup::Circle { n, d, r, cx: centre[0], cy: centre[1], angle },
+    ))
 }
 
 #[cfg(test)]
@@ -283,6 +337,24 @@ mod tests {
                 .iter()
                 .all(|g| matches!(g, HoleGroup::Single(_)))
         );
+    }
+
+    #[test]
+    fn single_holes_keep_their_order() {
+        let all = vec![HoleSpec { x: 0.0, y: 0.0, d: 3.0 }, HoleSpec { x: 10.0, y: 5.0, d: 4.0 }, HoleSpec { x: 30.0, y: 0.0, d: 3.0 }];
+        let found = group_holes(&all);
+        assert_eq!(found, all.into_iter().map(HoleGroup::Single).collect::<Vec<_>>());
+    }
+
+    /// Rounding the pitch of a long row to a micrometre would move its last holes by more than
+    /// the tolerance; the exact pitch is kept then.
+    #[test]
+    fn long_rows_keep_an_exact_pitch() {
+        let centres: Vec<(f64, f64)> = (0..60).map(|i| f64::from(i) * 10.000_4).map(|v| (snap(v), snap(v))).collect();
+        let found = group_holes(&holes(&centres, 2.0));
+        let [ref group @ HoleGroup::Row { n: 60, .. }] = found[..] else { panic!("{found:?}") };
+        let points: Vec<[f64; 2]> = centres.iter().map(|&(x, y)| [x, y]).collect();
+        assert!(matches(&points, &predicted(group)), "{group:?}");
     }
 
     #[test]
