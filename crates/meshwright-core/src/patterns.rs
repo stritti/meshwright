@@ -131,9 +131,10 @@ fn predicted(group: &HoleGroup) -> Vec<[f64; 2]> {
 }
 
 /// `rounded` if the holes it stands for are still `centres` (rounding a pitch or an angle adds
-/// up along a long row), else `exact`.
-fn keep_rounded(centres: &[[f64; 2]], rounded: HoleGroup, exact: HoleGroup) -> HoleGroup {
-    if matches(centres, &predicted(&rounded)) { rounded } else { exact }
+/// up along a long row), else `exact` if that is, else no pattern: a set whose gaps are each
+/// near enough can still drift from the pattern as a whole.
+fn keep_rounded(centres: &[[f64; 2]], rounded: HoleGroup, exact: HoleGroup) -> Option<HoleGroup> {
+    [rounded, exact].into_iter().find(|group| matches(centres, &predicted(group)))
 }
 
 /// `degrees` rounded to the coarsest of 1°, 0.5°, 0.1°, 0.01° and 0.001° that moves a point at
@@ -189,11 +190,11 @@ fn grid(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
         }
     }
     let (nx, ny, x, y) = (xs.len(), ys.len(), xs[0], ys[0]);
-    Some(keep_rounded(
+    keep_rounded(
         centres,
         HoleGroup::Grid { nx, ny, pitch_x: snap(pitch_x), pitch_y: snap(pitch_y), d, x, y },
         HoleGroup::Grid { nx, ny, pitch_x, pitch_y, d, x, y },
-    ))
+    )
 }
 
 fn row(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
@@ -233,11 +234,11 @@ fn row(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     let pitch = even_step(&along)?;
     let angle = dir[1].atan2(dir[0]).to_degrees();
     let (x, y) = (origin[0], origin[1]);
-    Some(keep_rounded(
+    keep_rounded(
         centres,
         HoleGroup::Row { n, pitch: snap(pitch), d, x, y, angle: snap_angle(angle, far) },
         HoleGroup::Row { n, pitch, d, x, y, angle },
-    ))
+    )
 }
 
 fn circle(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
@@ -266,11 +267,11 @@ fn circle(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     if angle <= -half + 1e-9 {
         angle += 2.0 * half;
     }
-    Some(keep_rounded(
+    keep_rounded(
         centres,
         HoleGroup::Circle { n, d, r: snap(r), cx: snap(centre[0]), cy: snap(centre[1]), angle: snap_angle(angle, r) },
         HoleGroup::Circle { n, d, r, cx: centre[0], cy: centre[1], angle },
-    ))
+    )
 }
 
 #[cfg(test)]
@@ -355,6 +356,20 @@ mod tests {
         let [ref group @ HoleGroup::Row { n: 60, .. }] = found[..] else { panic!("{found:?}") };
         let points: Vec<[f64; 2]> = centres.iter().map(|&(x, y)| [x, y]).collect();
         assert!(matches(&points, &predicted(group)), "{group:?}");
+    }
+
+    /// Every gap of this circle is within the tolerance of 30°, but the holes drift up to 28 µm
+    /// from a regular bolt circle, so it is no pattern.
+    #[test]
+    fn a_drifting_circle_is_no_pattern() {
+        let n = 12;
+        let circle: Vec<HoleSpec> = (0..n)
+            .map(|k: usize| 30.0 * k as f64 + 0.0135 * k.min(n - k) as f64)
+            .map(f64::to_radians)
+            .map(|a| HoleSpec { x: snap(20.0 * a.cos()), y: snap(20.0 * a.sin()), d: 3.0 })
+            .collect();
+        let found = group_holes(&circle);
+        assert!(found.iter().all(|g| matches!(g, HoleGroup::Single(_))), "{found:?}");
     }
 
     #[test]
