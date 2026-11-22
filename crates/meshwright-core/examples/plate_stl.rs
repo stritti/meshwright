@@ -19,6 +19,7 @@
 
 use std::io::Write as _;
 
+use meshwright_core::mesh::snap_mm;
 use meshwright_core::recognize::{HoleSpec, PlateSpec, ProfileSpec};
 use meshwright_core::{stl, synth};
 
@@ -75,8 +76,7 @@ fn patterns() -> PlateSpec {
     ];
     holes.extend((0..6).map(|i| {
         let a = (15.0 + 60.0 * f64::from(i)).to_radians();
-        let snap = |v: f64| (v * 1000.0).round() / 1000.0;
-        HoleSpec { x: snap(60.0 + 15.0 * a.cos()), y: snap(40.0 + 15.0 * a.sin()), d: 4.0, head: None, blind: None }
+        HoleSpec { x: snap_mm(60.0 + 15.0 * a.cos()), y: snap_mm(40.0 + 15.0 * a.sin()), d: 4.0, head: None, blind: None }
     }));
     PlateSpec {
         x: 120.0,

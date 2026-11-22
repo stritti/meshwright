@@ -28,7 +28,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 
-use crate::mesh::{Mesh, Vec3, cross, length, sub};
+use crate::mesh::{Mesh, Vec3, cross, length, snap_mm, sub};
 use crate::recognize::{Blind, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
@@ -52,20 +52,10 @@ const MAX_FACET_TURN: f64 = 50.0 * PI / 180.0;
 /// Largest turn between facets of a curved side (30°): finer than a twelve-sided outline.
 const MAX_CURVE_TURN: f64 = 30.0 * PI / 180.0;
 
-/// Recognised sizes are rounded to micrometres (this many steps per millimetre): STL stores
-/// single-precision floats, so a 35 mm hole position comes back as 35.0000019…, which nobody
-/// wants in the parameter panel.
-const SNAP_PER_MM: f64 = 1000.0;
-
 /// How far a corner may lie from where the recogniser expects it, in millimetres, for a part
 /// whose largest size is `scale`. STL coordinates have about seven significant digits.
 fn tolerance(scale: f64) -> f64 {
     (scale * 1e-5).max(1e-3)
-}
-
-fn snap(value: f64) -> f64 {
-    let snapped = (value * SNAP_PER_MM).round() / SNAP_PER_MM;
-    if snapped == 0.0 { 0.0 } else { snapped }
 }
 
 type P2 = [f64; 2];
@@ -366,9 +356,9 @@ impl Stepped {
 
     fn head(&self) -> HoleHead {
         let bottom = self.inward > 0.0;
-        let d = snap(2.0 * self.head_r);
+        let d = snap_mm(2.0 * self.head_r);
         if self.counterbore {
-            HoleHead::Counterbore { d, depth: snap(self.depth), bottom }
+            HoleHead::Counterbore { d, depth: snap_mm(self.depth), bottom }
         } else {
             let angle = 2.0 * ((self.head_r - self.bore_r) / self.depth).atan().to_degrees();
             // A whole degree when that moves the cone's edge by no more than a micrometre, else
@@ -398,11 +388,11 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     };
     let (mut bosses, mut pads) = (Vec::new(), Vec::new());
     for b in &found {
-        let [x, y] = [snap(b.foot.middle()[0] - offset[0]), snap(b.foot.middle()[1] - offset[1])];
-        let h = snap(b.top - top);
+        let [x, y] = [snap_mm(b.foot.middle()[0] - offset[0]), snap_mm(b.foot.middle()[1] - offset[1])];
+        let h = snap_mm(b.top - top);
         match b.foot {
-            Footprint::Round { r, .. } => bosses.push(BossSpec { x, y, d: snap(2.0 * r), h }),
-            Footprint::Rect { lo, hi } => pads.push(PadSpec { x, y, w: snap(hi[0] - lo[0]), l: snap(hi[1] - lo[1]), h }),
+            Footprint::Round { r, .. } => bosses.push(BossSpec { x, y, d: snap_mm(2.0 * r), h }),
+            Footprint::Rect { lo, hi } => pads.push(PadSpec { x, y, w: snap_mm(hi[0] - lo[0]), l: snap_mm(hi[1] - lo[1]), h }),
         }
     }
     bosses.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
@@ -675,7 +665,7 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     let mut cutouts: Vec<Vec<P2>> = Vec::new();
     for (corners, k) in through {
         wall_loops.push(loops[k].clone());
-        let mut c: Vec<P2> = corners.iter().rev().map(|p| p.map(snap)).collect();
+        let mut c: Vec<P2> = corners.iter().rev().map(|p| p.map(snap_mm)).collect();
         let first = (0..c.len()).min_by(|&a, &b| c[a][1].total_cmp(&c[b][1]).then(c[a][0].total_cmp(&c[b][0])));
         c.rotate_left(first.unwrap_or(0));
         cutouts.push(c);
@@ -740,7 +730,7 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         if s.depth <= tol || s.depth >= size[2] - tol {
             return Err("a hole's counterbore or countersink is as deep as the plate (stepped holes are not recognised yet)".into());
         }
-        holes.push(HoleSpec { x: snap(centre[0]), y: snap(centre[1]), d: snap(2.0 * bore_r), head: Some(s.head()), blind: None });
+        holes.push(HoleSpec { x: snap_mm(centre[0]), y: snap_mm(centre[1]), d: snap_mm(2.0 * bore_r), head: Some(s.head()), blind: None });
         stepped.push(s);
     }
     for ((hole, (centre, r), k), _) in bottoms.iter().zip(&paired).filter(|(_, paired)| !**paired) {
@@ -765,15 +755,17 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
                 "a hole neither goes straight through nor ends in a flat floor (slanted holes and drill points are not recognised yet)",
             )?;
         match (hole, b.foot) {
-            (Some(hole), _) => holes.push(HoleSpec { blind: Some(Blind { depth: snap(b.depth), bottom: inward > 0.0 }), ..hole.clone() }),
+            (Some(hole), _) => {
+                holes.push(HoleSpec { blind: Some(Blind { depth: snap_mm(b.depth), bottom: inward > 0.0 }), ..hole.clone() });
+            }
             (None, Footprint::Rect { lo, hi }) => {
-                let [x, y] = b.foot.middle().map(snap);
+                let [x, y] = b.foot.middle().map(snap_mm);
                 pockets.push(PocketSpec {
                     x,
                     y,
-                    w: snap(hi[0] - lo[0]),
-                    l: snap(hi[1] - lo[1]),
-                    depth: snap(b.depth),
+                    w: snap_mm(hi[0] - lo[0]),
+                    l: snap_mm(hi[1] - lo[1]),
+                    depth: snap_mm(b.depth),
                     bottom: inward > 0.0,
                 });
             }
@@ -828,8 +820,8 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
     }
 
-    let offset = bounds.min.map(|c| if c.abs() <= tol { 0.0 } else { snap(c) });
-    let (z, outline_fillet_r) = (snap(size[2]), radius.map(snap));
+    let offset = bounds.min.map(|c| if c.abs() <= tol { 0.0 } else { snap_mm(c) });
+    let (z, outline_fillet_r) = (snap_mm(size[2]), radius.map(snap_mm));
     let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
     // A rectangle with cut-outs is an outline, as mesh2cad writes it (`extrude_len`, the outline's
     // corners and each cut-out's).
@@ -838,8 +830,8 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         && box_corners.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol));
     let (found, volume) = if rectangle {
         let plate = PlateSpec {
-            x: snap(size[0]),
-            y: snap(size[1]),
+            x: snap_mm(size[0]),
+            y: snap_mm(size[1]),
             z,
             holes,
             slots,
@@ -852,7 +844,7 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         let volume = plate.volume();
         (Recognition::Plate { plate, offset }, volume)
     } else {
-        let mut corners: Vec<P2> = corners.iter().map(|c| c.map(snap)).collect();
+        let mut corners: Vec<P2> = corners.iter().map(|c| c.map(snap_mm)).collect();
         // Start at the lowest corner, the leftmost of those, so that line l1 is predictable.
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
@@ -1488,7 +1480,7 @@ fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
     if (around.abs() - 2.0 * PI).abs() > 1e-6 || steps.iter().any(|s| *s > MAX_HOLE_STEP || *s > MAX_STEP_RATIO * median) {
         return Err(not_round());
     }
-    Ok((HoleSpec { x: snap(cx), y: snap(cy), d: snap(2.0 * r), head: None, blind: None }, ([cx, cy], r)))
+    Ok((HoleSpec { x: snap_mm(cx), y: snap_mm(cy), d: snap_mm(2.0 * r), head: None, blind: None }, ([cx, cy], r)))
 }
 
 /// A straight slot's loop: two round ends of one radius joined by two straight sides, every
@@ -1633,7 +1625,7 @@ fn slot_fit(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
             return None;
         }
     }
-    let spec = SlotSpec { x: snap(centre[0]), y: snap(centre[1]), len: snap(2.0 * half), w: snap(2.0 * r), angle };
+    let spec = SlotSpec { x: snap_mm(centre[0]), y: snap_mm(centre[1]), len: snap_mm(2.0 * half), w: snap_mm(2.0 * r), angle };
     Some((spec, g))
 }
 

@@ -14,6 +14,7 @@
 
 use std::f64::consts::PI;
 
+use crate::mesh::snap_mm;
 use crate::recognize::HoleSpec;
 
 /// How far a hole may sit from where a pattern puts it, in mm. Recognised positions are exact to
@@ -158,11 +159,6 @@ fn snap_angle(degrees: f64, reach: f64) -> f64 {
     degrees
 }
 
-fn snap(value: f64) -> f64 {
-    let snapped = (value * 1000.0).round() / 1000.0;
-    if snapped == 0.0 { 0.0 } else { snapped }
-}
-
 /// The distinct values among `values` (within the tolerance), sorted.
 fn levels(values: impl Iterator<Item = f64>) -> Vec<f64> {
     let mut sorted: Vec<f64> = values.collect();
@@ -200,7 +196,7 @@ fn grid(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     let (nx, ny, x, y) = (xs.len(), ys.len(), xs[0], ys[0]);
     keep_rounded(
         centres,
-        HoleGroup::Grid { nx, ny, pitch_x: snap(pitch_x), pitch_y: snap(pitch_y), d, x, y },
+        HoleGroup::Grid { nx, ny, pitch_x: snap_mm(pitch_x), pitch_y: snap_mm(pitch_y), d, x, y },
         HoleGroup::Grid { nx, ny, pitch_x, pitch_y, d, x, y },
     )
 }
@@ -244,7 +240,7 @@ fn row(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     let (x, y) = (origin[0], origin[1]);
     keep_rounded(
         centres,
-        HoleGroup::Row { n, pitch: snap(pitch), d, x, y, angle: snap_angle(angle, far) },
+        HoleGroup::Row { n, pitch: snap_mm(pitch), d, x, y, angle: snap_angle(angle, far) },
         HoleGroup::Row { n, pitch, d, x, y, angle },
     )
 }
@@ -277,7 +273,7 @@ fn circle(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
     }
     keep_rounded(
         centres,
-        HoleGroup::Circle { n, d, r: snap(r), cx: snap(centre[0]), cy: snap(centre[1]), angle: snap_angle(angle, r) },
+        HoleGroup::Circle { n, d, r: snap_mm(r), cx: snap_mm(centre[0]), cy: snap_mm(centre[1]), angle: snap_angle(angle, r) },
         HoleGroup::Circle { n, d, r, cx: centre[0], cy: centre[1], angle },
     )
 }
@@ -293,7 +289,7 @@ mod tests {
     fn on_circle(n: usize, r: f64, centre: (f64, f64), start_deg: f64, d: f64) -> Vec<HoleSpec> {
         (0..n)
             .map(|i| (start_deg + 360.0 * i as f64 / n as f64).to_radians())
-            .map(|a| HoleSpec { x: snap(centre.0 + r * a.cos()), y: snap(centre.1 + r * a.sin()), d, head: None, blind: None })
+            .map(|a| HoleSpec { x: snap_mm(centre.0 + r * a.cos()), y: snap_mm(centre.1 + r * a.sin()), d, head: None, blind: None })
             .collect()
     }
 
@@ -363,7 +359,7 @@ mod tests {
     /// the tolerance; the exact pitch is kept then.
     #[test]
     fn long_rows_keep_an_exact_pitch() {
-        let centres: Vec<(f64, f64)> = (0..60).map(|i| f64::from(i) * 10.000_4).map(|v| (snap(v), snap(v))).collect();
+        let centres: Vec<(f64, f64)> = (0..60).map(|i| f64::from(i) * 10.000_4).map(|v| (snap_mm(v), snap_mm(v))).collect();
         let found = group_holes(&holes(&centres, 2.0));
         let [ref group @ HoleGroup::Row { n: 60, .. }] = found[..] else { panic!("{found:?}") };
         let points: Vec<[f64; 2]> = centres.iter().map(|&(x, y)| [x, y]).collect();
@@ -378,7 +374,7 @@ mod tests {
         let circle: Vec<HoleSpec> = (0..n)
             .map(|k: usize| 30.0 * k as f64 + 0.0135 * k.min(n - k) as f64)
             .map(f64::to_radians)
-            .map(|a| HoleSpec { x: snap(20.0 * a.cos()), y: snap(20.0 * a.sin()), d: 3.0, head: None, blind: None })
+            .map(|a| HoleSpec { x: snap_mm(20.0 * a.cos()), y: snap_mm(20.0 * a.sin()), d: 3.0, head: None, blind: None })
             .collect();
         let found = group_holes(&circle);
         assert!(found.iter().all(|g| matches!(g, HoleGroup::Single(_))), "{found:?}");

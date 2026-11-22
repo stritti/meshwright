@@ -12,7 +12,7 @@ use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions, fmt_number,
     polygon_sketch, polygons_sketch, rectangle_sketch, slot_sketch,
 };
-use crate::mesh::{Mesh, Vec3};
+use crate::mesh::{Mesh, Vec3, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
 
 /// What recognition found.
@@ -756,13 +756,6 @@ fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str,
             }
         }
     }
-}
-
-/// A coordinate rounded to micrometres, as recognised sizes are: a sum of an offset and a size
-/// must not show float noise in the parameter panel.
-fn snap_mm(value: f64) -> f64 {
-    let snapped = (value * 1000.0).round() / 1000.0;
-    if snapped == 0.0 { 0.0 } else { snapped }
 }
 
 /// "A 70 x 40 x 6 mm plate with a 6-sided outline, 2 holes and 3 mm rounded corners".

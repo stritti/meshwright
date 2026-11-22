@@ -84,6 +84,19 @@ pub fn length(a: Vec3) -> f64 {
     dot(a, a).sqrt()
 }
 
+/// Rounding steps per millimetre: recognised sizes are rounded to micrometres, because STL stores
+/// single-precision floats, so a 35 mm hole position comes back as 35.0000019…, which nobody wants
+/// in the parameter panel.
+const SNAP_PER_MM: f64 = 1000.0;
+
+/// A coordinate rounded to micrometres, as recognised sizes are: a sum of an offset and a size
+/// must not show float noise in the parameter panel. Negative zero becomes `0.0`.
+#[must_use]
+pub fn snap_mm(value: f64) -> f64 {
+    let snapped = (value * SNAP_PER_MM).round() / SNAP_PER_MM;
+    if snapped == 0.0 { 0.0 } else { snapped }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
