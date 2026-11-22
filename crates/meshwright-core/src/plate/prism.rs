@@ -32,7 +32,7 @@ pub(super) fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     let cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
     check_prism(&faces, mesh_volume, size[2], &cutouts.stepped, &cutouts.blinds)?;
     check_walls(&faces, &corners, radius, &cutouts, scale, tol)?;
-    let offset = bounds.min.map(|c| if c.abs() <= tol { 0.0 } else { snap_mm(c) });
+    let offset = bounds.min.map(snap_mm);
     recognition(&corners, radius, cutouts, size, offset, tol, mesh_volume)
 }
 

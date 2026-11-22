@@ -56,7 +56,8 @@ impl Mesh {
     /// mesh; meaningless otherwise.
     #[must_use]
     pub fn volume(&self) -> f64 {
-        self.triangles.iter().map(|[a, b, c]| dot(*a, cross(*b, *c))).sum::<f64>() / 6.0
+        let Some([origin, ..]) = self.triangles.first() else { return 0.0 };
+        self.triangles.iter().map(|[a, b, c]| dot(sub(*a, *origin), cross(sub(*b, *origin), sub(*c, *origin)))).sum::<f64>() / 6.0
     }
 }
 

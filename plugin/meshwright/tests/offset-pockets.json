@@ -1,0 +1,37 @@
+{
+  "entry": "stl",
+  "file": "offset-pockets.stl",
+  "expect": {
+    "reply": {
+      "bodies": 1,
+      "features": 7,
+      "loss_report": {
+        "summary": "A 70 x 40 x 6 mm plate with 1 hole, 1 pad and 2 pockets"
+      }
+    },
+    "model": {
+      "body_count": 1,
+      "total": {
+        "volume_mm3": 16460.601776
+      },
+      "bodies": [
+        {
+          "bbox": {
+            "min": [
+              12,
+              -18,
+              0.009
+            ],
+            "max": [
+              82,
+              22,
+              10.009
+            ]
+          },
+          "closed": true
+        }
+      ]
+    },
+    "tolerance": 0.0001
+  }
+}

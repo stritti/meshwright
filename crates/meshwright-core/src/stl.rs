@@ -41,6 +41,15 @@ pub enum StlError {
         /// 1-based number of the triangle.
         triangle: usize,
     },
+    /// The STL exceeds the caller's input budget.
+    SizeLimit {
+        /// Size of the STL in bytes.
+        size: u64,
+        /// Maximum supported size in bytes.
+        max_bytes: u64,
+    },
+    /// The STL triangle buffer could not be allocated.
+    Allocation,
     /// The file holds no triangles.
     Empty,
 }
@@ -57,6 +66,10 @@ impl fmt::Display for StlError {
             Self::OutOfRange { triangle } => {
                 write!(f, "triangle {triangle} has a coordinate too large for an STL mesh (beyond about 3.4e38)")
             }
+            Self::SizeLimit { size, max_bytes } => {
+                write!(f, "the STL is {size} bytes; this import mode supports at most {max_bytes} bytes")
+            }
+            Self::Allocation => write!(f, "there is not enough memory to hold the STL triangles"),
             Self::Empty => write!(f, "the file holds no triangles"),
         }
     }
@@ -100,12 +113,30 @@ enum Format {
     Ascii {
         line: usize,
         corners: Vec<Vec3>,
+        block: AsciiBlock,
     },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AsciiBlock {
+    Outside,
+    Solid,
+    Facet,
+    Loop,
+    EndFacet,
 }
 
 impl StlReader {
     /// How many bytes from the start of the file [`StlReader::new`] needs to tell the format.
     pub const HEAD: usize = PREAMBLE;
+
+    /// A reader with an input size budget checked before allocating the triangle buffer.
+    pub fn new_with_size_limit(head: &[u8], size: u64, max_bytes: u64) -> Result<Self, StlError> {
+        if size > max_bytes {
+            return Err(StlError::SizeLimit { size, max_bytes });
+        }
+        Self::new(head, size)
+    }
 
     /// A reader for a file of `size` bytes that starts with `head`.
     pub fn new(head: &[u8], size: u64) -> Result<Self, StlError> {
@@ -114,7 +145,9 @@ impl StlReader {
             if expected_len == size {
                 // The size check bounds the count by the file size, so this allocation is not
                 // driven by the header alone.
-                let triangles = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+                let mut triangles = Vec::new();
+                let count_usize = usize::try_from(count).map_err(|_| StlError::Allocation)?;
+                triangles.try_reserve_exact(count_usize).map_err(|_| StlError::Allocation)?;
                 return Ok(Self { format: Format::Binary { triangles: count }, offset: 0, pending: Vec::with_capacity(RECORD), triangles });
             }
             if !looks_ascii(head) {
@@ -123,7 +156,7 @@ impl StlReader {
         }
         if looks_ascii(head) {
             return Ok(Self {
-                format: Format::Ascii { line: 0, corners: Vec::with_capacity(3) },
+                format: Format::Ascii { line: 0, corners: Vec::with_capacity(3), block: AsciiBlock::Outside },
                 offset: 0,
                 pending: Vec::new(),
                 triangles: Vec::new(),
@@ -158,7 +191,7 @@ impl StlReader {
                 }
                 self.pending.extend_from_slice(rest);
             }
-            Format::Ascii { line, corners } => {
+            Format::Ascii { line, corners, block } => {
                 let Some(last_newline) = chunk.iter().rposition(|b| *b == b'\n') else {
                     self.pending.extend_from_slice(chunk);
                     return Ok(());
@@ -169,7 +202,7 @@ impl StlReader {
                 text.extend_from_slice(complete);
                 for l in text.split(|b| *b == b'\n') {
                     *line += 1;
-                    ascii_line(&String::from_utf8_lossy(l), *line, corners, &mut self.triangles)?;
+                    ascii_line(&String::from_utf8_lossy(l), *line, corners, block, &mut self.triangles)?;
                 }
                 self.pending = rest[1..].to_vec();
             }
@@ -186,14 +219,14 @@ impl StlReader {
                     return Err(StlError::Truncated { expected: *expected, actual: self.offset });
                 }
             }
-            Format::Ascii { line, corners } => {
+            Format::Ascii { line, corners, block } => {
                 if !self.pending.is_empty() {
                     *line += 1;
-                    let text = String::from_utf8_lossy(&self.pending).into_owned();
-                    ascii_line(&text, *line, corners, &mut self.triangles)?;
+                    let text = String::from_utf8_lossy(&self.pending);
+                    ascii_line(&text, *line, corners, block, &mut self.triangles)?;
                 }
-                if !corners.is_empty() {
-                    return Err(StlError::Syntax { line: *line, reason: "the file ends inside a facet".into() });
+                if *block != AsciiBlock::Outside {
+                    return Err(StlError::Syntax { line: *line, reason: "the file ends inside a solid or facet".into() });
                 }
             }
         }
@@ -210,6 +243,9 @@ fn push_checked(triangles: &mut Vec<Triangle>, triangle: Triangle) -> Result<(),
     }
     if triangle.iter().flatten().any(|v| v.abs() > f64::from(f32::MAX)) {
         return Err(StlError::OutOfRange { triangle: triangles.len() + 1 });
+    }
+    if triangles.len() == triangles.capacity() {
+        triangles.try_reserve(1).map_err(|_| StlError::Allocation)?;
     }
     triangles.push(triangle);
     Ok(())
@@ -258,20 +294,39 @@ fn read_record(record: &[u8]) -> Triangle {
     [corner(0), corner(1), corner(2)]
 }
 
-fn ascii_line(line: &str, line_no: usize, corners: &mut Vec<Vec3>, triangles: &mut Vec<Triangle>) -> Result<(), StlError> {
+fn ascii_line(
+    line: &str,
+    line_no: usize,
+    corners: &mut Vec<Vec3>,
+    block: &mut AsciiBlock,
+    triangles: &mut Vec<Triangle>,
+) -> Result<(), StlError> {
     let mut words = line.split_whitespace();
     match words.next() {
-        Some("vertex") => {
-            let coords: Vec<f64> = words
-                .map(str::parse)
-                .collect::<Result<_, _>>()
-                .map_err(|e| StlError::Syntax { line: line_no, reason: format!("bad coordinate: {e}") })?;
-            let [x, y, z] = coords[..] else {
-                return Err(StlError::Syntax { line: line_no, reason: "a vertex has three coordinates".into() });
-            };
-            corners.push([x, y, z]);
+        Some("solid") if *block == AsciiBlock::Outside => *block = AsciiBlock::Solid,
+        Some("endsolid") if *block == AsciiBlock::Solid => *block = AsciiBlock::Outside,
+        Some("facet") if *block == AsciiBlock::Solid => *block = AsciiBlock::Facet,
+        Some("outer") if *block == AsciiBlock::Facet && words.next() == Some("loop") => *block = AsciiBlock::Loop,
+        Some("endfacet") if *block == AsciiBlock::EndFacet => *block = AsciiBlock::Solid,
+        Some("vertex") if *block == AsciiBlock::Loop => {
+            if corners.len() == 3 {
+                return Err(StlError::Syntax { line: line_no, reason: "a facet has three vertices".into() });
+            }
+            let bad_length = || StlError::Syntax { line: line_no, reason: "a vertex has three coordinates".into() };
+            let mut point = [0.0; 3];
+            for value in &mut point {
+                *value = words
+                    .next()
+                    .ok_or_else(bad_length)?
+                    .parse()
+                    .map_err(|e| StlError::Syntax { line: line_no, reason: format!("bad coordinate: {e}") })?;
+            }
+            if words.next().is_some() {
+                return Err(bad_length());
+            }
+            corners.push(point);
         }
-        Some("endloop") => {
+        Some("endloop") if *block == AsciiBlock::Loop => {
             let [a, b, c] = corners[..] else {
                 return Err(StlError::Syntax {
                     line: line_no,
@@ -280,6 +335,10 @@ fn ascii_line(line: &str, line_no: usize, corners: &mut Vec<Vec3>, triangles: &m
             };
             push_checked(triangles, [a, b, c])?;
             corners.clear();
+            *block = AsciiBlock::EndFacet;
+        }
+        Some(keyword @ ("solid" | "endsolid" | "facet" | "outer" | "endfacet" | "vertex" | "endloop")) => {
+            return Err(StlError::Syntax { line: line_no, reason: format!("unexpected {keyword}") });
         }
         _ => {}
     }
@@ -306,6 +365,16 @@ mod tests {
     }
 
     const TETRA: &str = include_str!("../tests/data/tetra.stl");
+
+    #[test]
+    fn file_size_budget_applies_to_binary_and_ascii_stl() {
+        let binary = to_binary(&tetrahedron(10.0), b"binary");
+        for bytes in [binary.as_slice(), TETRA.as_bytes()] {
+            let size = bytes.len() as u64;
+            assert!(StlReader::new_with_size_limit(bytes, size, size).is_ok());
+            assert!(matches!(StlReader::new_with_size_limit(bytes, size, size - 1), Err(StlError::SizeLimit { .. })));
+        }
+    }
 
     #[test]
     fn reads_binary() {
@@ -357,6 +426,14 @@ mod tests {
         let bytes = write_binary(&mesh);
         assert_eq!(bytes.len(), HEADER + 4 + 4 * RECORD);
         assert_eq!(parse(&bytes).expect("parses"), mesh);
+    }
+
+    #[test]
+    fn rejects_ascii_truncated_after_a_complete_loop_or_facet() {
+        for marker in ["endloop", "endfacet"] {
+            let end = TETRA.find(marker).expect("fixture contains marker") + marker.len();
+            assert!(matches!(parse_in_chunks(&TETRA.as_bytes()[..end], 7), Err(StlError::Syntax { .. })));
+        }
     }
 
     #[test]
