@@ -147,6 +147,7 @@ mod tests {
             y: 40.0,
             z: 5.0,
             holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 10.0, head: None, blind: None }],
+            slots: vec![],
             outline_fillet_r: Some(4.0),
         };
         let bytes = stl::write_binary(&crate::synth::plate(&spec, 24, [-30.0, -20.0, 0.0]));
@@ -248,6 +249,7 @@ mod tests {
             corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
             z: 5.0,
             holes: vec![HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }],
+            slots: vec![],
             outline_fillet_r: None,
         };
         let bytes = stl::write_binary(&crate::synth::profile(&spec, 32, [20.0, 10.0, 3.0]));

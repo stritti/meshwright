@@ -11,7 +11,7 @@
    2. (done) hole rows, grids and bolt circles as SolidCraft patterns
    3. (done) counterbored and countersunk holes
    4. (done) blind holes
-   5. slots
+   5. (done) slots
    6. bosses on the top face
    7. polygonal cut-outs
    8. steps, pockets and shallow recesses

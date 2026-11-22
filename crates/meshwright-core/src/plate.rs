@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 
 use crate::mesh::{Mesh, Vec3, cross, length, sub};
-use crate::recognize::{Blind, HoleHead, HoleSpec, PlateSpec, ProfileSpec, Recognition};
+use crate::recognize::{Blind, HoleHead, HoleSpec, PlateSpec, ProfileSpec, Recognition, SlotSpec};
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
 pub const MAX_VOLUME_ERROR: f64 = 0.01;
@@ -75,6 +75,52 @@ const NOT_FLAT: &str = "it is not a flat plate: some corners lie between its top
 
 /// A hole's rounded parameters, its circle as fitted, and the index of its loop.
 type FittedHole = (HoleSpec, (P2, f64), usize);
+
+/// A slot as fitted to its loop: the middle, the long axis, half the distance between the end
+/// centres and the ends' radius.
+#[derive(Debug, Clone, Copy)]
+struct SlotGeometry {
+    centre: P2,
+    axis: P2,
+    half: f64,
+    r: f64,
+}
+
+impl SlotGeometry {
+    /// The centres of its two round ends.
+    fn ends(&self) -> [P2; 2] {
+        let at = |s: f64| [self.centre[0] + s * self.axis[0], self.centre[1] + s * self.axis[1]];
+        [at(self.half), at(-self.half)]
+    }
+
+    /// How far `p` lies from the segment between the end centres.
+    fn reach(&self, p: P2) -> f64 {
+        let [a, b] = self.ends();
+        segment_distance(p, a, b)
+    }
+
+    /// Its round ends as walls: each end's outer half circle, bounded by reaching no further
+    /// than `r·√2` from the end's tip. That disk holds every point and every chord of the outer
+    /// half and leaves out the inner half, which lies inside the slot.
+    fn halves(&self) -> Vec<(P2, f64, P2, f64)> {
+        self.ends()
+            .into_iter()
+            .zip([1.0, -1.0])
+            .map(|(end, s)| {
+                let tip = [end[0] + s * self.r * self.axis[0], end[1] + s * self.r * self.axis[1]];
+                (end, self.r, tip, self.r * std::f64::consts::SQRT_2)
+            })
+            .collect()
+    }
+
+    fn matches(&self, other: &Self, tol: f64) -> bool {
+        let parallel = (self.axis[0] * other.axis[1] - self.axis[1] * other.axis[0]).abs() * self.half <= tol;
+        distance(self.centre, other.centre) <= tol && (self.half - other.half).abs() <= tol && (self.r - other.r).abs() <= tol && parallel
+    }
+}
+
+/// A cut-out's loop that is not round: a straight slot, or the reason it is neither.
+type FittedSlot = (SlotSpec, SlotGeometry, usize);
 
 /// What [`split_faces`] sorts a mesh into, in coordinates relative to its lowest corner.
 struct Faces {
@@ -281,12 +327,34 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     // Each hole meets the top and the bottom face in a circle about one centre (the circles as
     // fitted; the parameters are rounded). Where the two differ, the wider one is the mouth of a
     // counterbore or a countersink.
-    let fit = |loops: &[Vec<P2>]| -> Result<Vec<FittedHole>, String> {
-        loops.iter().enumerate().filter(|(_, l)| signed_area(l) < 0.0).map(|(k, l)| round_hole(l, tol).map(|(h, c)| (h, c, k))).collect()
+    // A cut-out that is not round may be a straight slot; it must go straight through.
+    let fit = |loops: &[Vec<P2>]| -> Result<(Vec<FittedHole>, Vec<FittedSlot>), String> {
+        let (mut holes, mut slots) = (Vec::new(), Vec::new());
+        for (k, l) in loops.iter().enumerate().filter(|(_, l)| signed_area(l) < 0.0) {
+            match round_hole(l, tol) {
+                Ok((h, c)) => holes.push((h, c, k)),
+                Err(why) => slots.push(slot_shape(l, tol).map(|(spec, geometry)| (spec, geometry, k)).ok_or(why)?),
+            }
+        }
+        Ok((holes, slots))
     };
-    let (tops, bottoms) = (fit(&loops)?, fit(&bottom_loops)?);
+    let ((tops, top_slots), (bottoms, bottom_slots)) = (fit(&loops)?, fit(&bottom_loops)?);
     let mut circles = Vec::new();
     let mut wall_loops = vec![outline.clone()];
+    let mut slots = Vec::new();
+    let mut slot_arcs = Vec::new();
+    if top_slots.len() != bottom_slots.len()
+        || !top_slots.iter().all(|(_, g, _)| bottom_slots.iter().any(|(_, other, _)| g.matches(other, tol)))
+    {
+        return Err("a slot does not go straight through (blind and slanted slots are not recognised yet)".into());
+    }
+    for (spec, g, k) in top_slots {
+        slot_arcs.extend(g.halves());
+        wall_loops.push(loops[k].clone());
+        slots.push(spec);
+    }
+    // In mesh2cad's order: by Y, then X, angle and width.
+    slots.sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)).then(a.angle.total_cmp(&b.angle)).then(a.w.total_cmp(&b.w)));
     let mut holes = Vec::new();
     let mut stepped = Vec::new();
     // A circle on one face only is a blind hole's mouth; its depth is found below.
@@ -394,7 +462,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     // the walls the top face's boundary stands for, or on a stepped hole's surface: anywhere else
     // they are a step, a pocket, a boss, or a wall that leans (a sheared prism has the same areas
     // and volume as a straight one).
-    let walls = Walls::new(&corners, radius, &circles, &wall_loops, scale, tol);
+    let walls = Walls::new(&corners, radius, &circles, &slot_arcs, &wall_loops, scale, tol);
     let in_step = |p: Vec3| stepped.iter().any(|s| s.holds(p, tol)) || blinds.iter().any(|b| b.holds(p, tol));
     if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p)) {
         return Err(NOT_FLAT.into());
@@ -421,7 +489,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     let rectangle =
         corners.len() == 4 && box_corners.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol));
     let (found, volume) = if rectangle {
-        let plate = PlateSpec { x: snap(size[0]), y: snap(size[1]), z, holes, outline_fillet_r };
+        let plate = PlateSpec { x: snap(size[0]), y: snap(size[1]), z, holes, slots, outline_fillet_r };
         let volume = plate.volume();
         (Recognition::Plate { plate, offset }, volume)
     } else {
@@ -430,7 +498,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
         corners.rotate_left(first.unwrap_or(0));
-        let profile = ProfileSpec { corners, z, holes, outline_fillet_r };
+        let profile = ProfileSpec { corners, z, holes, slots, outline_fillet_r };
         let volume = profile.volume();
         (Recognition::Profile { profile, offset }, volume)
     };
@@ -558,7 +626,17 @@ impl Walls {
     /// The walls of the outline `corners` (rounded with `radius`), of the holes' `circles` and,
     /// as meshed, of the top face's boundary `loops` (a facet's chord of an arc is no wall of the
     /// true part, but its corners and its subdivisions lie on it).
-    fn new(corners: &[P2], radius: Option<f64>, circles: &[(P2, f64)], loops: &[Vec<P2>], size: f64, tol: f64) -> Self {
+    /// `arcs` are further bounded round walls: centre, radius, the corner each rounds and how far
+    /// from that corner it reaches.
+    fn new(
+        corners: &[P2],
+        radius: Option<f64>,
+        circles: &[(P2, f64)],
+        arcs: &[(P2, f64, P2, f64)],
+        loops: &[Vec<P2>],
+        size: f64,
+        tol: f64,
+    ) -> Self {
         let n = corners.len();
         let r = radius.unwrap_or(0.0);
         let unit = |p: P2, q: P2| {
@@ -590,6 +668,7 @@ impl Walls {
             }
         }
         walls.extend(circles.iter().map(|&(c, r)| Wall::Circle(c, r)));
+        walls.extend(arcs.iter().map(|&(centre, r, corner, t)| Wall::Arc { centre, r, corner, t }));
         for ring in loops {
             walls.extend((0..ring.len()).map(|i| Wall::Segment(ring[i], ring[(i + 1) % ring.len()])));
         }
@@ -1023,7 +1102,7 @@ fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
             ring.len()
         ));
     }
-    let not_round = || "a cut-out is not round (slots, D-shapes and other cut-outs are not recognised yet)".to_owned();
+    let not_round = || "a cut-out is not round and no straight slot (D-shapes and other cut-outs are not recognised yet)".to_owned();
     let ([cx, cy], r) = fit_circle(ring).ok_or_else(not_round)?;
     if ring.iter().any(|p| ((p[0] - cx).hypot(p[1] - cy) - r).abs() > tol) {
         return Err(not_round());
@@ -1051,6 +1130,124 @@ fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
         return Err(not_round());
     }
     Ok((HoleSpec { x: snap(cx), y: snap(cy), d: snap(2.0 * r), head: None, blind: None }, ([cx, cy], r)))
+}
+
+/// A straight slot's loop: two round ends of one radius joined by two straight sides, every
+/// corner on that outline and every facet following it (within its sagitta on the ends), the
+/// ends faceted as finely as a round hole. Its spec is rounded; its geometry as fitted, along
+/// the rounded angle.
+fn slot_shape(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
+    slot_fit(ring, tol).or_else(|| {
+        // An exporter may have split facets: a corner on the straight line between its
+        // neighbours is left out, and the slot fitted again (as for a round hole's rim).
+        let mut kept: Vec<P2> = Vec::with_capacity(ring.len());
+        for (i, p) in ring.iter().enumerate() {
+            let prev = kept.last().copied().unwrap_or(ring[ring.len() - 1]);
+            if segment_distance(*p, prev, ring[(i + 1) % ring.len()]) > tol / 4.0 {
+                kept.push(*p);
+            }
+        }
+        (kept.len() < ring.len()).then(|| slot_fit(&kept, tol)).flatten()
+    })
+}
+
+#[allow(clippy::many_single_char_names)] // the textbook symbols of the area moments
+fn slot_fit(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
+    let n = ring.len();
+    if n < MIN_HOLE_SEGMENTS {
+        return None;
+    }
+    // The centroid and the axis of least inertia, from the loop's area moments (in coordinates
+    // about its first corner, so that far from the origin they keep their precision).
+    let o = ring[0];
+    let (mut a, mut cx, mut cy, mut xx, mut yy, mut xy) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    for i in 0..n {
+        let (p, q) = (ring[i], ring[(i + 1) % n]);
+        let (x0, y0, x1, y1) = (p[0] - o[0], p[1] - o[1], q[0] - o[0], q[1] - o[1]);
+        let cross = x0 * y1 - x1 * y0;
+        a += cross / 2.0;
+        cx += (x0 + x1) * cross / 6.0;
+        cy += (y0 + y1) * cross / 6.0;
+        xx += (x0 * x0 + x0 * x1 + x1 * x1) * cross / 12.0;
+        yy += (y0 * y0 + y0 * y1 + y1 * y1) * cross / 12.0;
+        xy += (x0 * y1 + 2.0 * x0 * y0 + 2.0 * x1 * y1 + x1 * y0) * cross / 24.0;
+    }
+    if a.abs() <= tol * tol {
+        return None;
+    }
+    let (cx, cy) = (cx / a, cy / a);
+    let (sxx, syy, sxy) = (xx / a - cx * cx, yy / a - cy * cy, xy / a - cx * cy);
+    let centre = [o[0] + cx, o[1] + cy];
+    let mut fitted = (0.5 * (2.0 * sxy).atan2(sxx - syy)).to_degrees().rem_euclid(180.0);
+    // The moments are only an estimate where the ends are faceted unevenly: the longest facet,
+    // a straight side unless the slot is very short, gives the axis exactly.
+    let (p, q) = (0..n).map(|i| (ring[i], ring[(i + 1) % n])).max_by(|a, b| distance(a.0, a.1).total_cmp(&distance(b.0, b.1)))?;
+    let side = (q[1] - p[1]).atan2(q[0] - p[0]).to_degrees().rem_euclid(180.0);
+    if ((side - fitted + 90.0).rem_euclid(180.0) - 90.0).abs() < 5.0 {
+        fitted = side;
+    }
+    // Its angle as a parameter: exact along X or Y, else in whole degrees or hundredths, as long
+    // as the ends move by no more than a micrometre.
+    let reach = ring.iter().map(|p| distance(*p, centre)).fold(0.0, f64::max);
+    let close = |angle: f64| ((angle - fitted + 90.0).rem_euclid(180.0) - 90.0).abs().to_radians() * reach <= 1e-3;
+    let angle = [0.0, 90.0, fitted.round(), (fitted * 100.0).round() / 100.0, fitted]
+        .into_iter()
+        .find(|a| close(*a))
+        .map_or(fitted, |a| a.rem_euclid(180.0));
+    let (sin, cos) = angle.to_radians().sin_cos();
+    // The straight sides lie the radius either side of the axis: halfway between them is the
+    // middle, across the slot (the centroid is not, where the ends are faceted unevenly).
+    let offset = |p: &P2| (p[1] - centre[1]) * cos - (p[0] - centre[0]) * sin;
+    let (lo, hi) = ring.iter().map(offset).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| (lo.min(t), hi.max(t)));
+    let mid = f64::midpoint(lo, hi);
+    let centre = [centre[0] - mid * sin, centre[1] + mid * cos];
+    let along = |p: &P2| (p[0] - centre[0]) * cos + (p[1] - centre[1]) * sin;
+    let across = |p: &P2| (p[1] - centre[1]) * cos - (p[0] - centre[0]) * sin;
+    let r = (hi - lo) / 2.0;
+    // Each end's centre is where its corners say, `along - sqrt(r² - across²)` (the tip itself
+    // need not be a corner: an end of an odd number of facets has none there); the sides'
+    // corners lie short of it.
+    let end_centre = |side: f64| {
+        ring.iter()
+            .filter(|p| along(p) * side > 0.0)
+            .map(|p| along(p) * side - (r * r - across(p).powi(2)).max(0.0).sqrt())
+            .fold(f64::NEG_INFINITY, f64::max)
+    };
+    let (ahead, behind) = (end_centre(1.0), end_centre(-1.0));
+    let half = f64::midpoint(ahead, behind);
+    if !half.is_finite() || half <= 2.0 * tol || r <= tol {
+        return None;
+    }
+    let shift = (ahead - behind) / 2.0;
+    let centre = [centre[0] + shift * cos, centre[1] + shift * sin];
+    let along = |p: &P2| (p[0] - centre[0]) * cos + (p[1] - centre[1]) * sin;
+    let g = SlotGeometry { centre, axis: [cos, sin], half, r };
+    if ring.iter().any(|p| (g.reach(*p) - r).abs() > tol) {
+        return None;
+    }
+    // Each facet is a piece of a straight side (both corners on one side's line, between the
+    // ends) or of one end (both corners past that end's centre, a step no coarser than a round
+    // hole's, its middle within its own sagitta of the circle). A facet from a side across to
+    // an end cuts the corner.
+    let [end_a, end_b] = g.ends();
+    for i in 0..n {
+        let (p, q) = (ring[i], ring[(i + 1) % n]);
+        let on_side = |s: f64| [p, q].iter().all(|c| (across(c) - s * r).abs() <= tol && along(c).abs() <= half + tol);
+        if on_side(1.0) || on_side(-1.0) {
+            continue;
+        }
+        let (end, _) =
+            [(end_a, 1.0), (end_b, -1.0)].into_iter().find(|(_, s)| along(&p) * s >= half - tol && along(&q) * s >= half - tol)?;
+        let turn = (q[1] - end[1]).atan2(q[0] - end[0]) - (p[1] - end[1]).atan2(p[0] - end[0]);
+        let len = distance(p, q);
+        let bow = r - (r * r - (len * len / 4.0).min(r * r)).sqrt();
+        let middle = [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1])];
+        if ((turn + PI).rem_euclid(2.0 * PI) - PI).abs() > MAX_HOLE_STEP || (distance(middle, end) - (r - bow)).abs() > tol {
+            return None;
+        }
+    }
+    let spec = SlotSpec { x: snap(centre[0]), y: snap(centre[1]), len: snap(2.0 * half), w: snap(2.0 * r), angle };
+    Some((spec, g))
 }
 
 /// The least-squares circle through `points` (Kåsa's algebraic fit), as centre and radius.
@@ -1107,6 +1304,7 @@ mod tests {
             y: 50.0,
             z: 5.0,
             holes: holes.iter().map(|&(x, y, d)| HoleSpec { x, y, d, head: None, blind: None }).collect(),
+            slots: vec![],
             outline_fillet_r: r,
         }
     }
@@ -1120,6 +1318,7 @@ mod tests {
                 HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None },
                 HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None, blind: None },
             ],
+            slots: vec![],
             outline_fillet_r: r,
         }
     }
@@ -1230,6 +1429,7 @@ mod tests {
             corners: vec![[0.0, 0.0], [50.0, 0.0], [60.0, 20.0], [25.0, 35.0], [0.0, 20.0]],
             z: 4.0,
             holes: vec![HoleSpec { x: 25.0, y: 15.0, d: 8.0, head: None, blind: None }],
+            slots: vec![],
             outline_fillet_r: Some(3.0),
         };
         let mesh = synth::profile(&expected, 64, [0.0; 3]);
@@ -1242,7 +1442,7 @@ mod tests {
         // One facet per quarter circle is a 45° chamfer: an exact eight-sided outline.
         let (profile, _) = found_profile(&synth::plate(&spec(&[], Some(5.0)), 4, [0.0; 3]));
         let corners = vec![[5.0, 0.0], [75.0, 0.0], [80.0, 5.0], [80.0, 45.0], [75.0, 50.0], [5.0, 50.0], [0.0, 45.0], [0.0, 5.0]];
-        assert_eq!(profile, ProfileSpec { corners, z: 5.0, holes: vec![], outline_fillet_r: None });
+        assert_eq!(profile, ProfileSpec { corners, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: None });
     }
 
     #[test]
@@ -1368,7 +1568,7 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)] // the same corner, as the generator wrote it into every facet
     fn a_corner_out_of_its_arc_is_no_wall() {
-        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: Some(1.0) };
+        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: Some(1.0) };
         let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
         // The band corner nearest the bottom-left arc's middle goes to the sharp corner (0, 0).
         let arc_middle = [1.0 - std::f64::consts::FRAC_1_SQRT_2, 1.0 - std::f64::consts::FRAC_1_SQRT_2, 2.5];
@@ -1439,7 +1639,7 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
     fn a_shifted_bottom_band_is_not_vertical() {
-        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: None };
+        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: None };
         let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
         // Shift the whole bottom 0.5 mm along X: the mesh stays closed, the faces keep their
         // areas and the volume stays that of a prism, so only the walls' bottom corners tell.
@@ -1459,7 +1659,7 @@ mod tests {
     #[test]
     fn diagonal_walls_fill_few_cells() {
         let diamond = [[50.0, 0.0], [100.0, 50.0], [50.0, 100.0], [0.0, 50.0]];
-        let walls = Walls::new(&diamond, None, &[], &[], 100.0, 1e-3);
+        let walls = Walls::new(&diamond, None, &[], &[], &[], 100.0, 1e-3);
         assert!(walls.cells.len() < 10_000, "{} cells", walls.cells.len());
         assert!(walls.holds([75.0, 25.0]) && walls.holds([25.0, 75.0]));
         assert!(!walls.holds([50.0, 50.0]) && !walls.holds([75.0, 26.0]));
@@ -1580,7 +1780,7 @@ mod tests {
     /// Small rounds of many facets next to long sides, in single precision.
     #[test]
     fn small_fine_rounds() {
-        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: Some(0.5) };
+        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: Some(0.5) };
         let mesh = crate::stl::parse(&crate::stl::write_binary(&synth::plate(&expected, 96, [0.0; 3]))).expect("round trip");
         assert_eq!(found(&mesh).0, expected);
     }
@@ -1605,7 +1805,7 @@ mod tests {
     /// Extra corners in the middle of the outline's facets (top and bottom alike) change nothing.
     #[test]
     fn subdivided_outline_facets() {
-        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: Some(3.0) };
+        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: Some(3.0) };
         let outline = synth::rounded(&[[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]], Some(3.0), 32);
         let mut split = Vec::new();
         for i in 0..outline.len() {
@@ -1643,7 +1843,7 @@ mod tests {
     /// between the arcs, whose far corners lie within the tolerance of the circle.
     #[test]
     fn short_sides_between_large_rounds() {
-        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], outline_fillet_r: Some(24.95) };
+        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: Some(24.95) };
         assert_eq!(found(&synth::plate(&expected, 32, [0.0; 3])).0, expected);
     }
 
@@ -1657,6 +1857,197 @@ mod tests {
         let (plate, offset) = found(&reread);
         assert_eq!(offset, [4000.0, 4000.0, 0.0]);
         assert_eq!(plate.holes.len(), 2);
+    }
+
+    /// An 80 x 50 x 8 plate exported from SolidCraft 0.45 with three slots (along X, along Y and
+    /// at 30°) and a hole.
+    #[test]
+    fn recognises_slots() {
+        let mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/slots.stl")).expect("parses");
+        let (plate, _) = found(&mesh);
+        let slot = |x: f64, y: f64, len: f64, w: f64, angle: f64| SlotSpec { x, y, len, w, angle };
+        assert_eq!(plate.slots, [slot(25.0, 15.0, 20.0, 6.0, 0.0), slot(62.0, 30.0, 15.0, 8.0, 90.0), slot(30.0, 36.0, 16.0, 5.0, 30.0)]);
+        assert_eq!(plate.holes.len(), 1);
+        // SolidCraft measured 28,497.522 mm³ for the part it exported.
+        assert!((plate.volume() - 28_497.522).abs() < 0.001, "{}", plate.volume());
+    }
+
+    /// A slot's loop: `n` facets on each round end, counter-clockwise.
+    fn stadium(centre: P2, len: f64, w: f64, angle: f64, n: usize) -> Vec<P2> {
+        let (sin, cos) = angle.to_radians().sin_cos();
+        let mut ring = Vec::new();
+        for (end, start) in [(len / 2.0, -PI / 2.0), (-len / 2.0, PI / 2.0)] {
+            for i in 0..=n {
+                let a = start + PI * i as f64 / n as f64;
+                let (s, t) = (end + w / 2.0 * a.cos(), w / 2.0 * a.sin());
+                ring.push([centre[0] + s * cos - t * sin, centre[1] + s * sin + t * cos]);
+            }
+        }
+        ring
+    }
+
+    fn plate_with_cutout(cutout: Vec<P2>) -> Mesh {
+        synth::prism(&[[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]], &[cutout], 6.0, [0.0; 3])
+    }
+
+    /// Slots of a synthetic mesh at any angle, finely or coarsely faceted.
+    #[test]
+    fn synthetic_slots() {
+        for (angle, n) in [(0.0, 16), (0.0, 15), (90.0, 8), (90.0, 9), (30.0, 12), (30.0, 13), (137.5, 24), (137.5, 7)] {
+            let (plate, _) = found(&plate_with_cutout(stadium([40.0, 25.0], 18.0, 7.0, angle, n)));
+            assert_eq!(plate.slots, [SlotSpec { x: 40.0, y: 25.0, len: 18.0, w: 7.0, angle }], "{angle} {n}");
+        }
+    }
+
+    /// Cut-outs that look like slots but are not: rounded ends narrower than the slot, ends of
+    /// three facets, an ellipse, and a slot whose ends differ in width.
+    #[test]
+    fn near_slots_are_refused() {
+        let rounded = synth::rounded(&[[30.0, 22.0], [50.0, 22.0], [50.0, 28.0], [30.0, 28.0]], Some(1.5), 32);
+        let ellipse: Vec<P2> =
+            (0..48).map(|i| 2.0 * PI * f64::from(i) / 48.0).map(|a| [40.0 + 12.0 * a.cos(), 25.0 + 4.0 * a.sin()]).collect();
+        let mut uneven = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
+        for p in &mut uneven[..17] {
+            p[1] = 25.0 + (p[1] - 25.0) * 1.2;
+        }
+        // Codex's: long facets from each side across to a short tip of the end.
+        let full = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
+        let mut cut: Vec<P2> = Vec::new();
+        for (end, sign) in [(&full[..17], -1.0), (&full[17..], 1.0)] {
+            for k in [0, 6, 7, 8, 9, 10, 16] {
+                let mut p = end[k];
+                if k == 0 || k == 16 {
+                    p[0] += sign * 4.0;
+                }
+                cut.push(p);
+            }
+        }
+        for cutout in [rounded, stadium([40.0, 25.0], 18.0, 7.0, 0.0, 3), ellipse, uneven, cut] {
+            let why = reason(&plate_with_cutout(cutout));
+            assert!(why.contains("not round") || why.contains("corners"), "{why}");
+        }
+    }
+
+    /// Ends faceted more finely below the axis than above it: the middle comes from the straight
+    /// sides, not the loop's centroid.
+    #[test]
+    fn unevenly_faceted_slot_ends() {
+        let full = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
+        // Every other corner above the axis left out, the straight sides' ends kept.
+        let uneven: Vec<P2> =
+            full.iter().enumerate().filter(|(i, p)| p[1] <= 25.0 || p[1] >= 28.5 - 1e-9 || i % 2 == 0).map(|(_, p)| *p).collect();
+        assert!(uneven.len() < full.len() - 6);
+        let (plate, _) = found(&plate_with_cutout(uneven));
+        assert_eq!(plate.slots, [SlotSpec { x: 40.0, y: 25.0, len: 18.0, w: 7.0, angle: 0.0 }]);
+    }
+
+    /// A slot's wall meshed in bands with one corner of a band folded into the slot is no wall:
+    /// the inner half of an end's circle lies inside the slot.
+    #[test]
+    #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
+    fn a_slot_wall_folded_inward_is_refused() {
+        let mesh = plate_with_cutout(stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16));
+        // Split every wall facet at Z = 3, then reflect the band corner of the right end's
+        // second rim corner across X = 49 (the end's centre).
+        let ring = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
+        let target = ring[1];
+        let banded = banded(&mesh, 0.0, [40.0, 25.0]);
+        let mut moved = 0;
+        let triangles = banded
+            .triangles
+            .iter()
+            .map(|t| {
+                t.map(|p| {
+                    if p[2] == 3.0 && (p[0] - target[0]).abs() < 1e-6 && (p[1] - target[1]).abs() < 1e-6 {
+                        moved += 1;
+                        [2.0 * 49.0 - p[0], p[1], p[2]]
+                    } else {
+                        p
+                    }
+                })
+            })
+            .collect();
+        assert!(moved > 0);
+        reason(&Mesh::new(triangles));
+    }
+
+    /// Top and bottom rims meshed apart, with eight facets per end on top and seven below: a
+    /// wall facet's edge across an end's tip still follows the end.
+    #[test]
+    fn slot_rims_meshed_apart() {
+        let outline = [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]];
+        let (top, bottom) = (stadium([40.0, 25.0], 18.0, 7.0, 0.0, 8), stadium([40.0, 25.0], 18.0, 7.0, 0.0, 7));
+        let mut t: Vec<crate::mesh::Triangle> = Vec::new();
+        let at = |p: P2, h: f64| [p[0], p[1], h];
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&top)) {
+            t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&bottom)) {
+            t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        for i in 0..4 {
+            let (a, b) = (outline[i], outline[(i + 1) % 4]);
+            t.extend([[at(a, 0.0), at(b, 0.0), at(b, 6.0)], [at(a, 0.0), at(b, 6.0), at(a, 6.0)]]);
+        }
+        // The slot's wall: walk both rims clockwise (as the top face's boundary runs), ordered
+        // by their angle about the middle, joining them by triangles as they advance.
+        let clockwise = |ring: &[P2]| -> Vec<P2> {
+            let turn = |p: &P2| (-(p[1] - 25.0).atan2(p[0] - 40.0)).rem_euclid(2.0 * PI);
+            let mut out: Vec<P2> = ring.to_vec();
+            out.sort_by(|a, b| turn(a).total_cmp(&turn(b)));
+            out
+        };
+        let (lower, upper) = (clockwise(&bottom), clockwise(&top));
+        let turn = |p: P2| (-(p[1] - 25.0).atan2(p[0] - 40.0)).rem_euclid(2.0 * PI);
+        let (nl, nu) = (lower.len(), upper.len());
+        let (mut i, mut j) = (0, 0);
+        while i < nl || j < nu {
+            let (l0, l1) = (lower[i % nl], lower[(i + 1) % nl]);
+            let (u0, u1) = (upper[j % nu], upper[(j + 1) % nu]);
+            let next_low = if i + 1 >= nl { 2.0 * PI + turn(lower[0]) } else { turn(l1) };
+            let next_up = if j + 1 >= nu { 2.0 * PI + turn(upper[0]) } else { turn(u1) };
+            if j >= nu || (i < nl && next_low <= next_up) {
+                t.push([at(l0, 0.0), at(l1, 0.0), at(u0, 6.0)]);
+                i += 1;
+            } else {
+                t.push([at(l0, 0.0), at(u1, 6.0), at(u0, 6.0)]);
+                j += 1;
+            }
+        }
+        let mesh = Mesh::new(t);
+        assert!(mesh.volume() > 0.0);
+        let (plate, _) = found(&mesh);
+        assert_eq!(plate.slots, [SlotSpec { x: 40.0, y: 25.0, len: 18.0, w: 7.0, angle: 0.0 }]);
+    }
+
+    /// Every facet of a slot's rim split in the middle: the new corners lie on the facets'
+    /// chords, not the circles, and the slot is the same.
+    #[test]
+    fn split_slot_facets() {
+        let ring = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
+        let n = ring.len();
+        let split: Vec<P2> = (0..n)
+            .flat_map(|i| [ring[i], [f64::midpoint(ring[i][0], ring[(i + 1) % n][0]), f64::midpoint(ring[i][1], ring[(i + 1) % n][1])]])
+            .collect();
+        let (plate, _) = found(&plate_with_cutout(split));
+        assert_eq!(plate.slots, [SlotSpec { x: 40.0, y: 25.0, len: 18.0, w: 7.0, angle: 0.0 }]);
+    }
+
+    /// A slot through the top face that does not reach the bottom face is no through slot.
+    #[test]
+    fn a_slot_must_go_through() {
+        let mut mesh = plate_with_cutout(stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16));
+        // Widen the slot's bottom loop by a tenth: still a slot, but the walls lean.
+        for t in &mut mesh.triangles {
+            for p in t.iter_mut() {
+                if p[2] == 0.0 && (p[1] - 25.0).abs() < 3.6 && (p[0] - 40.0).abs() < 12.6 {
+                    p[0] = 40.0 + (p[0] - 40.0) * 1.1;
+                    p[1] = 25.0 + (p[1] - 25.0) * 1.1;
+                }
+            }
+        }
+        let why = reason(&mesh);
+        assert!(why.contains("slot does not go straight through") || why.contains("faces differ"), "{why}");
     }
 
     /// A 60 x 40 x 8 plate exported from SolidCraft 0.45 with blind holes from the top (Ø6 x 4,
@@ -1949,6 +2340,7 @@ mod tests {
             y: 60.0,
             z: 8.0,
             holes: vec![HoleSpec { x: 30.0, y: 30.0, d: 10.0, head: None, blind: None }],
+            slots: vec![],
             outline_fillet_r: None,
         };
         let mut mesh = synth::plate(&expected, 16, [0.0; 3]);

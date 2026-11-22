@@ -33,6 +33,7 @@ fn plate() -> PlateSpec {
             HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None },
             HoleSpec { x: 60.0, y: 30.0, d: 4.5, head: None, blind: None },
         ],
+        slots: vec![],
         outline_fillet_r: Some(3.0),
     }
 }
@@ -46,6 +47,7 @@ fn bracket() -> ProfileSpec {
             HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None },
             HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None, blind: None },
         ],
+        slots: vec![],
         outline_fillet_r: Some(2.0),
     }
 }
@@ -68,12 +70,17 @@ fn patterns() -> PlateSpec {
         let snap = |v: f64| (v * 1000.0).round() / 1000.0;
         HoleSpec { x: snap(60.0 + 15.0 * a.cos()), y: snap(40.0 + 15.0 * a.sin()), d: 4.0, head: None, blind: None }
     }));
-    PlateSpec { x: 120.0, y: 80.0, z: 6.0, holes, outline_fillet_r: Some(4.0) }
+    PlateSpec { x: 120.0, y: 80.0, z: 6.0, holes, slots: vec![], outline_fillet_r: Some(4.0) }
 }
 
 /// The L in `l-inside-hole.stl`.
 fn inside_hole() -> ProfileSpec {
-    ProfileSpec { holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4, head: None, blind: None }], outline_fillet_r: Some(5.0), ..bracket() }
+    ProfileSpec {
+        holes: vec![HoleSpec { x: 16.0, y: 16.0, d: 0.4, head: None, blind: None }],
+        slots: vec![],
+        outline_fillet_r: Some(5.0),
+        ..bracket()
+    }
 }
 
 fn main() -> std::io::Result<()> {

@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "slots.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 10, "loss_report": {"summary": "A 80 x 50 x 8 mm plate with 1 hole and 3 slots"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 28497.522204}},
+    "tolerance": 1e-4
+  }
+}

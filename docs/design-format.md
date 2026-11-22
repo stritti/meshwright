@@ -36,12 +36,34 @@ to features (sketch dimensions) and are driven by an expression.
 | `type` | Key fields | Notes |
 |---|---|---|
 | `sketch` | `plane: {"type":"origin","name":"XY"}`, `sketch: {points, curves, constraints, counters}` | Point 0 is the fixed origin. Curves and constraints refer to points and curves by **index**. A `length` constraint names its model parameter in `param`. |
-| `extrude` | `sketch` (feature id), `profiles: {"type":"all"}`, `extent: {distance, convention:"total_distance", direction:"positive"}`, `operation: "new_body"` | `body_names` lists the body it creates. |
+| `extrude` | `sketch` (feature id), `profiles: {"type":"all"}`, `extent: {distance, convention:"total_distance", direction:"positive"}`, `operation: "new_body"` | `body_names` lists the body it creates. A cut through everything both ways from its sketch: `extent: {distance: "0", convention: "total_distance", direction: "symmetric", through_all: true}`, `operation: "cut"`. |
 | `hole` | `position` (numbers), `at` (three expressions), `direction`, `diameter`, `depth` (a blind hole's, from the face; through all without it), `hole: {"type":"simple"}`, `{"type":"counterbore", cb_diameter, cb_depth}` or `{"type":"countersink", cs_diameter, cs_angle}` | `at` follows parameters; `position` is the pick SolidCraft starts from. A hole whose counterbore or countersink is on the bottom face starts there with `direction: [0, 0, 1]`. `cs_angle` is the cone's full angle; a parameter in degrees drives it. |
 | `fillet` | `edge_names`, `edges` (one point per edge), `radius` | See below. |
 | `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions) | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
 | `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flat `x,y,z` positions and flat corner indices; `body_names` lists the bodies. |
+
+## Slot sketches
+
+A slot is drawn as SolidCraft's centre-point slot tool draws it: lines `l1` and `l2`, arcs `a1`
+and `a2` (`{"type": "arc", "c", "a", "b"}`, counter-clockwise from `a` to `b` about centre `c`,
+whose points are named `a1.center` and `a2.center`), and the construction line `l3` between the
+arc centres, with its midpoint `p5`. Its constraints:
+
+- four `tangent` (`a`, `b`: curve indices), `equal` (the two arcs), `midpoint` (`p`, `l`)
+- `length` of `l1` and `diameter` (`c`) of `a1`, each with a model parameter
+- `coincident` (`p`, `q`) of the midpoint with `p6`, a point placed by the position parameters: `{"id": "p6", "pos": [x, y], "fixed": true, "exprs": {"x": "slot_1_x", "y": "slot_1_y"}}`. A `distance_x` / `distance_y` dimension from the origin would not do: those are unsigned (the side is the one the point is drawn on, a negative `value` fails the sketch with "invalid value: dimension value -75"), so a slot could not be moved across the origin.
+- `angle` (`a`, `b`: curve indices, `value` in radians, its model parameter in degrees) between `l3` and the sketch's X axis. The axis is linked in as `l4`: two fixed points and a construction line carrying `"link": "j1"`, and `links: [{"id": "j1", "kind": "project", "source": {"type": "sketch_axis", "name": "x"}}]` on the sketch. Angles of 0 and 90 degrees work.
+
+The sketch's `counters` then include `"a": 2` and `"j": 1`.
+
+`slots.stl` (exported by SolidCraft: an 80 x 50 x 8 plate with a 20 x 6 slot along X, a 15 x 8
+one along Y, a 16 x 5 one at 30 degrees and an Ø5 hole) imports to 28,497.522 mm³, the volume
+SolidCraft measured for the part it exported. Changing every slot's sizes, moving two of them,
+turning one to 45 degrees and setting `base_t = 10` rebuilt without errors to 34,129.978 mm³, as
+computed; turning the slots to 20, 0 and 90 degrees kept the volume. The same part moved to
+negative coordinates, and moved so that a slot's middle lies on the origin, rebuilt as well, and
+a slot moved from X = 0 to X = -5 was there when the rebuilt part was exported and read again.
 
 Fields SolidCraft derives itself and that can be left out: `param_names`, `face_names`,
 `edge_refs`.
