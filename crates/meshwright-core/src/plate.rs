@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 
 use crate::mesh::{Mesh, Vec3, cross, length, sub};
-use crate::recognize::{Blind, HoleHead, HoleSpec, PlateSpec, ProfileSpec, Recognition, SlotSpec};
+use crate::recognize::{Blind, BossSpec, HoleHead, HoleSpec, PlateSpec, ProfileSpec, Recognition, SlotSpec};
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
 pub const MAX_VOLUME_ERROR: f64 = 0.01;
@@ -292,9 +292,184 @@ impl Stepped {
     }
 }
 
-/// Looks for a plate in `mesh`. `Err` carries the reason in the user's words.
-#[allow(clippy::too_many_lines)] // one recognition, its checks in order
+/// Looks for a plate in `mesh`, possibly with round bosses on its top face. `Err` carries the
+/// reason in the user's words.
 pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
+    let why = match recognize_prism(mesh) {
+        Ok(found) => return Ok(found),
+        Err(why) => why,
+    };
+    // Something may stand on the top face: the plate is then what lies below it, its top face
+    // closed over the bosses' footprints.
+    let Some((plate, found)) = strip_bosses(mesh)? else { return Err(why) };
+    let mut recognised = recognize_prism(&plate)?;
+    let (offset, top) = match &recognised {
+        Recognition::Plate { plate, offset } => (*offset, offset[2] + plate.z),
+        Recognition::Profile { profile, offset } => (*offset, offset[2] + profile.z),
+        Recognition::Unrecognized { .. } => return Err(why),
+    };
+    let mut bosses: Vec<BossSpec> = found
+        .iter()
+        .map(|b| BossSpec { x: snap(b.centre[0] - offset[0]), y: snap(b.centre[1] - offset[1]), d: snap(2.0 * b.r), h: snap(b.top - top) })
+        .collect();
+    bosses.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    let volume = match &mut recognised {
+        Recognition::Plate { plate, .. } => {
+            plate.bosses = bosses;
+            plate.volume()
+        }
+        Recognition::Profile { profile, .. } => {
+            profile.bosses = bosses;
+            profile.volume()
+        }
+        Recognition::Unrecognized { .. } => unreachable!("handled above"),
+    };
+    let error = (volume - mesh.volume()) / mesh.volume();
+    if error.abs() > MAX_VOLUME_ERROR {
+        return Err(format!("the rebuilt plate would differ from the mesh by {:.1}% in volume", error.abs() * 100.0));
+    }
+    Ok(recognised)
+}
+
+/// A round boss as found, in the file's coordinates: its axis, radius, the height of its top,
+/// its footprint loop in the plate's top face as meshed, and that loop without the corners an
+/// exporter may have added on its facets (the chords its wall follows).
+struct FoundBoss {
+    centre: P2,
+    r: f64,
+    top: f64,
+    footprint: Vec<P2>,
+    ring: Vec<P2>,
+}
+
+const NO_BOSS: &str = "something stands on the top face that is no straight round boss \
+                       (other shapes on the top face are not recognised yet)";
+
+/// The plate under round bosses: the mesh without what stands on its top face, that face closed
+/// over each boss's footprint, and the bosses. The top face is a flat face facing up, below the
+/// highest; each such face is tried, the largest first (a boss's top may be larger than what
+/// is left of the plate's). `Ok(None)`: nothing stands on round footprints in any of them.
+fn strip_bosses(mesh: &Mesh) -> Result<Option<(Mesh, Vec<FoundBoss>)>, String> {
+    let Some(bounds) = mesh.bounds() else { return Ok(None) };
+    let size = bounds.size();
+    let tol = tolerance(size[0].max(size[1]).max(size[2]));
+    let mut levels: Vec<(f64, f64)> = Vec::new();
+    for t in &mesh.triangles {
+        let (len, nz) = facing(t);
+        if let (true, Some(z)) = (nz > 0.5, level(t, tol)) {
+            match levels.iter_mut().find(|(at, _)| (at - z).abs() <= tol) {
+                Some((_, area)) => *area += len / 2.0,
+                None => levels.push((z, len / 2.0)),
+            }
+        }
+    }
+    levels.retain(|(z, _)| *z < bounds.max[2] - tol);
+    levels.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut refused = None;
+    for (top_z, _) in levels {
+        match strip_bosses_at(mesh, top_z, tol) {
+            Ok(Some(found)) => return Ok(Some(found)),
+            Ok(None) => {}
+            Err(why) => refused = refused.or(Some(why)),
+        }
+    }
+    refused.map_or(Ok(None), Err)
+}
+
+/// A facet's area (twice it) and how far its normal points up.
+fn facing(t: &crate::mesh::Triangle) -> (f64, f64) {
+    let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+    let len = length(n);
+    (len, if len > 0.0 { n[2] / len } else { 0.0 })
+}
+
+/// The height of a facet that lies flat, within `tol`.
+fn level(t: &crate::mesh::Triangle, tol: f64) -> Option<f64> {
+    let (lo, hi) = t.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| (lo.min(p[2]), hi.max(p[2])));
+    (hi - lo <= tol).then_some(f64::midpoint(lo, hi))
+}
+
+/// [`strip_bosses`] with the top face at `top_z`: a boss's footprint is a round loop in that
+/// face, its wall stands straight on that loop (within the facets' sagitta), and its top is one
+/// flat face.
+fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Option<(Mesh, Vec<FoundBoss>)>, String> {
+    let flat = |p: &Vec3| [p[0], p[1]];
+    let top: Vec<[P2; 3]> = mesh
+        .triangles
+        .iter()
+        .filter(|t| facing(t).1 > 0.5 && level(t, tol).is_some_and(|z| (z - top_z).abs() <= tol))
+        .map(|t| t.map(|p| flat(&p)))
+        .collect();
+    let Ok(loops) = boundary_loops(&top, tol) else { return Ok(None) };
+    let above = |p: &Vec3| p[2] > top_z + tol;
+    let upper: Vec<&crate::mesh::Triangle> = mesh.triangles.iter().filter(|t| t.iter().any(above)).collect();
+    let mut bosses = Vec::new();
+    for ring in loops.iter().filter(|l| signed_area(l) < 0.0) {
+        let Ok((_, (centre, r))) = round_hole(ring, tol) else { continue };
+        let on = |p: &Vec3| distance(flat(p), centre) <= r + tol;
+        if let Some(top) = upper.iter().flat_map(|t| t.iter()).filter(|p| on(p)).map(|p| p[2]).reduce(f64::max) {
+            // Its walls follow the loop's chords as meshed, before any exporter split them.
+            bosses.push(FoundBoss { centre, r, top, footprint: ring.clone(), ring: drop_collinear(ring, tol) });
+        }
+    }
+    if bosses.is_empty() {
+        return Ok(None);
+    }
+    // Everything above the top face belongs to one boss: a facet of its wall, every corner and
+    // every edge's middle on the wall (an edge two facets long at most), or of its flat top.
+    let mut tops = vec![0.0; bosses.len()];
+    for t in &upper {
+        let k = bosses.iter().position(|b| t.iter().all(|p| distance(flat(p), b.centre) <= b.r + tol)).ok_or(NO_BOSS)?;
+        let b = &bosses[k];
+        let (len, nz) = facing(t);
+        if nz > 0.5 {
+            if t.iter().any(|p| (p[2] - b.top).abs() > tol) {
+                return Err(NO_BOSS.into());
+            }
+            tops[k] += len / 2.0;
+        } else if nz < -0.5 {
+            return Err(NO_BOSS.into());
+        } else {
+            let slack = tol + 4.0 * sagitta(&b.ring, b.r);
+            let on_wall_3d = |p: Vec3, tol: f64| {
+                let r = distance(flat(&p), b.centre);
+                p[2] >= top_z - tol && p[2] <= b.top + tol && r <= b.r + tol && r >= b.r - tol.max(sagitta(&b.ring, b.r) + tol)
+            };
+            let corner_on = |p: &Vec3| on_wall(flat(p), b.centre, b.r, &b.ring, tol) && on_wall_3d(*p, tol);
+            let middle = |i: usize| {
+                let (p, q) = (t[i], t[(i + 1) % 3]);
+                [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])]
+            };
+            if !t.iter().all(corner_on) || !(0..3).all(|i| on_wall_3d(middle(i), slack)) {
+                return Err(NO_BOSS.into());
+            }
+        }
+    }
+    // Each top covers its footprint (the two may be meshed apart, with their own corners).
+    for (b, area) in bosses.iter().zip(&tops) {
+        if b.top - top_z <= tol || (area - signed_area(&b.ring).abs()).abs() > 1e-3 * area.max(tol) {
+            return Err(NO_BOSS.into());
+        }
+    }
+    let mut triangles: Vec<crate::mesh::Triangle> =
+        mesh.triangles.iter().filter(|t| t.iter().all(|p| p[2] <= top_z + tol)).copied().collect();
+    // Each footprint is closed by a fan from its centre over its corners as meshed, so that the
+    // top face's loop is joined edge for edge.
+    for b in &bosses {
+        let (c, n) = ([b.centre[0], b.centre[1], top_z], b.footprint.len());
+        for i in 0..n {
+            // The footprint runs clockwise (a hole in the top face): its fan, seen from above,
+            // runs the other way.
+            let (p, q) = (b.footprint[(i + 1) % n], b.footprint[i]);
+            triangles.push([c, [p[0], p[1], top_z], [q[0], q[1], top_z]]);
+        }
+    }
+    Ok(Some((Mesh::new(triangles), bosses)))
+}
+
+/// Looks for a plate in `mesh`: a prism over its top face, with holes and slots through it.
+#[allow(clippy::too_many_lines)] // one recognition, its checks in order
+fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     let bounds = mesh.bounds().ok_or("the mesh has no triangles")?;
     let size = bounds.size();
     let scale = size[0].max(size[1]).max(size[2]);
@@ -489,7 +664,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     let rectangle =
         corners.len() == 4 && box_corners.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol));
     let (found, volume) = if rectangle {
-        let plate = PlateSpec { x: snap(size[0]), y: snap(size[1]), z, holes, slots, outline_fillet_r };
+        let plate = PlateSpec { x: snap(size[0]), y: snap(size[1]), z, holes, bosses: vec![], slots, outline_fillet_r };
         let volume = plate.volume();
         (Recognition::Plate { plate, offset }, volume)
     } else {
@@ -498,7 +673,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
         corners.rotate_left(first.unwrap_or(0));
-        let profile = ProfileSpec { corners, z, holes, slots, outline_fillet_r };
+        let profile = ProfileSpec { corners, z, holes, bosses: vec![], slots, outline_fillet_r };
         let volume = profile.volume();
         (Recognition::Profile { profile, offset }, volume)
     };
@@ -1138,17 +1313,24 @@ fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
 /// the rounded angle.
 fn slot_shape(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometry)> {
     slot_fit(ring, tol).or_else(|| {
-        // An exporter may have split facets: a corner on the straight line between its
-        // neighbours is left out, and the slot fitted again (as for a round hole's rim).
-        let mut kept: Vec<P2> = Vec::with_capacity(ring.len());
-        for (i, p) in ring.iter().enumerate() {
-            let prev = kept.last().copied().unwrap_or(ring[ring.len() - 1]);
-            if segment_distance(*p, prev, ring[(i + 1) % ring.len()]) > tol / 4.0 {
-                kept.push(*p);
-            }
-        }
+        // An exporter may have split facets: the slot is fitted again without the corners they
+        // added (as a round hole's rim is).
+        let kept = drop_collinear(ring, tol);
         (kept.len() < ring.len()).then(|| slot_fit(&kept, tol)).flatten()
     })
+}
+
+/// The loop without corners on the straight line between their neighbours (within `tol / 4`),
+/// as an exporter that splits facets adds them.
+fn drop_collinear(ring: &[P2], tol: f64) -> Vec<P2> {
+    let mut kept: Vec<P2> = Vec::with_capacity(ring.len());
+    for (i, p) in ring.iter().enumerate() {
+        let prev = kept.last().copied().unwrap_or(ring[ring.len() - 1]);
+        if segment_distance(*p, prev, ring[(i + 1) % ring.len()]) > tol / 4.0 {
+            kept.push(*p);
+        }
+    }
+    kept
 }
 
 #[allow(clippy::many_single_char_names)] // the textbook symbols of the area moments
@@ -1304,6 +1486,7 @@ mod tests {
             y: 50.0,
             z: 5.0,
             holes: holes.iter().map(|&(x, y, d)| HoleSpec { x, y, d, head: None, blind: None }).collect(),
+            bosses: vec![],
             slots: vec![],
             outline_fillet_r: r,
         }
@@ -1318,6 +1501,7 @@ mod tests {
                 HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None },
                 HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None, blind: None },
             ],
+            bosses: vec![],
             slots: vec![],
             outline_fillet_r: r,
         }
@@ -1429,6 +1613,7 @@ mod tests {
             corners: vec![[0.0, 0.0], [50.0, 0.0], [60.0, 20.0], [25.0, 35.0], [0.0, 20.0]],
             z: 4.0,
             holes: vec![HoleSpec { x: 25.0, y: 15.0, d: 8.0, head: None, blind: None }],
+            bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(3.0),
         };
@@ -1442,7 +1627,7 @@ mod tests {
         // One facet per quarter circle is a 45° chamfer: an exact eight-sided outline.
         let (profile, _) = found_profile(&synth::plate(&spec(&[], Some(5.0)), 4, [0.0; 3]));
         let corners = vec![[5.0, 0.0], [75.0, 0.0], [80.0, 5.0], [80.0, 45.0], [75.0, 50.0], [5.0, 50.0], [0.0, 45.0], [0.0, 5.0]];
-        assert_eq!(profile, ProfileSpec { corners, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: None });
+        assert_eq!(profile, ProfileSpec { corners, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None });
     }
 
     #[test]
@@ -1568,7 +1753,7 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)] // the same corner, as the generator wrote it into every facet
     fn a_corner_out_of_its_arc_is_no_wall() {
-        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: Some(1.0) };
+        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(1.0) };
         let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
         // The band corner nearest the bottom-left arc's middle goes to the sharp corner (0, 0).
         let arc_middle = [1.0 - std::f64::consts::FRAC_1_SQRT_2, 1.0 - std::f64::consts::FRAC_1_SQRT_2, 2.5];
@@ -1639,7 +1824,7 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
     fn a_shifted_bottom_band_is_not_vertical() {
-        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: None };
+        let spec = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: None };
         let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
         // Shift the whole bottom 0.5 mm along X: the mesh stays closed, the faces keep their
         // areas and the volume stays that of a prism, so only the walls' bottom corners tell.
@@ -1780,7 +1965,7 @@ mod tests {
     /// Small rounds of many facets next to long sides, in single precision.
     #[test]
     fn small_fine_rounds() {
-        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: Some(0.5) };
+        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(0.5) };
         let mesh = crate::stl::parse(&crate::stl::write_binary(&synth::plate(&expected, 96, [0.0; 3]))).expect("round trip");
         assert_eq!(found(&mesh).0, expected);
     }
@@ -1805,7 +1990,7 @@ mod tests {
     /// Extra corners in the middle of the outline's facets (top and bottom alike) change nothing.
     #[test]
     fn subdivided_outline_facets() {
-        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: Some(3.0) };
+        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(3.0) };
         let outline = synth::rounded(&[[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]], Some(3.0), 32);
         let mut split = Vec::new();
         for i in 0..outline.len() {
@@ -1843,7 +2028,7 @@ mod tests {
     /// between the arcs, whose far corners lie within the tolerance of the circle.
     #[test]
     fn short_sides_between_large_rounds() {
-        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], slots: vec![], outline_fillet_r: Some(24.95) };
+        let expected = PlateSpec { x: 80.0, y: 50.0, z: 5.0, holes: vec![], bosses: vec![], slots: vec![], outline_fillet_r: Some(24.95) };
         assert_eq!(found(&synth::plate(&expected, 32, [0.0; 3])).0, expected);
     }
 
@@ -1857,6 +2042,104 @@ mod tests {
         let (plate, offset) = found(&reread);
         assert_eq!(offset, [4000.0, 4000.0, 0.0]);
         assert_eq!(plate.holes.len(), 2);
+    }
+
+    /// A 70 x 40 x 6 plate exported from SolidCraft 0.45 with an Ø10 x 5 and an Ø8 x 3 boss on
+    /// its top face and an Ø5 hole.
+    #[test]
+    fn recognises_bosses() {
+        let mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/bosses.stl")).expect("parses");
+        let (plate, _) = found(&mesh);
+        let boss = |x: f64, y: f64, d: f64, h: f64| BossSpec { x, y, d, h };
+        assert_eq!(plate.bosses, [boss(20.0, 20.0, 10.0, 5.0), boss(50.0, 25.0, 8.0, 3.0)]);
+        assert_eq!((plate.z, plate.holes.len()), (6.0, 1));
+        // SolidCraft measured 17,225.686 mm³ for the part it exported.
+        assert!((plate.volume() - 17_225.686).abs() < 0.001, "{}", plate.volume());
+    }
+
+    /// A 60 x 40 x 6 plate with a solid standing on its top face over the loop `foot` (`n`
+    /// corners): `walls` gives each corner of the foot its place on the solid's top, at height
+    /// `h` above the plate.
+    fn standing(foot: &[P2], top: &dyn Fn(P2) -> P2, h: f64) -> Mesh {
+        let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+        let at = |p: P2, z: f64| [p[0], p[1], z];
+        let mut t = Vec::new();
+        for [a, b, c] in synth::triangulate(&outline, &[foot.to_vec()]) {
+            t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, &[]) {
+            t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        for i in 0..4 {
+            let (a, b) = (outline[i], outline[(i + 1) % 4]);
+            t.extend([[at(a, 0.0), at(b, 0.0), at(b, 6.0)], [at(a, 0.0), at(b, 6.0), at(a, 6.0)]]);
+        }
+        let roof: Vec<P2> = foot.iter().map(|p| top(*p)).collect();
+        for [a, b, c] in synth::triangulate(&roof, &[]) {
+            t.push([at(a, 6.0 + h), at(b, 6.0 + h), at(c, 6.0 + h)]);
+        }
+        let n = foot.len();
+        for i in 0..n {
+            let (a, b) = (foot[i], foot[(i + 1) % n]);
+            let (c, d) = (roof[(i + 1) % n], roof[i]);
+            t.extend([[at(a, 6.0), at(b, 6.0), at(c, 6.0 + h)], [at(a, 6.0), at(c, 6.0 + h), at(d, 6.0 + h)]]);
+        }
+        Mesh::new(t)
+    }
+
+    fn circle(centre: P2, r: f64, n: usize) -> Vec<P2> {
+        (0..n).map(|i| 2.0 * PI * i as f64 / n as f64).map(|a| [centre[0] + r * a.cos(), centre[1] + r * a.sin()]).collect()
+    }
+
+    /// A straight round boss of a synthetic mesh; a drafted one, a twisted one, a square block
+    /// and a boss on a footprint that is not round are refused.
+    #[test]
+    fn bosses_must_be_straight_and_round() {
+        let foot = circle([20.0, 20.0], 5.0, 32);
+        let (plate, _) = found(&standing(&foot, &|p| p, 4.0));
+        assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0 }]);
+        let draft = |p: P2| [20.0 + (p[0] - 20.0) * 0.9, 20.0 + (p[1] - 20.0) * 0.9];
+        let (sin, cos) = (PI / 4.0).sin_cos();
+        let twist = |p: P2| [20.0 + (p[0] - 20.0) * cos - (p[1] - 20.0) * sin, 20.0 + (p[0] - 20.0) * sin + (p[1] - 20.0) * cos];
+        let block = [[15.0, 15.0], [25.0, 15.0], [25.0, 25.0], [15.0, 25.0]];
+        for mesh in [standing(&foot, &draft, 4.0), standing(&foot, &twist, 4.0), standing(&block, &|p| p, 4.0)] {
+            reason(&mesh);
+        }
+    }
+
+    /// A boss whose top is larger than what is left of the plate's top face.
+    #[test]
+    fn bosses_larger_than_the_plate_face() {
+        let outline = [[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]];
+        let foot = circle([20.0, 20.0], 17.0, 48);
+        let mut mesh = standing(&foot, &|p| p, 4.0);
+        // `standing` makes a 60 x 40 plate: cut it to 40 x 40 by rebuilding with that outline.
+        let at = |p: P2, z: f64| [p[0], p[1], z];
+        let mut t: Vec<crate::mesh::Triangle> = mesh.triangles.iter().filter(|t| t.iter().any(|p| p[2] > 6.0 + 1e-9)).copied().collect();
+        for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&foot)) {
+            t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+        }
+        for [a, b, c] in synth::triangulate(&outline, &[]) {
+            t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+        }
+        for i in 0..4 {
+            let (a, b) = (outline[i], outline[(i + 1) % 4]);
+            t.extend([[at(a, 0.0), at(b, 0.0), at(b, 6.0)], [at(a, 0.0), at(b, 6.0), at(a, 6.0)]]);
+        }
+        mesh = Mesh::new(t);
+        let (plate, _) = found(&mesh);
+        assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 34.0, h: 4.0 }]);
+    }
+
+    #[test]
+    fn split_boss_footprints() {
+        let foot = circle([20.0, 20.0], 5.0, 32);
+        let n = foot.len();
+        let split: Vec<P2> = (0..n)
+            .flat_map(|i| [foot[i], [f64::midpoint(foot[i][0], foot[(i + 1) % n][0]), f64::midpoint(foot[i][1], foot[(i + 1) % n][1])]])
+            .collect();
+        let (plate, _) = found(&standing(&split, &|p| p, 4.0));
+        assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0 }]);
     }
 
     /// An 80 x 50 x 8 plate exported from SolidCraft 0.45 with three slots (along X, along Y and
@@ -2340,6 +2623,7 @@ mod tests {
             y: 60.0,
             z: 8.0,
             holes: vec![HoleSpec { x: 30.0, y: 30.0, d: 10.0, head: None, blind: None }],
+            bosses: vec![],
             slots: vec![],
             outline_fillet_r: None,
         };

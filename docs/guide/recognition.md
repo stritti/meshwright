@@ -12,6 +12,7 @@
 | Three or more holes of one diameter equally spaced on a circle (a bolt circle) | `HoleCircle<n>` and `HoleCircle<n>Pattern` (a circular pattern about the circle's centre) | `hole_circle_<n>_n`, `_d`, `_r` (centre to hole), `_cx`, `_cy`, `_angle` (first hole, from +X) |
 | A round blind hole with a flat floor, drilled from the top or the bottom face | `Hole<n>` with a depth (drilled from that face) | `hole_<n>_d`, `hole_<n>_depth` (from that face) |
 | A straight slot through the plate (two round ends of one width), along X, Y or at any angle | `Slot<n>Sketch` (the slot on XY) and `Slot<n>` (a cut through everything) | `slot_<n>_len` (between the end centres), `_w`, the middle `_x`, `_y`, and `_angle` (of the long axis, from +X) |
+| A straight round boss standing on the top face | `Boss<n>` (a cylinder joined to the plate, on its top face) | `boss_<n>_d`, `boss_<n>_h` (above the top face), the centre `boss_<n>_x`, `boss_<n>_y` |
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 
@@ -31,7 +32,7 @@ These are kept as a mesh, with the reason in the report:
 - corners with different radii, or only some corners rounded
 - D-shaped and polygonal cut-outs, blind or slanted slots
 - corners rounded almost all the way along their sides
-- steps, pockets and bosses
+- steps and pockets, other shapes on the top face, and bosses with a draft, a round or a hole
 - blind holes with a drill point or a counterbore
 - parts standing upright or rotated
 
