@@ -38,6 +38,8 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
 4. The **Import report** follows: a summary, one line per kind of change, and everything in
    detail under *Details*. **Plugins › Last import report…** shows it again later.
 
+The plugin accepts STL files up to 8 MiB in `auto` mode and 32 MiB in `mesh` mode.
+
 A recognised part arrives as a timeline (sketch, extrusion, holes, fillet) with its sizes as
 parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. A
 part that is not recognised arrives as a mesh body, and the report says why. To try it, import
@@ -67,7 +69,8 @@ part that is not recognised arrives as a mesh body, and the report says why. To 
 The parameter names are mesh2cad's, and the part stays where it is in the file. STL files
 exported by SolidCraft itself, or by other tools that mesh walls in bands, are recognised too. Change
 `hole_row_1_n` or `hole_circle_1_r` and every hole of that pattern follows. A grid wins over a
-bolt circle (four corner holes are both), two holes are never a pattern, and a pattern with one
+bolt circle (four corner holes are both). A complete grid can also be found alongside one
+same-diameter hole that shares neither a row nor a column with it. Two holes are never a pattern, and a pattern with one
 hole missing or out of place stays single holes. A row's direction is fixed (mesh2cad's
 `hole_row_N_angle` is not a parameter, as a SolidCraft pattern direction is not an expression). A chamfered
 corner is simply one more straight side, so it comes over exactly. The rebuilt part must match

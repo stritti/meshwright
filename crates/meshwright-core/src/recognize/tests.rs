@@ -21,6 +21,21 @@ pub(crate) fn block(x: f64, y: f64, z: f64, at: [f64; 3]) -> Mesh {
 }
 
 #[test]
+fn translated_block_has_the_same_volume() {
+    let translated = block(100.0, 100.0, 5.0, [1e9; 3]);
+    assert!((translated.volume() - 50_000.0).abs() < 1e-6);
+}
+
+#[test]
+fn recognition_preserves_small_bottom_offset() {
+    let mesh = block(1000.0, 100.0, 5.0, [0.0, 0.0, 0.009]);
+    let Recognition::Plate { offset, .. } = recognize(&mesh) else {
+        panic!("expected plate");
+    };
+    assert!((offset[2] - 0.009).abs() < 1e-9);
+}
+
+#[test]
 fn block_volume_is_positive() {
     assert!((block(2.0, 3.0, 4.0, [0.0; 3]).volume() - 24.0).abs() < 1e-9);
 }

@@ -23,6 +23,7 @@ wit_bindgen::generate!({ path: "wit", world: "importer-plugin" });
 use craft::plugin::types::{FieldFailure, PluginError};
 use craft::plugin::{control, design, source};
 use exports::craft::plugin::importer::Guest;
+use meshwright_core::import::Mode;
 use meshwright_core::mesh::Mesh;
 use meshwright_core::stl::StlReader;
 use meshwright_core::{ImportOptions, import_mesh};
@@ -30,12 +31,22 @@ use meshwright_core::{ImportOptions, import_mesh};
 /// Largest read or write the host accepts in one call.
 const CHUNK: usize = 1 << 20;
 
+// Binary STL expands from 50 to 72 bytes per triangle. Mesh mode also needs the
+// read/write buffers, while auto recognition builds face and wall indexes and can
+// temporarily hold a second mesh. Keep a lower input ceiling for that mode.
+const AUTO_MAX_BYTES: u64 = 8 << 20;
+const MESH_MAX_BYTES: u64 = 32 << 20;
+
 struct Importer;
 
 impl Guest for Importer {
     fn import_file(_entry: String, file: source::FileInfo, options: String) -> Result<String, PluginError> {
         let options = ImportOptions::from_json(&options).map_err(|e| invalid("options", e))?;
-        let mesh = read_mesh(&file)?;
+        let max_bytes = match options.mode {
+            Mode::Auto => AUTO_MAX_BYTES,
+            Mode::Mesh => MESH_MAX_BYTES,
+        };
+        let mesh = read_mesh(&file, max_bytes)?;
         control::progress(0.5, "Recognising features");
         let result = import_mesh(mesh, &file.name, &options);
         control::progress(0.6, "Writing the design");
@@ -51,7 +62,7 @@ impl Guest for Importer {
 }
 
 /// Reads and parses the file being imported (path `""`) chunk by chunk.
-fn read_mesh(file: &source::FileInfo) -> Result<Mesh, PluginError> {
+fn read_mesh(file: &source::FileInfo, max_bytes: u64) -> Result<Mesh, PluginError> {
     let mut offset = 0u64;
     let mut reader: Option<StlReader> = None;
     while offset < file.size {
@@ -65,7 +76,7 @@ fn read_mesh(file: &source::FileInfo) -> Result<Mesh, PluginError> {
         let stl = match &mut reader {
             Some(stl) => stl,
             // The first chunk holds the header (1 MiB is far more than `StlReader::HEAD`).
-            None => reader.insert(StlReader::new(&chunk, file.size).map_err(|e| invalid("file", e))?),
+            None => reader.insert(StlReader::new_with_size_limit(&chunk, file.size, max_bytes).map_err(|e| invalid("file", e))?),
         };
         stl.push(&chunk).map_err(|e| invalid("file", e))?;
         offset += chunk.len() as u64;

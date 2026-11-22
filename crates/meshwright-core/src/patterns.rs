@@ -109,6 +109,10 @@ pub fn group_holes(holes: &[HoleSpec]) -> Vec<HoleGroup> {
         let d = holes[bucket[0]].d;
         if let Some(group) = grid(&centres, d).or_else(|| row(&centres, d)).or_else(|| circle(&centres, d)) {
             groups.push((bucket[0], group));
+        } else if let Some((extra, group)) = grid_with_outlier(&centres, d) {
+            let first_grid_hole = bucket[usize::from(extra == 0)];
+            groups.push((first_grid_hole, group));
+            groups.push((bucket[extra], HoleGroup::Single(holes[bucket[extra]].clone())));
         } else {
             groups.extend(bucket.into_iter().map(|i| (i, HoleGroup::Single(holes[i].clone()))));
         }
@@ -205,6 +209,25 @@ fn grid(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
         HoleGroup::Grid { nx, ny, pitch_x: snap_mm(pitch_x), pitch_y: snap_mm(pitch_y), d, x, y },
         HoleGroup::Grid { nx, ny, pitch_x, pitch_y, d, x, y },
     )
+}
+
+/// A grid with one isolated hole on neither of its coordinate axes. An extra hole
+/// aligned with the grid may instead be part of an incomplete row or column.
+fn grid_with_outlier(centres: &[[f64; 2]], d: f64) -> Option<(usize, HoleGroup)> {
+    let nx = levels(centres.iter().map(|c| c[0])).len();
+    let ny = levels(centres.iter().map(|c| c[1])).len();
+    if nx < 3 || ny < 3 || (nx - 1).checked_mul(ny - 1)? != centres.len() - 1 {
+        return None;
+    }
+    let mut candidates = centres.iter().enumerate().filter(|&(i, p)| {
+        centres.iter().enumerate().all(|(j, q)| i == j || ((p[0] - q[0]).abs() > TOLERANCE && (p[1] - q[1]).abs() > TOLERANCE))
+    });
+    let (extra, _) = candidates.next()?;
+    if candidates.next().is_some() {
+        return None;
+    }
+    let subset: Vec<_> = centres.iter().enumerate().filter_map(|(i, &p)| (i != extra).then_some(p)).collect();
+    grid(&subset, d).map(|group| (extra, group))
 }
 
 fn row(centres: &[[f64; 2]], d: f64) -> Option<HoleGroup> {
@@ -309,6 +332,13 @@ mod tests {
     fn a_square_is_a_grid_not_a_circle() {
         let found = group_holes(&holes(&[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0)], 3.0));
         assert!(matches!(found[..], [HoleGroup::Grid { nx: 2, ny: 2, .. }]), "{found:?}");
+    }
+
+    #[test]
+    fn finds_a_grid_with_an_extra_hole() {
+        let input = holes(&[(31.0, 35.0), (0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0)], 3.0);
+        let found = group_holes(&input);
+        assert!(matches!(found[..], [HoleGroup::Single(ref extra), HoleGroup::Grid { nx: 2, ny: 2, .. }] if extra == &input[0]));
     }
 
     #[test]
