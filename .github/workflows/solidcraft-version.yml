@@ -72,6 +72,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # persist the update token's credentials, so the later git push (which changes
+          # .github/workflows/ci.yml) authenticates with it, not with the default GITHUB_TOKEN
+          token: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN }}
       - name: Require an update token that can change workflow files
         env:
           TOKEN_PRESENT: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN != '' }}
