@@ -134,9 +134,11 @@ cargo xtask plugin-test        # runs plugin/revmesh/tests in SolidCraft (set SO
 
 ## Agent skills
 
-[`.agents/skills/`](.agents/skills/) holds [Agent Skills](https://agentskills.io) for professional
-WebAssembly-in-Rust development of SolidCraft plugins — skills-compatible agents (Vibe, Copilot,
-Codex, …) discover them automatically:
+The [Agent Skills](https://agentskills.io) for professional WebAssembly-in-Rust development of
+SolidCraft plugins are mirrored into the four well-known locations that skills-compatible agents
+scan: [`.agents/skills/`](.agents/skills/), `.github/skills/`, `.claude/skills/` and
+`.vibe/skills/` (identical copies — edit `.agents/skills/` and copy the change to the other
+three):
 
 | Skill | Use it when |
 |---|---|
