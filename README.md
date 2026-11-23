@@ -138,7 +138,7 @@ The [Agent Skills](https://agentskills.io) for professional WebAssembly-in-Rust 
 SolidCraft plugins are mirrored into the four well-known locations that skills-compatible agents
 scan: [`.agents/skills/`](.agents/skills/), `.github/skills/`, `.claude/skills/` and
 `.vibe/skills/` (identical copies — edit `.agents/skills/` and copy the change to the other
-three):
+three). [AGENTS.md](AGENTS.md) is the short orientation for agents working on this repo.
 
 | Skill | Use it when |
 |---|---|
