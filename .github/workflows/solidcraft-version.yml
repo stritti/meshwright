@@ -68,16 +68,20 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      # the update branch changes .github/workflows/ci.yml, which contents: write alone cannot push
-      workflows: write
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Require an update token that can change workflow files
+        env:
+          TOKEN_PRESENT: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN != '' }}
+        if: env.TOKEN_PRESENT != 'true'
+        run: |
+          echo "::error::Set the repository secret SOLIDCRAFT_UPDATE_TOKEN (fine-grained PAT or GitHub App token with contents: write, pull-requests: write, workflows: write). The default GITHUB_TOKEN cannot push the update branch, because it changes .github/workflows/ci.yml and the workflows scope cannot be granted from a workflow file's permissions key."
+          exit 1
       - name: Re-vendor the interface and bump all version references
         env:
-          # a PAT/GitHub App token is preferred: it can push workflow-file changes and its PR gets CI
-          GH_TOKEN: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN }}
           CURRENT: ${{ needs.check.outputs.current }}
           LATEST: ${{ needs.check.outputs.latest }}
         run: |
@@ -106,7 +110,7 @@ jobs:
         id: bump
       - name: Push branch and open the update PR
         env:
-          GH_TOKEN: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN }}
           LATEST: ${{ needs.check.outputs.latest }}
           CURRENT: ${{ needs.check.outputs.current }}
         run: |
