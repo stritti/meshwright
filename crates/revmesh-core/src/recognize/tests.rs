@@ -454,3 +454,74 @@ fn plate_design_matches_golden_file() {
     let golden = include_str!("../../tests/data/plate-with-hole.json");
     assert_eq!(actual.trim(), golden.trim(), "regenerate with `cargo run -p revmesh-core --example plate_design`");
 }
+
+/// On a Y extrusion the XZ plane's sketch y is -Z: the slot's middle point and the bolt circle's
+/// seed are placed by expressions in world parameters, and the second profile coordinate carries
+/// a minus sign there, so a rebuild lands where the numeric picks say. (On X and Z both profile
+/// signs are +1 and the expressions keep the plus.)
+#[test]
+fn y_extrusion_negates_the_second_profile_coordinate_in_expressions() {
+    let holes = |cx: f64, cy: f64| {
+        (0..4)
+            .map(|k| {
+                let a = std::f64::consts::FRAC_PI_2 * f64::from(k);
+                HoleSpec { x: cx + 12.0 * a.cos(), y: cy + 12.0 * a.sin(), d: 4.0, head: None, blind: None }
+            })
+            .collect::<Vec<_>>()
+    };
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]],
+        z: 50.0,
+        holes: holes(20.0, 15.0),
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![SlotSpec { x: 10.0, y: 8.0, len: 16.0, w: 5.0, angle: 30.0 }],
+        outline_fillet_r: None,
+    };
+    let at = [3.0, 11.0, -7.0];
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design_on("", at, Axis::Y).to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    // The slot's middle point: sketch (u, v) = (slot_1_x, -slot_1_z), placed at [13, 15].
+    let slot_sketch = features.iter().find(|f| f["name"] == "Slot1Sketch").expect("slot sketch");
+    let p6 = &slot_sketch["sketch"]["points"][8];
+    assert_eq!(p6["exprs"]["x"], "slot_1_x");
+    assert_eq!(p6["exprs"]["y"], "-slot_1_z");
+    assert_eq!(p6["pos"], serde_json::json!([13.0, 15.0]));
+    let param = |name: &str| {
+        json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"))
+    };
+    assert_eq!(param("slot_1_x"), Some("13 mm"));
+    assert_eq!(param("slot_1_z"), Some("-15 mm"));
+    // The bolt circle's seed: world (x, y, z) expressions, the z one with the minus sign.
+    let seed = features.iter().find(|f| f["name"] == "HoleCircle1").expect("circle seed");
+    assert_eq!(
+        seed["at"],
+        serde_json::json!([
+            "hole_circle_1_cx + hole_circle_1_r * cos(hole_circle_1_angle)",
+            "extrude_0 + extrude_len",
+            "hole_circle_1_cz - hole_circle_1_r * sin(hole_circle_1_angle)"
+        ])
+    );
+    assert_eq!(seed["position"], serde_json::json!([35.0, 61.0, -22.0]));
+    assert_eq!(param("hole_circle_1_cx"), Some("23 mm"));
+    assert_eq!(param("hole_circle_1_cz"), Some("-22 mm"));
+
+    // On X both profile signs are +1: the same expressions keep the plus.
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design_on("", [11.0, 3.0, 7.0], Axis::X).to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let seed = features.iter().find(|f| f["name"] == "HoleCircle1").expect("circle seed");
+    assert_eq!(
+        seed["at"],
+        serde_json::json!([
+            "extrude_0 + extrude_len",
+            "hole_circle_1_cy + hole_circle_1_r * cos(hole_circle_1_angle)",
+            "hole_circle_1_cz + hole_circle_1_r * sin(hole_circle_1_angle)"
+        ])
+    );
+    let slot_sketch = features.iter().find(|f| f["name"] == "Slot1Sketch").expect("slot sketch");
+    let p6 = &slot_sketch["sketch"]["points"][8];
+    assert_eq!(p6["exprs"]["x"], "slot_1_y");
+    assert_eq!(p6["exprs"]["y"], "slot_1_z");
+}

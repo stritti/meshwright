@@ -187,6 +187,14 @@ fn slot_params(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3, axis: Axis) 
     }
 }
 
+/// The expression placing a slot's middle in sketch coordinates on the axis's plane: the
+/// parameter named after the profile coordinate's world axis, negated where the plane's sketch
+/// axis runs against the world axis (the XZ plane's sketch y is -Z).
+fn sketch_pos_expr(p: &str, axis: Axis, i: usize) -> String {
+    let name = format!("{p}_{}", axis.profile_letter(i));
+    if axis.profile_sign(i) < 0.0 { format!("-{name}") } else { name }
+}
+
 /// A sketch of each slot on the profile plane, at its world profile coordinates for a part whose
 /// corner is at `at`, and a cut through everything both ways from it. The sketch's dimensions are
 /// model parameters driven by the slot's user parameters.
@@ -202,8 +210,8 @@ fn slot_features(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3, axis: Axis
         let dims = SlotDimensions {
             len: model(format!("{p}_len"), false),
             w: model(format!("{p}_w"), false),
-            x: format!("{p}_{}", axis.profile_letter(0)),
-            y: format!("{p}_{}", axis.profile_letter(1)),
+            x: sketch_pos_expr(&p, axis, 0),
+            y: sketch_pos_expr(&p, axis, 1),
             angle: Some(model(format!("{p}_angle"), true)),
         };
         let n = i + 1;
@@ -538,8 +546,13 @@ fn pattern_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, group: &HoleGroup
             let mut at_exprs = [const { String::new() }; 3];
             for (i, slot) in at_exprs.iter_mut().enumerate() {
                 *slot = match axis.profile_axes().iter().position(|&a| a == i) {
-                    Some(0) => format!("{p}_c{} + {p}_r * cos({p}_angle)", axis.profile_letter(0)),
-                    Some(1) => format!("{p}_c{} + {p}_r * sin({p}_angle)", axis.profile_letter(1)),
+                    Some(k) => {
+                        // The centre's parameter is a world coordinate; the radius's offset is
+                        // in profile coordinates, so it carries the profile sign (the second
+                        // profile coordinate maps to -Z on a Y extrusion).
+                        let trig = if k == 0 { ("cos", "+") } else { ("sin", if axis.profile_sign(k) < 0.0 { "-" } else { "+" }) };
+                        format!("{p}_c{} {} {p}_r * {}({p}_angle)", axis.profile_letter(k), trig.1, trig.0)
+                    }
                     _ => String::from(ctx.top),
                 };
             }
