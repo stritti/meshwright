@@ -68,13 +68,16 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # the update branch changes .github/workflows/ci.yml, which contents: write alone cannot push
+      workflows: write
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Re-vendor the interface and bump all version references
         env:
-          GH_TOKEN: ${{ github.token }}
+          # a PAT/GitHub App token is preferred: it can push workflow-file changes and its PR gets CI
+          GH_TOKEN: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN || github.token }}
           CURRENT: ${{ needs.check.outputs.current }}
           LATEST: ${{ needs.check.outputs.latest }}
         run: |
@@ -103,7 +106,7 @@ jobs:
         id: bump
       - name: Push branch and open the update PR
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN || github.token }}
           LATEST: ${{ needs.check.outputs.latest }}
           CURRENT: ${{ needs.check.outputs.current }}
         run: |

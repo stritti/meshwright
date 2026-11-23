@@ -53,6 +53,12 @@ fail that check, and when a newer release exists the workflow opens a dependabot
 (re-vendored `wit/plugin.wit` plus all version references). Dependabot itself cannot track another
 repo's release into a vendored file, which is why this is a workflow.
 
+The update PR is pushed and opened with the repo secret `SOLIDCRAFT_UPDATE_TOKEN` when set (a fine-grained
+PAT or GitHub App token with `contents: write`, `pull-requests: write` and `workflows: write`). The
+`workflows` scope is required because the update changes `.github/workflows/ci.yml`, and a non-`GITHUB_TOKEN`
+identity is needed so the new PR's CI actually runs. Without the secret the workflow falls back to
+`GITHUB_TOKEN` with `workflows: write` on the job.
+
 Guidelines:
 
 - **Keep the plugin crate thin.** Logic belongs in `revmesh-core`, where it can be tested
