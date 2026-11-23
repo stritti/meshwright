@@ -6,5 +6,8 @@
         "repo": "obra/superpowers-marketplace"
       }
     }
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true
   }
 }
