@@ -30,6 +30,17 @@ For end-to-end tests install SolidCraft and point `SOLIDCRAFT_CLI` at its `solid
 SOLIDCRAFT_CLI=/path/to/solidcraft-cli cargo xtask plugin-test
 ```
 
+### Agent skills
+
+`.claude/settings.json` registers [obra/superpowers-marketplace](https://github.com/obra/superpowers-marketplace)
+as a known plugin marketplace and enables its `superpowers` plugin (`enabledPlugins`), so Claude Code
+installs the skills automatically once the project folder is trusted. More plugins from the marketplace
+can be installed manually:
+
+```sh
+/plugin install <plugin>@superpowers-marketplace
+```
+
 ## Before you open a pull request
 
 CI runs these gates; run them locally first:
