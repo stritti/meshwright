@@ -462,7 +462,8 @@ pub(super) fn recognition(
         corners.rotate_left(first.unwrap_or(0));
         let profile = ProfileSpec { corners, z, holes, slots, pads: vec![], pockets, bosses: vec![], cutouts, outline_fillet_r };
         let volume = profile.volume();
-        (Recognition::Profile { profile, offset }, volume)
+        // The pipeline runs in a frame where the extrusion axis is Z.
+        (Recognition::Profile { profile, offset, axis: crate::recognize::Axis::Z }, volume)
     };
     let error = (volume - mesh_volume) / mesh_volume;
     if error.abs() > MAX_VOLUME_ERROR {

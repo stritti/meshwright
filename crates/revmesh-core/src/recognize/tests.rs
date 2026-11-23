@@ -1,9 +1,10 @@
 use super::spec::{BossSpec, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
-use super::{Recognition, recognize};
+use super::{Axis, Recognition, recognize};
 
 use crate::design::Design;
 use crate::mesh::Mesh;
 use crate::mesh::tests::tetrahedron;
+use crate::synth;
 
 /// A closed, outward-facing box from the origin to `(x, y, z)`, offset by `at`.
 pub(crate) fn block(x: f64, y: f64, z: f64, at: [f64; 3]) -> Mesh {
@@ -326,6 +327,110 @@ fn profile_fillet_comes_before_the_holes() {
 #[test]
 fn leaves_tetrahedron_alone() {
     assert!(matches!(recognize(&tetrahedron(10.0)), Recognition::Unrecognized { .. }));
+}
+
+/// A box is a prism along all three axes; Z is tried first, so it keeps mesh2cad's `base_*`
+/// plate whatever way round it lies.
+#[test]
+fn box_long_in_x_stays_a_z_plate() {
+    let found = recognize(&block(60.0, 10.0, 10.0, [0.0; 3]));
+    let Recognition::Plate { plate, offset } = found else { panic!("not a plate: {found:?}") };
+    assert_eq!((plate.x, plate.y, plate.z, offset), (60.0, 10.0, 10.0, [0.0; 3]));
+}
+
+/// A plate extruded along X (the mesh rotated by `(x, y, z) -> (y, z, x)`) is recognised as an
+/// outline on the YZ plane: a profile with axis X, the rectangle's corners as its outline
+/// (mesh2cad's extrusion module writes it so, not as a `base_*` plate), the hole's position
+/// parameters named after the world axes Y and Z, and the design sketched on `YZ`, extruded
+/// along +X and moved where the part is.
+#[test]
+fn x_extruded_plate_becomes_a_yz_profile() {
+    let spec = PlateSpec {
+        x: 40.0,
+        y: 20.0,
+        z: 60.0,
+        holes: vec![HoleSpec { x: 10.0, y: 5.0, d: 6.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_r: None,
+    };
+    let mesh = Axis::X.unrotate_mesh(&synth::plate(&spec, 32, [3.0, 7.0, 11.0]));
+    let Recognition::Profile { profile, offset, axis } = recognize(&mesh) else { panic!("not recognised: {:?}", recognize(&mesh)) };
+    assert_eq!(axis, Axis::X);
+    // The profile's corner lies at the part's corner the rotation mapped to the origin's frame.
+    assert_eq!(offset, [11.0, 3.0, 7.0]);
+    assert_eq!(profile.corners, [[0.0, 0.0], [40.0, 0.0], [40.0, 20.0], [0.0, 20.0]]);
+    assert_eq!(profile.z, 60.0);
+    assert_eq!(profile.holes, [HoleSpec { x: 10.0, y: 5.0, d: 6.0, head: None, blind: None }]);
+    // The mesh's faceted hole differs from the true circle by the smoothing the report notes.
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 1e-3);
+
+    let json: serde_json::Value = serde_json::from_str(&profile.to_design_on("", offset, axis).to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    assert_eq!(features[0]["plane"]["name"], "YZ");
+    assert_eq!(features[1]["extent"]["direction"], "positive");
+    assert_eq!(features[2]["translate"], serde_json::json!(["extrude_0", "3", "7"]));
+    let param = |name: &str| {
+        json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"))
+    };
+    assert_eq!(param("extrude_len"), Some("60 mm"));
+    assert_eq!(param("extrude_0"), Some("11 mm"));
+    assert_eq!(param("hole_1_y"), Some("13 mm"));
+    assert_eq!(param("hole_1_z"), Some("12 mm"));
+    assert_eq!(param("hole_1_d"), Some("6 mm"));
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("a hole");
+    assert_eq!(hole["direction"], serde_json::json!([-1.0, 0.0, 0.0]));
+    assert_eq!(hole["at"], serde_json::json!(["extrude_0 + extrude_len", "hole_1_y", "hole_1_z"]));
+    assert_eq!(hole["position"], serde_json::json!([71.0, 13.0, 12.0]));
+}
+
+/// A profile extruded along Y is sketched on the XZ plane (whose sketch y is -Z), extruded along
+/// +Y, and its hole's parameters are named `hole_1_x` and `hole_1_z` in world coordinates.
+#[test]
+fn y_extruded_profile_uses_the_xz_plane() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 10.0], [10.0, 10.0], [10.0, 25.0], [0.0, 25.0]],
+        z: 50.0,
+        holes: vec![HoleSpec { x: 5.0, y: 20.0, d: 4.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_r: Some(2.0),
+    };
+    let mesh = Axis::Y.unrotate_mesh(&synth::profile(&spec, 32, [3.0, 7.0, 11.0]));
+    let Recognition::Profile { profile, offset, axis } = recognize(&mesh) else { panic!("not recognised: {:?}", recognize(&mesh)) };
+    assert_eq!(axis, Axis::Y);
+    // The profile's corner lies at the part's (min x, min y, max z).
+    assert_eq!(offset, [3.0, 11.0, -7.0]);
+    assert_eq!(profile.corners, spec.corners);
+    assert_eq!(profile.z, 50.0);
+    assert_eq!(profile.holes, spec.holes);
+    assert_eq!(profile.outline_fillet_r, Some(2.0));
+
+    let json: serde_json::Value = serde_json::from_str(&profile.to_design_on("", offset, axis).to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    assert_eq!(features[0]["plane"]["name"], "XZ");
+    assert_eq!(features[2]["translate"], serde_json::json!(["3", "extrude_0", "-7"]));
+    let param = |name: &str| {
+        json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"))
+    };
+    assert_eq!(param("extrude_0"), Some("11 mm"));
+    assert_eq!(param("hole_1_x"), Some("8 mm"));
+    assert_eq!(param("hole_1_z"), Some("-27 mm"));
+    assert_eq!(param("outline_fillet_r"), Some("2 mm"));
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("a hole");
+    assert_eq!(hole["direction"], serde_json::json!([0.0, -1.0, 0.0]));
+    assert_eq!(hole["at"], serde_json::json!(["hole_1_x", "extrude_0 + extrude_len", "hole_1_z"]));
+    assert_eq!(hole["position"], serde_json::json!([8.0, 61.0, -27.0]));
+    // The fillet's edge picks are the corners' world points at mid-depth along Y.
+    let fillet = features.iter().find(|f| f["type"] == "fillet").expect("a fillet");
+    assert_eq!(fillet["edges"][0], serde_json::json!([3.0, 36.0, -7.0]));
+    assert_eq!(fillet["edge_names"][0], "F2:side:l1|F2:side:l6");
 }
 
 /// The design the spike opened in SolidCraft 0.47: a plate with a centred hole and rounded

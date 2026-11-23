@@ -17,9 +17,10 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
 
 > **Status: early.** The plugin pipeline works end to end: STL in, design out, tested in
 > SolidCraft 0.47. Recognition finds plates: any outline of straight sides (rectangles,
-> L-shapes, brackets, chamfered or slanted sides) extruded along Z, its vertical corners sharp
-> or all rounded with one radius, with round through holes. Everything else is imported as a
-> mesh body, with the reason in the import report. See the [roadmap](#roadmap).
+> L-shapes, brackets, chamfered or slanted sides) extruded along Z — or along X or Y, a part
+> standing upright —, its corners parallel to that axis sharp or all rounded with one radius,
+> with round through holes. Everything else is imported as a mesh body, with the reason in the
+> import report. See the [roadmap](#roadmap).
 
 ## Install
 
@@ -51,6 +52,7 @@ part that is not recognised arrives as a mesh body, and the report says why. To 
 |---|---|---|
 | A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY), `Extrude1` and `Move1` (to where the plate is) | `base_x`, `base_y`, `base_t`; the centre `base_cx`, `base_cy` and the bottom `base_z0` |
 | A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical), `Extrude1` and `Move1` | `extrude_len` (thickness), `extrude_0` (bottom) |
+| Any of those outlines extruded along X or Y (a part standing upright) | `Sketch1` on the YZ or XZ plane (the profile's coordinates are the sketch coordinates there), `Extrude1` along that axis, `Move1` | `extrude_len`, `extrude_0` (along the axis); the holes' and slots' positions named after the profile plane's world axes, e.g. `hole_1_y`, `hole_1_z` on an X extrusion |
 | Round vertical through holes (8 or more facets going evenly round the circle) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y` (where the hole is in the file), `hole_<n>_d` |
 | A counterbored through hole, its counterbore on the top or the bottom face | `Hole<n>` of type counterbore (drilled from that face) | `hole_<n>_d`, `hole_<n>_cbore_d`, `hole_<n>_cbore_depth` (from that face) |
 | A countersunk through hole, on the top or the bottom face | `Hole<n>` of type countersink | `hole_<n>_d`, `hole_<n>_csk_d` (at the face), `hole_<n>_csk_angle` (the cone's full angle) |
@@ -66,7 +68,14 @@ part that is not recognised arrives as a mesh body, and the report says why. To 
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 
-The parameter names are mesh2cad's, and the part stays where it is in the file. STL files
+The parameter names are mesh2cad's, and the part stays where it is in the file. Like mesh2cad,
+which tries a prism along X, Y and Z, revmesh recognises an outline extruded along any of them:
+Z first (a box is a prism along all three, and along Z it keeps mesh2cad's `base_*` names), then
+X, then Y; an outline along X or Y is written as `extrude_len`, `extrude_0` and the outline's
+corners, the way mesh2cad's extrusion module writes it. Its profile lies in the plane
+perpendicular to the axis (X: y and z, Y: x and z, Z: x and y), and SolidCraft's YZ and XZ planes
+sketch it directly (XZ's sketch y is -Z, so on a Y extrusion a slot's angle runs from +X towards
+-Z). STL files
 exported by SolidCraft itself, or by other tools that mesh walls in bands, are recognised too. Change
 `hole_row_1_n` or `hole_circle_1_r` and every hole of that pattern follows. A grid wins over a
 bolt circle (four corner holes are both). A complete grid can also be found alongside one
@@ -79,8 +88,8 @@ volume changed because round facets became true circles. Not recognised yet (kep
 reason): curved sides and round outlines, corners with different radii or only some rounded,
 D-shaped and other curved cut-outs, blind or slanted slots, corners rounded almost all the way along their sides,
 steps, pockets other than rectangles, bosses with a draft, a round or a hole, other shapes on the top face, blind holes with a drill
-point or a counterbore, and parts standing upright
-or rotated. Blind holes, like counterbored and countersunk ones, stay single holes, not patterns.
+point or a counterbore, and parts rotated off X, Y and Z. Blind holes, like counterbored and
+countersunk ones, stay single holes, not patterns.
 
 ## How it works
 
@@ -126,7 +135,7 @@ cargo xtask plugin-test        # runs plugin/revmesh/tests in SolidCraft (set SO
       and the part kept where it is in the file;
    2. (done) hole rows, grids and bolt circles as SolidCraft patterns;
    3. (done) counterbored and countersunk holes; 4. (done) blind holes; 5. (done) slots; 6. (done) bosses on the top face;
-   7. (done) polygonal cut-outs; 8. (done) pads and pockets; 9. extrusions along X and Y;
+   7. (done) polygonal cut-outs; 8. (done) pads and pockets; 9. (done) extrusions along X and Y;
    10. boxes with every edge rounded, holes and bosses on side faces; 11. chamfers, drafts
    and the rounds at a boss's foot or a hole's rim; 12. combined extrusions.
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate`

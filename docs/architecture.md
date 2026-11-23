@@ -19,7 +19,8 @@ crates/
   revmesh-core/     host-independent: STL → Mesh → Recognition → Design + LossReport
     src/stl.rs         binary and ASCII STL
     src/mesh.rs        triangle soup, bounds, volume, area
-    src/recognize/     what recognition finds (`Recognition`), the specs (spec.rs) and
+    src/recognize/     what recognition finds (`Recognition`), the extrusion axis and the
+                       rotations that align it with Z (axis.rs), the specs (spec.rs) and
                        PlateSpec/ProfileSpec → Design (to_design.rs)
     src/plate/         the plate recogniser, one file per concern: mod.rs (entry point, shared
                        constants), geometry.rs (2D measurements), faces.rs and walls.rs (face
@@ -63,6 +64,12 @@ xtask/                 component wrapping, packaging, plugin tests
   `plugin/revmesh/tests/solidcraft-l-bracket.stl` is such an export.
 - **Deterministic numerics.** No threads and no system randomness in the sandbox: algorithms
   such as RANSAC use a fixed seed.
+- **One pipeline, three axes.** Like mesh2cad, which tries a prism along X, Y and Z, `recognize`
+  tries each axis in turn: the mesh is rotated by a proper rotation (so volumes and windings
+  survive) into a frame where the axis is +Z, the Z pipeline runs unchanged, and the result is
+  rotated back. Z is tried first, so a box keeps the `base_*` plate. The profile's coordinates in
+  that frame are exactly the sketch coordinates on SolidCraft's matching origin plane (YZ: y, z;
+  XZ: x, -z; XY: x, y), so the design writer only has to pick the plane and map directions.
 
 ## Limits inside SolidCraft
 

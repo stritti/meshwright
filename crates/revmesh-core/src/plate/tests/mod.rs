@@ -57,7 +57,7 @@ fn found(mesh: &Mesh) -> (PlateSpec, Vec3) {
 
 fn found_profile(mesh: &Mesh) -> (ProfileSpec, Vec3) {
     match recognize(mesh) {
-        Recognition::Profile { profile, offset } => (profile, offset),
+        Recognition::Profile { profile, offset, .. } => (profile, offset),
         other => panic!("not recognised as a profile: {other:?}"),
     }
 }

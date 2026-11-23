@@ -176,6 +176,24 @@ impl HoleSpec {
 }
 
 impl PlateSpec {
+    /// The same plate as an outline: `extrude_len` thick with its four corners as the outline,
+    /// the way mesh2cad's extrusion module writes a rectangle extruded along X or Y (its box
+    /// vocabulary is a Z extrusion's).
+    #[must_use]
+    pub fn into_profile(self) -> ProfileSpec {
+        ProfileSpec {
+            corners: vec![[0.0, 0.0], [self.x, 0.0], [self.x, self.y], [0.0, self.y]],
+            z: self.z,
+            holes: self.holes,
+            slots: self.slots,
+            bosses: self.bosses,
+            pads: self.pads,
+            pockets: self.pockets,
+            cutouts: self.cutouts,
+            outline_fillet_r: self.outline_fillet_r,
+        }
+    }
+
     /// One line describing the plate, for the loss report.
     #[must_use]
     pub fn describe(&self) -> String {

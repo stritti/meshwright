@@ -2,7 +2,7 @@ use crate::mesh::{Mesh, cross, sub};
 use crate::plate::P2;
 use crate::plate::geometry::distance;
 use crate::plate::walls::Walls;
-use crate::recognize::{HoleSpec, PlateSpec};
+use crate::recognize::{Axis, HoleSpec, PlateSpec, Recognition, recognize};
 use crate::synth;
 
 use super::{banded, found, reason, spec};
@@ -89,7 +89,10 @@ fn sheared(outline: &[P2], holes: &[Vec<P2>], z: f64, shift_outline: P2, shift_h
     Mesh::new(t)
 }
 
-/// Shearing keeps the faces' areas and the volume of a prism, so only the walls tell.
+/// Shearing keeps the faces' areas and the volume of a prism, so only the walls tell. A hole
+/// slanted by the shear goes through no face straight, and stays a mesh. A block sheared in X
+/// over Z is still a straight prism along Y (its XZ cross-section does not change), so it is
+/// recognised along Y with the parallelogram as its outline.
 #[test]
 #[allow(clippy::float_cmp)] // corners compared as the generator wrote them
 fn sheared_walls_are_not_vertical() {
@@ -99,8 +102,13 @@ fn sheared_walls_are_not_vertical() {
     let why = reason(&leaning_hole);
     assert!(why.contains("not vertical") || why.contains("straight through"), "{why}");
     let leaning_block = sheared(&outline, &[], 5.0, [0.5, 0.0], [0.0; 2]);
-    let why = reason(&leaning_block);
-    assert!(why.contains("not vertical") || why.contains("faces differ"), "{why}");
+    let Recognition::Profile { profile, offset, axis } = recognize(&leaning_block) else {
+        panic!("not recognised: {:?}", recognize(&leaning_block))
+    };
+    assert_eq!(axis, Axis::Y);
+    assert_eq!(profile.corners, [[0.0, 0.0], [80.0, 0.0], [80.5, 5.0], [0.5, 5.0]]);
+    assert_eq!(profile.z, 50.0);
+    assert_eq!(offset, [0.0, 0.0, 5.0]);
 }
 
 /// A banded wall whose bottom band is shifted: the band corners lie on the wall, the bottom
