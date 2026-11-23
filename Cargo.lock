@@ -170,7 +170,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "meshwright-core"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "meshwright-plugin"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "meshwright-core",
  "wit-bindgen",
@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "serde_json",
  "wit-component 0.263.0",

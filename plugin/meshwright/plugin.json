@@ -1,7 +1,7 @@
 {
   "id": "meshwright",
   "name": "meshwright",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Opens STL meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history.",
   "capabilities": [
     "formats@0.2"
