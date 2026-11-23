@@ -132,6 +132,24 @@ cargo xtask plugin-test        # runs plugin/revmesh/tests in SolidCraft (set SO
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate`
    (volume and deviation), as mesh2cad does with CadQuery.
 
+## Agent skills
+
+The [Agent Skills](https://agentskills.io) for professional WebAssembly-in-Rust development of
+SolidCraft plugins are mirrored into the four well-known locations that skills-compatible agents
+scan: [`.agents/skills/`](.agents/skills/), `.github/skills/`, `.claude/skills/` and
+`.vibe/skills/` (identical copies — edit `.agents/skills/` and copy the change to the other
+three). [AGENTS.md](AGENTS.md) is the short orientation for agents working on this repo.
+
+| Skill | Use it when |
+|---|---|
+| [`solidcraft-plugin-scaffold`](.agents/skills/solidcraft-plugin-scaffold/SKILL.md) | creating a plugin crate, manifest or xtask wiring |
+| [`solidcraft-wit-worlds`](.agents/skills/solidcraft-wit-worlds/SKILL.md) | choosing a `craft:plugin` world, capability or `plugin-error` variant |
+| [`solidcraft-wasm-build`](.agents/skills/solidcraft-wasm-build/SKILL.md) | building, wrapping, packaging or shrinking the component |
+| [`solidcraft-wasm-limits`](.agents/skills/solidcraft-wasm-limits/SKILL.md) | working within memory/fuel/deadline limits and streaming large files |
+| [`solidcraft-host-calls`](.agents/skills/solidcraft-host-calls/SKILL.md) | calling host interfaces and mapping errors |
+| [`solidcraft-importer-workflow`](.agents/skills/solidcraft-importer-workflow/SKILL.md) | implementing an importer slot end to end |
+| [`solidcraft-plugin-testing`](.agents/skills/solidcraft-plugin-testing/SKILL.md) | adding unit, golden, eval or plugin-test coverage |
+
 ## Contributing
 
 Contributions are very welcome: bug reports, STL files that import badly, recognisers, docs.
