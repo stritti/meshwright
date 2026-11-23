@@ -18,6 +18,7 @@
 //! Parts of the recognition are ported from [mesh2cad](https://github.com/emirmrkaljevic/mesh2cad)
 //! (MIT licensed); see `NOTICE` at the repository root.
 
+pub mod check;
 pub mod design;
 pub mod import;
 pub mod mesh;

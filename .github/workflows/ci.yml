@@ -121,6 +121,7 @@ jobs:
           tar xzf "$RUNNER_TEMP/solidcraft.tar.gz" -C "$RUNNER_TEMP"
           echo "SOLIDCRAFT_CLI=$RUNNER_TEMP/solidcraft-$SOLIDCRAFT_VERSION-linux-x86_64/bin/solidcraft-cli" >> "$GITHUB_ENV"
       - run: cargo xtask plugin-test
+      - run: cargo xtask check
 
   coverage:
     name: coverage

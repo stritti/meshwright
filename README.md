@@ -122,6 +122,7 @@ cargo test                     # unit tests of the core, natively
 cargo xtask component          # builds plugin/revmesh/revmesh.wasm
 cargo xtask dist               # target/dist/revmesh-<version>.zip
 cargo xtask plugin-test        # runs plugin/revmesh/tests in SolidCraft (set SOLIDCRAFT_CLI)
+cargo xtask check              # checks every rebuild against its source mesh (volume + deviation)
 ```
 
 ## Roadmap
@@ -138,8 +139,9 @@ cargo xtask plugin-test        # runs plugin/revmesh/tests in SolidCraft (set SO
    7. (done) polygonal cut-outs; 8. (done) pads and pockets; 9. (done) extrusions along X and Y;
    10. boxes with every edge rounded, holes and bosses on side faces; 11. chamfers, drafts
    and the rounds at a boss's foot or a hole's rim; 12. combined extrusions.
-4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate`
-   (volume and deviation), as mesh2cad does with CadQuery.
+4. **Checking** (done): `cargo xtask check` compares the rebuilt part with the mesh through
+   SolidCraft's `eval` (feature errors, volume) and an STL re-export (surface deviation,
+   Hausdorff), with mesh2cad's gate, as mesh2cad checks its scripts with CadQuery.
 
 ## Agent skills
 

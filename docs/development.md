@@ -10,7 +10,13 @@ cargo run -q -p revmesh-core --example params -- part.stl --design part.json   #
 `part.json` opens in SolidCraft (File › Open) and can be measured headless with
 `solidcraft-cli eval part.json`; `solidcraft-cli eval script.json --in part.json` measures it
 after a script of `parameters.change` commands, which is how a new feature type is checked to
-rebuild when its parameters change.
+rebuild when its parameters change. `solidcraft-cli run --in part.json --out rebuilt.stl` exports
+the rebuilt part.
+
+`cargo xtask check` does all of that for every fixture in `plugin/revmesh/tests` and compares the
+rebuilt part with the source mesh: `solidcraft-cli eval` for feature errors and volume, the
+re-export for the surface deviation (Hausdorff, `check.rs`), gated as mesh2cad gates its scripts
+(see `docs/architecture.md`, testing level 3).
 
 ## Comparing with mesh2cad
 

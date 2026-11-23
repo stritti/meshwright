@@ -7,6 +7,10 @@
 //! - `plugin-test`: `component`, then runs `solidcraft-cli plugin test --require-cases` on the
 //!   package. The CLI is taken from `$SOLIDCRAFT_CLI`, else from `PATH`, else from the default
 //!   Windows install (`C:\Program Files\SolidCraft`, also found from WSL).
+//! - `check`: imports every `plugin/revmesh/tests/*.stl`, and checks the rebuild against the
+//!   source mesh through SolidCraft (`solidcraft-cli eval` for feature errors and volume,
+//!   `run --out` to export the rebuilt part), measuring the volume error and the surface
+//!   deviation with mesh2cad's gate. Takes the CLI as `plugin-test` does.
 
 use std::fs;
 use std::io::Write as _;
@@ -24,8 +28,9 @@ fn main() -> ExitCode {
         "component" => component(&root).map(|path| println!("component: {}", path.display())),
         "dist" => component(&root).and_then(|_| dist(&root)).map(|path| println!("package: {}", path.display())),
         "plugin-test" => component(&root).and_then(|_| plugin_test(&root)),
+        "check" => check(&root),
         _ => {
-            eprintln!("usage: cargo xtask <component|dist|plugin-test>");
+            eprintln!("usage: cargo xtask <component|dist|plugin-test|check>");
             return ExitCode::from(2);
         }
     };
@@ -86,13 +91,19 @@ fn dist(root: &Path) -> Result<PathBuf, String> {
 
 /// Runs SolidCraft's own plugin test runner on the package folder.
 fn plugin_test(root: &Path) -> Result<(), String> {
-    let cli = std::env::var("SOLIDCRAFT_CLI").unwrap_or_else(|_| default_cli());
+    let cli = cli_path();
     let status = Command::new(&cli)
         .current_dir(root.join("plugin"))
         .args(["plugin", "test", "--require-cases", "revmesh"])
         .status()
         .map_err(|e| format!("running {cli} (set SOLIDCRAFT_CLI to its path): {e}"))?;
     if status.success() { Ok(()) } else { Err("solidcraft-cli plugin test failed".into()) }
+}
+
+/// `solidcraft-cli` from `$SOLIDCRAFT_CLI`, else from `PATH`, else from SolidCraft's default
+/// Windows install (seen natively or from WSL).
+fn cli_path() -> String {
+    std::env::var("SOLIDCRAFT_CLI").unwrap_or_else(|_| default_cli())
 }
 
 /// `solidcraft-cli` from `PATH`, else from SolidCraft's default Windows install (seen natively
@@ -104,6 +115,110 @@ fn default_cli() -> String {
         return "solidcraft-cli".into();
     }
     installed.iter().find_map(|p| Path::new(p).is_file().then(|| (*p).to_owned())).unwrap_or_else(|| "solidcraft-cli".into())
+}
+
+/// Checks every plugin test fixture's rebuild against the source mesh, the way mesh2cad checks
+/// the scripts it writes:
+///
+/// 1. the STL is imported in-process ([`revmesh_core::import`]) and the design written to
+///    `target/check/<name>.json`;
+/// 2. `solidcraft-cli eval` rebuilds the design in SolidCraft: a feature that fails fails the
+///    check, and the measured volume goes into the report;
+/// 3. `solidcraft-cli run --in <design> --out <rebuilt.stl>` exports the rebuilt part;
+/// 4. [`revmesh_core::check::check_rebuild`] measures the volume error and the surface deviation
+///    (Hausdorff) between the source STL and the rebuilt STL, and applies mesh2cad's gate.
+///
+/// Fixtures that do not import (the error cases of `plugin test`) are skipped.
+fn check(root: &Path) -> Result<(), String> {
+    let cli = cli_path();
+    let tests = root.join(PACKAGE_DIR).join("tests");
+    let out = root.join("target").join("check");
+    fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let mut stls: Vec<PathBuf> = fs::read_dir(&tests)
+        .map_err(|e| format!("{}: {e}", tests.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "stl"))
+        .collect();
+    stls.sort();
+    if stls.is_empty() {
+        return Err(format!("no STL fixtures in {}", tests.display()));
+    }
+    let mut failures: Vec<String> = Vec::new();
+    let mut checked = 0;
+    for stl in &stls {
+        let name = stl.file_name().map_or_else(|| "part".into(), |n| n.to_string_lossy().into_owned());
+        let stem = stl.file_stem().map_or_else(|| "part".into(), |n| n.to_string_lossy().into_owned());
+        let bytes = fs::read(stl).map_err(|e| format!("{}: {e}", stl.display()))?;
+        let source = match revmesh_core::stl::parse(&bytes) {
+            Ok(mesh) => mesh,
+            Err(e) => {
+                println!("skip {name}: not an STL ({e})");
+                continue;
+            }
+        };
+        let Ok(imported) = revmesh_core::import(&bytes, &name, &revmesh_core::ImportOptions::default()) else {
+            println!("skip {name}: the import itself fails (an error case of plugin test)");
+            continue;
+        };
+        checked += 1;
+        let design_path = out.join(format!("{stem}.json"));
+        fs::write(&design_path, imported.design.to_json_pretty()).map_err(|e| format!("{}: {e}", design_path.display()))?;
+
+        // Rebuild in SolidCraft: eval fails (exit 1) when a timeline feature has an error.
+        let eval_path = out.join(format!("{stem}-eval.json"));
+        let eval = Command::new(&cli)
+            .args(["eval", &design_path.to_string_lossy(), "--json-out", &eval_path.to_string_lossy(), "--quiet"])
+            .output()
+            .map_err(|e| format!("running {cli} eval (set SOLIDCRAFT_CLI to its path): {e}"))?;
+        if !eval.status.success() {
+            failures.push(format!("{name}: solidcraft-cli eval failed: {}", String::from_utf8_lossy(&eval.stderr).trim()));
+            println!("FAIL {name}: solidcraft-cli eval exited {}", eval.status.code().unwrap_or(-1));
+            continue;
+        }
+        let eval: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&eval_path).map_err(|e| format!("{}: {e}", eval_path.display()))?)
+                .map_err(|e| format!("{}: {e}", eval_path.display()))?;
+        let eval_volume = eval["total"]["volume_mm3"].as_f64().unwrap_or(f64::NAN);
+
+        // Export the rebuilt part and compare it with the source mesh.
+        let rebuilt_path = out.join(format!("{stem}-rebuilt.stl"));
+        let export = Command::new(&cli)
+            .args(["run", "--in", &design_path.to_string_lossy(), "--out", &rebuilt_path.to_string_lossy(), "--quiet"])
+            .output()
+            .map_err(|e| format!("running {cli} run: {e}"))?;
+        if !export.status.success() {
+            failures.push(format!("{name}: solidcraft-cli run --out failed: {}", String::from_utf8_lossy(&export.stderr).trim()));
+            println!("FAIL {name}: solidcraft-cli run exited {}", export.status.code().unwrap_or(-1));
+            continue;
+        }
+        let rebuilt = revmesh_core::stl::parse(&fs::read(&rebuilt_path).map_err(|e| format!("{}: {e}", rebuilt_path.display()))?)
+            .map_err(|e| format!("{}: {e}", rebuilt_path.display()))?;
+        let check = revmesh_core::check::check_rebuild(&source, &rebuilt);
+        if check.ok() {
+            println!(
+                "ok   {name}: volume error {:+.3}%, deviation {:.4} mm (limit {:.3} mm), SolidCraft measured {eval_volume:.3} mm3",
+                check.volume_error_pct, check.max_deviation, check.deviation_limit
+            );
+        } else {
+            failures.push(format!(
+                "{name}: volume error {:+.3}%, deviation {:.4} mm over the limit {:.3} mm",
+                check.volume_error_pct, check.max_deviation, check.deviation_limit
+            ));
+            println!(
+                "FAIL {name}: volume error {:+.3}%, deviation {:.4} mm (limit {:.3} mm), SolidCraft measured {eval_volume:.3} mm3",
+                check.volume_error_pct, check.max_deviation, check.deviation_limit
+            );
+        }
+    }
+    if checked == 0 {
+        return Err("no fixture imported".into());
+    }
+    if failures.is_empty() {
+        println!("all {checked} rebuilds within mesh2cad's gate (volume error <= 1%, deviation <= max(4 * 0.1% of the diagonal, 0.1 mm))");
+        Ok(())
+    } else {
+        Err(format!("{} of {checked} rebuilds failed:\n  {}", failures.len(), failures.join("\n  ")))
+    }
 }
 
 fn manifest(root: &Path) -> Result<serde_json::Value, String> {
