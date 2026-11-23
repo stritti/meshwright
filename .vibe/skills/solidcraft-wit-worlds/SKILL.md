@@ -1,6 +1,7 @@
 ---
 name: solidcraft-wit-worlds
-description: Work with SolidCraft's plugin interface (craft:plugin@0.2.0, vendored at crates/revmesh-plugin/wit/plugin.wit): the worlds (command-plugin, importer-plugin, exporter-plugin, dialog variants), their imported/exported interfaces, manifest capabilities, the plugin-error variants and WIT versioning. Use when choosing a world, reading or updating plugin.wit, adding a capability, or mapping errors to plugin-error.
+description: >-
+  Work with SolidCraft's plugin interface (craft:plugin@0.2.0, vendored at crates/revmesh-plugin/wit/plugin.wit): the worlds (command-plugin, importer-plugin, exporter-plugin, dialog variants), their imported/exported interfaces, manifest capabilities, the plugin-error variants and WIT versioning. Use when choosing a world, reading or updating plugin.wit, adding a capability, or mapping errors to plugin-error.
 license: MIT
 ---
 

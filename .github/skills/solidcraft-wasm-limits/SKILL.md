@@ -1,6 +1,7 @@
 ---
 name: solidcraft-wasm-limits
-description: Respect and design around SolidCraft's WebAssembly runtime limits: memory (128 MiB default, limits.memory_mib), fuel and deadline (limits.fuel / limits.deadline_ms), the 64 MiB component and 256 MiB design caps, and the 1 MiB per-host-call ceiling — with the streaming patterns (chunked source::read / design::write, progress + cancellation, no double buffering, f32 coordinates) that make large imports fit. Use when writing the import loop, choosing input size ceilings, or debugging out-of-memory traps.
+description: >-
+  Respect and design around SolidCraft's WebAssembly runtime limits: memory (128 MiB default, limits.memory_mib), fuel and deadline (limits.fuel / limits.deadline_ms), the 64 MiB component and 256 MiB design caps, and the 1 MiB per-host-call ceiling — with the streaming patterns (chunked source::read / design::write, progress + cancellation, no double buffering, f32 coordinates) that make large imports fit. Use when writing the import loop, choosing input size ceilings, or debugging out-of-memory traps.
 license: MIT
 ---
 

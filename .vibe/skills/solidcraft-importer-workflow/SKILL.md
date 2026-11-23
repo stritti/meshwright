@@ -1,6 +1,7 @@
 ---
 name: solidcraft-importer-workflow
-description: Implement a SolidCraft importer plugin end to end: declare an importer entry in plugin.json (kind, extensions, label, input_schema options, capabilities formats@0.2 [+ evaluate@0.2]), implement importer.import-file in the importer-plugin world — parse options, enforce an input ceiling, stream the file via source.read, write the design JSON via design.write in 1 MiB chunks, return the loss report — with the mesh fallback and the evaluate-based self-check. Use when adding a new file-format import slot or changing what an import returns.
+description: >-
+  Implement a SolidCraft importer plugin end to end: declare an importer entry in plugin.json (kind, extensions, label, input_schema options, capabilities formats@0.2 [+ evaluate@0.2]), implement importer.import-file in the importer-plugin world — parse options, enforce an input ceiling, stream the file via source.read, write the design JSON via design.write in 1 MiB chunks, return the loss report — with the mesh fallback and the evaluate-based self-check. Use when adding a new file-format import slot or changing what an import returns.
 license: MIT
 ---
 
@@ -58,9 +59,13 @@ impl Guest for Importer {
     fn import_file(_entry: String, file: source::FileInfo, options: String) -> Result<String, PluginError> {
         let options = ImportOptions::from_json(&options).map_err(|e| invalid("options", e))?;
         let mesh = read_mesh(&file, max_bytes_for(options.mode))?;
-        let result = import_mesh(mesh, &file.name, &options);   // core crate
-        result.design.write_json(&mut HostWriter::new())?;      // chunked design::write
-        Ok(result.report.to_json())                              // loss report
+        let result = import_mesh(mesh, &file.name, &options);        // core crate
+        let mut out = HostWriter::new();                             // buffers to 1 MiB, then design::write
+        let written = result.design.write_json(&mut out)
+            .and_then(|()| out.flush_buffer());                      // flush the final partial chunk
+        if let Some(error) = out.error { return Err(error); }         // host error kept in the writer
+        written.map_err(|e| PluginError::Trap(format!("writing the design: {e}")))?;
+        Ok(result.report.to_json())                                   // loss report
     }
 }
 ```
@@ -83,6 +88,7 @@ keep the mesh and say so in the report.
 ## Pitfalls
 
 - `design.write` ≤ 1 MiB per call, strictly in order; the design file is capped at 256 MiB.
+- `HostWriter` sends only full 1 MiB buffers during `write`: always flush it explicitly at the end and check its stored host error, or designs under 1 MiB are never sent and larger ones arrive truncated.
 - An empty `source::read` at `offset >= size` is EOF, not an error.
 - Return `cancelled` promptly when `control::cancelled()`; a hung import burns the deadline
   (`limits.deadline_ms`, max 10 min).

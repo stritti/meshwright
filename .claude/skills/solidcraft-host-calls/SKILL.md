@@ -1,6 +1,7 @@
 ---
 name: solidcraft-host-calls
-description: Call SolidCraft's host interfaces from Rust/WASM correctly and map every failure to the right plugin-error variant: source/design/evaluate (chunked file I/O and self-checking), log, control, clock, files, storage, commands, forms, design-state; options/params arrive as JSON strings; keep the plugin crate thin and panic-free. Use when writing any host call, error mapping, progress reporting, or the plugin-core split in crates/revmesh-plugin/src/lib.rs.
+description: >-
+  Call SolidCraft's host interfaces from Rust/WASM correctly and map every failure to the right plugin-error variant: source/design/evaluate (chunked file I/O and self-checking), log, control, clock, files, storage, commands, forms, design-state; options/params arrive as JSON strings; keep the plugin crate thin and panic-free. Use when writing any host call, error mapping, progress reporting, or the plugin-core split in crates/revmesh-plugin/src/lib.rs.
 license: MIT
 ---
 

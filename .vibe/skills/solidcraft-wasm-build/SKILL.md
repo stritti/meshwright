@@ -1,6 +1,7 @@
 ---
 name: solidcraft-wasm-build
-description: Build, wrap, package and lint a SolidCraft plugin's WebAssembly component: cargo xtask component / dist / plugin-test (cargo build --release --locked --target wasm32-unknown-unknown, wit-component wrapping, the installable zip), the release profile and 64 MiB component limit, and the fmt/clippy/deny gates. Use when building the .wasm, packaging the install zip, fixing a wasm-target clippy error, or shrinking component size.
+description: >-
+  Build, wrap, package and lint a SolidCraft plugin's WebAssembly component: cargo xtask component / dist / plugin-test (cargo build --release --locked --target wasm32-unknown-unknown, wit-component wrapping, the installable zip), the release profile and 64 MiB component limit, and the fmt/clippy/deny gates. Use when building the .wasm, packaging the install zip, fixing a wasm-target clippy error, or shrinking component size.
 license: MIT
 ---
 

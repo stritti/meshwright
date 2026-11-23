@@ -1,6 +1,7 @@
 ---
 name: solidcraft-plugin-testing
-description: Test a SolidCraft Rust/WASM plugin at the right level: native cargo test for the core crate (synthetic meshes, golden JSON files), headless solidcraft-cli eval on exported designs, and end-to-end plugin tests via cargo xtask plugin-test (solidcraft-cli plugin test --require-cases on plugin/<id>/tests/*.json cases with generated fixtures), plus the CI gates to run before a PR. Use when adding a recogniser, a fixture, a test case, or debugging a plugin-test failure.
+description: >-
+  Test a SolidCraft Rust/WASM plugin at the right level: native cargo test for the core crate (synthetic meshes, golden JSON files), headless solidcraft-cli eval on exported designs, and end-to-end plugin tests via cargo xtask plugin-test (solidcraft-cli plugin test --require-cases on plugin/<id>/tests/*.json cases with generated fixtures), plus the CI gates to run before a PR. Use when adding a recogniser, a fixture, a test case, or debugging a plugin-test failure.
 license: MIT
 ---
 

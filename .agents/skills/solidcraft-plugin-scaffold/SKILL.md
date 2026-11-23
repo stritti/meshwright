@@ -1,6 +1,7 @@
 ---
 name: solidcraft-plugin-scaffold
-description: Scaffold a new SolidCraft plugin in this workspace: a Rust crate compiled to a WebAssembly component for wasm32-unknown-unknown, the vendored craft:plugin WIT interface, the plugin.json manifest and the xtask build wiring. Use when creating a new plugin crate or plugin package, adding a manifest entry, or setting up a fresh clone's toolchain.
+description: >-
+  Scaffold a new SolidCraft plugin in this workspace: a Rust crate compiled to a WebAssembly component for wasm32-unknown-unknown, the vendored craft:plugin WIT interface, the plugin.json manifest and the xtask build wiring. Use when creating a new plugin crate or plugin package, adding a manifest entry, or setting up a fresh clone's toolchain.
 license: MIT
 ---
 
