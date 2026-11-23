@@ -49,6 +49,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy -p revmesh-plugin --target wasm32-unknown-unknown -- -D warnings   # CI also adds -p revmesh-core
 cargo test --workspace
 cargo deny check
+cargo llvm-cov -p revmesh-core --fail-under-lines 80   # coverage gate >= 80% lines
 cargo xtask dist          # exercises the component build + 64 MiB gate locally
 cargo xtask plugin-test   # needs solidcraft-cli (set SOLIDCRAFT_CLI)
 ```

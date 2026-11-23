@@ -31,6 +31,7 @@ cargo clippy -p revmesh-plugin --target wasm32-unknown-unknown -- -D warnings
 cargo xtask component                                                 # build the wasm component
 cargo xtask dist                                                      # installable zip in target/dist/
 cargo xtask plugin-test                                               # end-to-end in SolidCraft (set SOLIDCRAFT_CLI)
+cargo llvm-cov -p revmesh-core --fail-under-lines 80                  # coverage gate >= 80% lines (needs llvm-tools-preview + cargo-llvm-cov)
 ```
 
 ## Hard rules
@@ -44,3 +45,6 @@ cargo xtask plugin-test                                               # end-to-e
   `control::cancelled()`, stay deterministic (fixed seeds).
 - Never hand-edit golden files (`crates/revmesh-core/tests/data/*.json`) or STL fixtures
   (`plugin/revmesh/tests/*.stl`); regenerate them with the documented commands.
+- Coverage gate: at least 80% line coverage on `revmesh-core`, enforced by the CI `coverage`
+  job (`cargo llvm-cov --fail-under-lines 80`, required via `ci-ok`) — new code comes with tests
+  that keep it above the gate.
