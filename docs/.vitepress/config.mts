@@ -1,18 +1,18 @@
 import { defineConfig } from 'vitepress'
 
-const repo = 'https://github.com/stritti/meshwright'
+const repo = 'https://github.com/stritti/revmesh'
 
 export default defineConfig({
-  title: 'meshwright',
+  title: 'revmesh',
   description: 'Open STL files in SolidCraft as editable designs.',
   lang: 'en-US',
-  // Served as a project page: https://stritti.github.io/meshwright/
-  base: '/meshwright/',
+  // Served as a project page: https://stritti.github.io/revmesh/
+  base: '/revmesh/',
   cleanUrls: true,
   lastUpdated: true,
   // package.json and node_modules live here too; only Markdown pages are content.
   srcExclude: ['**/node_modules/**'],
-  head: [['link', { rel: 'icon', href: '/meshwright/logo.svg', type: 'image/svg+xml' }]],
+  head: [['link', { rel: 'icon', href: '/revmesh/logo.svg', type: 'image/svg+xml' }]],
   themeConfig: {
     logo: '/logo.svg',
     nav: [

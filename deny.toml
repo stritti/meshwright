@@ -11,7 +11,7 @@ yanked = "deny"
 [licenses]
 version = 2
 confidence-threshold = 0.9
-# Permissive licences meshwright's dependencies may use (meshwright itself is MIT).
+# Permissive licences revmesh's dependencies may use (revmesh itself is MIT).
 allow = [
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",

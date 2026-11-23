@@ -18,14 +18,14 @@
   ],
   "packages": {
     ".": {
-      "package-name": "meshwright",
+      "package-name": "revmesh",
       "initial-version": "0.1.0-beta.1",
       "versioning": "prerelease",
       "prerelease": true,
       "prerelease-type": "beta",
       "extra-files": [
         {"type": "generic", "path": "Cargo.toml"},
-        {"type": "json", "path": "plugin/meshwright/plugin.json", "jsonpath": "$.version"}
+        {"type": "json", "path": "plugin/revmesh/plugin.json", "jsonpath": "$.version"}
       ]
     }
   }

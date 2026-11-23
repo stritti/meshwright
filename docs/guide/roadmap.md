@@ -23,4 +23,4 @@
    and deviation), as mesh2cad does with CadQuery.
 
 Contributions are very welcome: bug reports, STL files that import badly, recognisers, docs.
-Start with [CONTRIBUTING.md](https://github.com/stritti/meshwright/blob/main/CONTRIBUTING.md).
+Start with [CONTRIBUTING.md](https://github.com/stritti/revmesh/blob/main/CONTRIBUTING.md).

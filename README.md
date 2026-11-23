@@ -1,12 +1,12 @@
-# meshwright
+# revmesh
 
-[![CI](https://github.com/stritti/meshwright/actions/workflows/ci.yml/badge.svg)](https://github.com/stritti/meshwright/actions/workflows/ci.yml)
+[![CI](https://github.com/stritti/revmesh/actions/workflows/ci.yml/badge.svg)](https://github.com/stritti/revmesh/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-stritti.github.io%2Fmeshwright-3e7bd6.svg)](https://stritti.github.io/meshwright/)
+[![Docs](https://img.shields.io/badge/docs-stritti.github.io%2Frevmesh-3e7bd6.svg)](https://stritti.github.io/revmesh/)
 
 **Open STL files in [SolidCraft](https://github.com/tangency-labs/solidcraft) as editable designs.**
 
-meshwright is a SolidCraft importer plugin. Instead of a dead triangle mesh, it recognises what
+revmesh is a SolidCraft importer plugin. Instead of a dead triangle mesh, it recognises what
 the part was made of (plates, holes, slots, fillets, …) and writes a parametric feature history:
 a sketch, an extrusion, holes and fillets, driven by named parameters such as `base_x` or
 `hole_1_d`. Change a parameter and SolidCraft rebuilds the part.
@@ -23,15 +23,15 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
 
 ## Install
 
-1. Download `meshwright-<version>.zip` from the [releases](https://github.com/stritti/meshwright/releases).
+1. Download `revmesh-<version>.zip` from the [releases](https://github.com/stritti/revmesh/releases).
 2. In SolidCraft, open **Preferences › Plugins › Install plugin…** (also *File › Plugins…*) and pick
    the zip.
 
 ## Use
 
 1. On the **Model** ribbon tab, click the label of the **Plugins** group to open the Plugins menu,
-   and choose **meshwright › stl**. SolidCraft's own *File › Open* keeps using its built-in mesh
-   import for `.stl`, so meshwright is reached through the Plugins menu.
+   and choose **revmesh › stl**. SolidCraft's own *File › Open* keeps using its built-in mesh
+   import for `.stl`, so revmesh is reached through the Plugins menu.
 2. The dialog offers **Import as**: `auto` (recognise features, keep the mesh where none are
    found; the default) or `mesh` (keep the mesh as it is).
 3. Its button chooses the STL file. It opens as a new, unsaved design.
@@ -43,7 +43,7 @@ The plugin accepts STL files up to 8 MiB in `auto` mode and 32 MiB in `mesh` mod
 A recognised part arrives as a timeline (sketch, extrusion, holes, fillet) with its sizes as
 parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. A
 part that is not recognised arrives as a mesh body, and the report says why. To try it, import
-[`plugin/meshwright/tests/plate-holes.stl`](plugin/meshwright/tests/plate-holes.stl).
+[`plugin/revmesh/tests/plate-holes.stl`](plugin/revmesh/tests/plate-holes.stl).
 
 ### What `auto` recognises
 
@@ -92,12 +92,12 @@ or rotated. Blind holes, like counterbored and countersunk ones, stay single hol
 
 | Crate | What it does |
 |---|---|
-| [`meshwright-core`](crates/meshwright-core) | STL parsing, recognition and the SolidCraft document model. Pure Rust, no host calls, tested natively with `cargo test`. |
-| [`meshwright-plugin`](crates/meshwright-plugin) | The WebAssembly component (`craft:plugin@0.2.0`, `importer-plugin` world). Reads the file from SolidCraft, calls the core, writes the design back. |
+| [`revmesh-core`](crates/revmesh-core) | STL parsing, recognition and the SolidCraft document model. Pure Rust, no host calls, tested natively with `cargo test`. |
+| [`revmesh-plugin`](crates/revmesh-plugin) | The WebAssembly component (`craft:plugin@0.2.0`, `importer-plugin` world). Reads the file from SolidCraft, calls the core, writes the design back. |
 | [`xtask`](xtask) | Builds the component and the installable zip, and runs SolidCraft's plugin tests. |
-| [`plugin/meshwright`](plugin/meshwright) | The plugin package: `plugin.json` and the test cases SolidCraft runs. |
+| [`plugin/revmesh`](plugin/revmesh) | The plugin package: `plugin.json` and the test cases SolidCraft runs. |
 
-The documentation is published at <https://stritti.github.io/meshwright/>.
+The documentation is published at <https://stritti.github.io/revmesh/>.
 More in [docs/architecture.md](docs/architecture.md), for the document format the importer
 writes in [docs/design-format.md](docs/design-format.md), and for comparing a recogniser with
 mesh2cad in [docs/development.md](docs/development.md).
@@ -110,9 +110,9 @@ with SolidCraft.
 
 ```sh
 cargo test                     # unit tests of the core, natively
-cargo xtask component          # builds plugin/meshwright/meshwright.wasm
-cargo xtask dist               # target/dist/meshwright-<version>.zip
-cargo xtask plugin-test        # runs plugin/meshwright/tests in SolidCraft (set SOLIDCRAFT_CLI)
+cargo xtask component          # builds plugin/revmesh/revmesh.wasm
+cargo xtask dist               # target/dist/revmesh-<version>.zip
+cargo xtask plugin-test        # runs plugin/revmesh/tests in SolidCraft (set SOLIDCRAFT_CLI)
 ```
 
 ## Roadmap
@@ -140,11 +140,11 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md). Everyone taking part follows the
 
 ## License
 
-meshwright is licensed under the [MIT License](LICENSE). Unless you state otherwise, any
+revmesh is licensed under the [MIT License](LICENSE). Unless you state otherwise, any
 contribution you submit for inclusion is licensed the same way, without any additional terms or
 conditions.
 
 Code ported from mesh2cad keeps its original MIT copyright notice; see [NOTICE](NOTICE) and
 [LICENSES/mesh2cad-MIT.txt](LICENSES/mesh2cad-MIT.txt). SolidCraft's plugin interface
-(`crates/meshwright-plugin/wit/plugin.wit`) is © the SolidCraft authors, Apache-2.0.
-meshwright is an independent project and not affiliated with SolidCraft or mesh2cad.
+(`crates/revmesh-plugin/wit/plugin.wit`) is © the SolidCraft authors, Apache-2.0.
+revmesh is an independent project and not affiliated with SolidCraft or mesh2cad.

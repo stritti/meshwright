@@ -24,9 +24,9 @@ body:
       description: The text SolidCraft showed after the import, if any.
       render: text
   - type: input
-    id: meshwright
+    id: revmesh
     attributes:
-      label: meshwright version
+      label: revmesh version
       placeholder: "0.1.0"
     validations:
       required: true

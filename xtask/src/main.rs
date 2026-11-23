@@ -1,9 +1,9 @@
 //! `cargo xtask <task>`: build automation that needs more than `cargo build`.
 //!
-//! - `component`: builds `meshwright-plugin` for `wasm32-unknown-unknown` and wraps the module as
-//!   a component into `plugin/meshwright/meshwright.wasm` (what `wasm-tools component new` does).
+//! - `component`: builds `revmesh-plugin` for `wasm32-unknown-unknown` and wraps the module as
+//!   a component into `plugin/revmesh/revmesh.wasm` (what `wasm-tools component new` does).
 //! - `dist`: `component`, then zips the package (without its tests) to
-//!   `target/dist/meshwright-<version>.zip`, ready for Preferences › Plugins › Install plugin….
+//!   `target/dist/revmesh-<version>.zip`, ready for Preferences › Plugins › Install plugin….
 //! - `plugin-test`: `component`, then runs `solidcraft-cli plugin test --require-cases` on the
 //!   package. The CLI is taken from `$SOLIDCRAFT_CLI`, else from `PATH`, else from the default
 //!   Windows install (`C:\Program Files\SolidCraft`, also found from WSL).
@@ -13,8 +13,8 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const PLUGIN_CRATE: &str = "meshwright-plugin";
-const PACKAGE_DIR: &str = "plugin/meshwright";
+const PLUGIN_CRATE: &str = "revmesh-plugin";
+const PACKAGE_DIR: &str = "plugin/revmesh";
 const TARGET: &str = "wasm32-unknown-unknown";
 
 fn main() -> ExitCode {
@@ -71,7 +71,7 @@ fn dist(root: &Path) -> Result<PathBuf, String> {
     let module = module_file(root)?;
     let dist = root.join("target").join("dist");
     fs::create_dir_all(&dist).map_err(|e| format!("{}: {e}", dist.display()))?;
-    let out = dist.join(format!("meshwright-{version}.zip"));
+    let out = dist.join(format!("revmesh-{version}.zip"));
     let file = fs::File::create(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -89,7 +89,7 @@ fn plugin_test(root: &Path) -> Result<(), String> {
     let cli = std::env::var("SOLIDCRAFT_CLI").unwrap_or_else(|_| default_cli());
     let status = Command::new(&cli)
         .current_dir(root.join("plugin"))
-        .args(["plugin", "test", "--require-cases", "meshwright"])
+        .args(["plugin", "test", "--require-cases", "revmesh"])
         .status()
         .map_err(|e| format!("running {cli} (set SOLIDCRAFT_CLI to its path): {e}"))?;
     if status.success() { Ok(()) } else { Err("solidcraft-cli plugin test failed".into()) }

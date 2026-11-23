@@ -1,7 +1,7 @@
-# The SolidCraft design format, as meshwright writes it
+# The SolidCraft design format, as revmesh writes it
 
 SolidCraft's document format is internal and has no published schema. This page records what
-meshwright relies on, learnt from designs SolidCraft 0.45.0 saved as JSON and from hand-written
+revmesh relies on, learnt from designs SolidCraft 0.45.0 saved as JSON and from hand-written
 files opened in it. Re-check it with every SolidCraft release.
 
 ## Version
@@ -31,7 +31,7 @@ An empty `name` names the design after the imported file.
 `model: false` parameters are the user's, shown in the parameter panel. `model: true` ones belong
 to features (sketch dimensions) and are driven by an expression.
 
-## Features meshwright writes
+## Features revmesh writes
 
 | `type` | Key fields | Notes |
 |---|---|---|
@@ -40,7 +40,7 @@ to features (sketch dimensions) and are driven by an expression.
 | `hole` | `position` (numbers), `at` (three expressions), `direction`, `diameter`, `depth` (a blind hole's, from the face; through all without it), `hole: {"type":"simple"}`, `{"type":"counterbore", cb_diameter, cb_depth}` or `{"type":"countersink", cs_diameter, cs_angle}` | `at` follows parameters; `position` is the pick SolidCraft starts from. A hole whose counterbore or countersink is on the bottom face starts there with `direction: [0, 0, 1]`. `cs_angle` is the cone's full angle; a parameter in degrees drives it. |
 | `fillet` | `edge_names`, `edges` (one point per edge), `radius` | See below. |
 | `box` | `corner` (three expressions: the lowest corner), `length` (X), `width` (Y), `height` (Z), `operation: "join"` or `"cut"` | SolidCraft's box primitive. |
-| `cylinder` | `base` (three expressions: the bottom face's centre), `axis: [0, 0, 1]`, `radius`, `height`, `operation: "join"` | SolidCraft's own cylinder primitive saves `radius` as `"(10 mm) / 2"` when given a diameter; meshwright writes `"boss_<n>_d / 2"`. |
+| `cylinder` | `base` (three expressions: the bottom face's centre), `axis: [0, 0, 1]`, `radius`, `height`, `operation: "join"` | SolidCraft's own cylinder primitive saves `radius` as `"(10 mm) / 2"` when given a diameter; revmesh writes `"boss_<n>_d / 2"`. |
 | `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions) | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
 | `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flat `x,y,z` positions and flat corner indices; `body_names` lists the bodies. |
@@ -114,7 +114,7 @@ Fields SolidCraft derives itself and that can be left out: `param_names`, `face_
 A fillet that has only pick points (`edges`) re-finds its edges by proximity after a rebuild.
 In a test, changing `base_x` from 70 to 100 made two of four corner fillets snap to the wrong
 edges ("2 edge reference(s) re-found on the nearest edge"). With `edge_names` the same change
-rebuilt without warnings. meshwright therefore always writes them:
+rebuilt without warnings. revmesh therefore always writes them:
 
 ```text
 F<extrude id>:side:<line id>|F<extrude id>:side:<line id>
@@ -126,7 +126,7 @@ faces it joins. Other names seen in saved designs: `F2:top`, `F3:bore:side:0` (a
 
 ## Verified
 
-`crates/meshwright-core/tests/data/plate-with-hole.json` (written by `PlateSpec::to_design`)
+`crates/revmesh-core/tests/data/plate-with-hole.json` (written by `PlateSpec::to_design`)
 opened in SolidCraft 0.45.0 with no errors: volume 16,452.05 mm³ as computed by hand
 (70 × 40 × 6 minus an 8 mm hole minus four 3 mm corner fillets). Setting `base_x = 100`,
 `hole_1_x = 50` and `hole_1_d = 12` rebuilt to 23,275.06 mm³, again as computed, with no
@@ -134,12 +134,12 @@ warnings.
 
 A polygon outline (`ProfileSpec::to_design`: free sketch points, horizontal and vertical
 constraints only, a fillet on every corner named `F2:side:l<i>|F2:side:l<i+1>`) works the same
-way, inside corners included. The L-bracket of `plugin/meshwright/tests/l-bracket.stl` imports
+way, inside corners included. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
 in `solidcraft-cli 0.45.0` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
 9,461.81 mm³, again as computed.
 
-Since meshwright keeps a part where it is in the file, the sketch and extrusion stay at the
+Since revmesh keeps a part where it is in the file, the sketch and extrusion stay at the
 origin and a `move` feature right after the extrusion takes the body there: for a rectangular
 plate by `[base_cx - base_x / 2, base_cy - base_y / 2, base_z0]`, for an outline by its corner
 and `extrude_0`. Holes and fillet picks are in world coordinates. In `solidcraft-cli 0.45.0`

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Sets meshwright's parameters beside mesh2cad's for each STL file, as a Markdown table.
+# Sets revmesh's parameters beside mesh2cad's for each STL file, as a Markdown table.
 #
-#   scripts/compare-mesh2cad.sh plugin/meshwright/tests/*.stl
+#   scripts/compare-mesh2cad.sh plugin/revmesh/tests/*.stl
 #
 # mesh2cad must be installed with CadQuery (`pip install "mesh2cad[cadquery]"`); set MESH2CAD to
 # its executable if it is not on PATH. Each row is one parameter name. A name only one tool
 # writes shows "—" for the other; a value that differs by more than 0.001 is marked with "≠".
-# mesh2cad's verdict (the script it wrote, or why it refused) and meshwright's import summary
+# mesh2cad's verdict (the script it wrote, or why it refused) and revmesh's import summary
 # follow each table. See docs/development.md.
 set -euo pipefail
 
@@ -20,7 +20,7 @@ if [ $# -eq 0 ]; then
   exit 2
 fi
 command -v "$MESH2CAD" >/dev/null || { echo "mesh2cad not found; set MESH2CAD" >&2; exit 2; }
-cargo build -q --manifest-path "$root/Cargo.toml" -p meshwright-core --example params
+cargo build -q --manifest-path "$root/Cargo.toml" -p revmesh-core --example params
 
 i=0
 for stl in "$@"; do
@@ -37,7 +37,7 @@ for stl in "$@"; do
     "$MESH2CAD" params "$out/$base.py" | tail -n +2 | awk '{print $1, $2}' | sort > "$work/m2c.txt"
   fi
   mw_summary=$("$root/target/debug/examples/params" "$stl" 2>"$work/mw-report.txt" | sort > "$work/mw.txt"; head -1 "$work/mw-report.txt")
-  echo "| parameter | mesh2cad | meshwright | |"
+  echo "| parameter | mesh2cad | revmesh | |"
   echo "|---|---|---|---|"
   join -a1 -a2 -e "—" -o 0,1.2,2.2 "$work/m2c.txt" "$work/mw.txt" | while read -r name a b; do
     mark=""
@@ -50,6 +50,6 @@ for stl in "$@"; do
   done
   echo
   echo "- mesh2cad: $m2c_verdict"
-  echo "- meshwright: $mw_summary"
+  echo "- revmesh: $mw_summary"
   echo
 done

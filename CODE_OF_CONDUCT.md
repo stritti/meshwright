@@ -1,12 +1,12 @@
 # Code of Conduct
 
-meshwright adopts the [Contributor Covenant, version 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/)
+revmesh adopts the [Contributor Covenant, version 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/)
 as its code of conduct. Its full text applies to all project spaces (issues, pull requests,
 discussions) and to anyone representing the project elsewhere.
 
 ## In short
 
-We want meshwright to be a friendly, welcoming place for everyone, regardless of age, body size,
+We want revmesh to be a friendly, welcoming place for everyone, regardless of age, body size,
 visible or invisible disability, ethnicity, sex characteristics, gender identity and expression,
 level of experience, education, socio-economic status, nationality, personal appearance, race,
 caste, colour, religion, or sexual identity and orientation.

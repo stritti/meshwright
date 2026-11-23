@@ -1,5 +1,5 @@
 name: Feature request
-description: A feature meshwright should recognise, or an improvement to the plugin.
+description: A feature revmesh should recognise, or an improvement to the plugin.
 labels: [enhancement]
 body:
   - type: textarea
@@ -12,7 +12,7 @@ body:
   - type: textarea
     id: proposal
     attributes:
-      label: What should meshwright do?
+      label: What should revmesh do?
       description: For a new recogniser, the SolidCraft features you would expect it to produce.
   - type: textarea
     id: example

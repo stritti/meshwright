@@ -169,22 +169,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "meshwright-core"
-version = "0.1.0-beta.2"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "meshwright-plugin"
-version = "0.1.0-beta.2"
-dependencies = [
- "meshwright-core",
- "wit-bindgen",
-]
-
-[[package]]
 name = "nix"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -229,6 +213,22 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "revmesh-core"
+version = "0.1.0-beta.2"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "revmesh-plugin"
+version = "0.1.0-beta.2"
+dependencies = [
+ "revmesh-core",
+ "wit-bindgen",
+]
 
 [[package]]
 name = "rustversion"

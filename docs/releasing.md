@@ -4,10 +4,10 @@ Releases are made by [release-please](https://github.com/googleapis/release-plea
 Conventional Commit messages on `main`:
 
 1. Every push to `main` updates (or opens) the release pull request `chore: release x.y.z`. It
-   bumps the version in `Cargo.toml`, `plugin/meshwright/plugin.json` and `CHANGELOG.md`; a
+   bumps the version in `Cargo.toml`, `plugin/revmesh/plugin.json` and `CHANGELOG.md`; a
    second job brings `Cargo.lock` in step.
 2. Merging that pull request tags `vx.y.z` and creates the GitHub release.
-3. The `publish-plugin` job builds the plugin and attaches `meshwright-x.y.z.zip` and
+3. The `publish-plugin` job builds the plugin and attaches `revmesh-x.y.z.zip` and
    `SHA256SUMS.txt` to the release.
 
 ## One-time setup: the release token

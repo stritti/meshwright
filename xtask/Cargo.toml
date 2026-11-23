@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Build automation for meshwright: `cargo xtask --help`."
+description = "Build automation for revmesh: `cargo xtask --help`."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
