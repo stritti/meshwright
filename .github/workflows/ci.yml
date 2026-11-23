@@ -39,9 +39,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - name: clippy (native, all targets)
-        run: cargo clippy --workspace --all-targets ${CARGO_LOCKED} -- -D warnings
+        run: cargo clippy --workspace --all-targets ${{ env.CARGO_LOCKED }} -- -D warnings
       - name: clippy (wasm32, plugin)
-        run: cargo clippy -p revmesh-plugin -p revmesh-core --target wasm32-unknown-unknown ${CARGO_LOCKED} -- -D warnings
+        run: cargo clippy -p revmesh-plugin -p revmesh-core --target wasm32-unknown-unknown ${{ env.CARGO_LOCKED }} -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -53,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace ${CARGO_LOCKED}
+      - run: cargo test --workspace ${{ env.CARGO_LOCKED }}
 
   msrv:
     name: MSRV
@@ -65,8 +65,8 @@ jobs:
         run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal --target wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo +${{ steps.msrv.outputs.version }} check -p revmesh-core ${CARGO_LOCKED}
-      - run: cargo +${{ steps.msrv.outputs.version }} check -p revmesh-plugin --target wasm32-unknown-unknown ${CARGO_LOCKED}
+      - run: cargo +${{ steps.msrv.outputs.version }} check -p revmesh-core ${{ env.CARGO_LOCKED }}
+      - run: cargo +${{ steps.msrv.outputs.version }} check -p revmesh-plugin --target wasm32-unknown-unknown ${{ env.CARGO_LOCKED }}
 
   docs:
     name: docs
@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc -p revmesh-core --no-deps ${CARGO_LOCKED}
+      - run: cargo doc -p revmesh-core --no-deps ${{ env.CARGO_LOCKED }}
 
   deny:
     name: cargo-deny (licences, advisories, bans, sources)
