@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-beta.3](https://github.com/stritti/revmesh/compare/v0.1.0-beta.2...v0.1.0-beta.3) (2026-11-23)
+
+
+### Bug Fixes
+
+* cut the first beta release under the revmesh name ([#35](https://github.com/stritti/revmesh/issues/35)) ([71412cc](https://github.com/stritti/revmesh/commit/71412cc22c3f84f20ac9a901f4f23f11f79d1e7a))
+
 ## [0.1.0-beta.2](https://github.com/stritti/revmesh/compare/v0.1.0-beta.1...v0.1.0-beta.2) (2026-11-22)
 
 
