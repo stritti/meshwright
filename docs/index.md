@@ -31,7 +31,7 @@ features:
 ---
 
 ::: warning Status: early
-The plugin pipeline works end to end: STL in, design out, tested in SolidCraft 0.45.
+The plugin pipeline works end to end: STL in, design out, tested in SolidCraft 0.47.
 Recognition finds plates: any outline of straight sides extruded along Z, its vertical corners
 sharp or all rounded with one radius, with round through holes. Everything else is imported as
 a mesh body. See the [roadmap](/guide/roadmap).

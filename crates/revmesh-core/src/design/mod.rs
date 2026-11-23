@@ -22,7 +22,8 @@ use serde::Serialize;
 
 use crate::mesh::Mesh;
 
-/// The document format version revmesh writes (SolidCraft 0.45 saves `solidcraft/63`).
+/// The document format version revmesh writes: `solidcraft/63` (SolidCraft 0.47.0 upgrades older
+/// formats when it opens a file, so this is still read).
 pub const FORMAT: &str = "solidcraft/63";
 
 /// A complete SolidCraft design.

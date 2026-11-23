@@ -16,7 +16,7 @@ The recognition follows [mesh2cad](https://github.com/emirmrkaljevic/mesh2cad)
 runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascade.
 
 > **Status: early.** The plugin pipeline works end to end: STL in, design out, tested in
-> SolidCraft 0.45. Recognition finds plates: any outline of straight sides (rectangles,
+> SolidCraft 0.47. Recognition finds plates: any outline of straight sides (rectangles,
 > L-shapes, brackets, chamfered or slanted sides) extruded along Z, its vertical corners sharp
 > or all rounded with one radius, with round through holes. Everything else is imported as a
 > mesh body, with the reason in the import report. See the [roadmap](#roadmap).

@@ -43,6 +43,22 @@ cargo deny check            # cargo install cargo-deny
 cargo xtask plugin-test     # if you have SolidCraft
 ```
 
+### Staying current with SolidCraft
+
+`SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml` is the SolidCraft release the plugin is built and
+tested against. The `SolidCraft version` workflow (`.github/workflows/solidcraft-version.yml`) checks
+it weekly against the latest release of
+[tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft): pull requests that lag behind
+fail that check, and when a newer release exists the workflow opens a dependabot-style update PR
+(re-vendored `wit/plugin.wit` plus all version references). Dependabot itself cannot track another
+repo's release into a vendored file, which is why this is a workflow.
+
+The update job needs the repo secret `SOLIDCRAFT_UPDATE_TOKEN`: a fine-grained PAT or GitHub App token with
+`contents: write`, `pull-requests: write` and `workflows: write`. The `workflows` scope is required because the
+update branch changes `.github/workflows/ci.yml` — the default `GITHUB_TOKEN` cannot push that (the `workflows`
+scope cannot be granted from a workflow file's `permissions` key), and a non-`GITHUB_TOKEN` identity is needed
+so the new PR's CI actually runs. Without the secret the scheduled run fails with an explanatory error.
+
 Guidelines:
 
 - **Keep the plugin crate thin.** Logic belongs in `revmesh-core`, where it can be tested

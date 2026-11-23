@@ -1,0 +1,136 @@
+name: SolidCraft version
+
+# Dependabot has no ecosystem that tracks another repo's release into a vendored file, so this
+# workflow does that job: weekly it compares SOLIDCRAFT_VERSION in ci.yml with the latest SolidCraft
+# release and opens a dependabot-style update PR when a newer one exists. On pull requests the check
+# is a gate: a PR that targets an older SolidCraft than the latest release fails.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solidcraft-version-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  SOLIDCRAFT_REPO: tangency-labs/solidcraft
+  CI_FILE: .github/workflows/ci.yml
+
+jobs:
+  check:
+    name: Check vendored interface against latest SolidCraft release
+    runs-on: ubuntu-latest
+    outputs:
+      outdated: ${{ steps.compare.outputs.outdated }}
+      current: ${{ steps.compare.outputs.current }}
+      latest: ${{ steps.compare.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare with the latest SolidCraft release
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest="$(gh api "repos/${SOLIDCRAFT_REPO}/releases/latest" --jq .tag_name | sed 's/^v//')"
+          current="$(grep -m1 -oE 'SOLIDCRAFT_VERSION: [0-9]+\.[0-9]+\.[0-9]+' "${CI_FILE}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$')"
+          echo "current=${current}" >> "${GITHUB_OUTPUT}"
+          echo "latest=${latest}" >> "${GITHUB_OUTPUT}"
+          gh api "repos/${SOLIDCRAFT_REPO}/contents/crates/craft-plugin/wit/plugin.wit?ref=v${current}" \
+            --jq .content | base64 -d > "${RUNNER_TEMP}/tagged-plugin.wit"
+          if cmp -s "${RUNNER_TEMP}/tagged-plugin.wit" crates/revmesh-plugin/wit/plugin.wit; then
+            wit_matches=true
+          else
+            wit_matches=false
+          fi
+          if [ "${current}" = "${latest}" ] && [ "${wit_matches}" = true ]; then
+            echo "outdated=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::vendored plugin interface is from SolidCraft v${current}, the latest release"
+          else
+            echo "outdated=true" >> "${GITHUB_OUTPUT}"
+            echo "::warning::repo targets SolidCraft v${current} (vendored WIT matches that tag: ${wit_matches}); latest release is v${latest}"
+          fi
+      - name: Fail PRs that do not target the latest SolidCraft release
+        if: github.event_name == 'pull_request' && steps.compare.outputs.outdated == 'true'
+        run: exit 1
+
+  update:
+    name: Open dependabot-style update PR
+    needs: check
+    if: needs.check.outputs.outdated == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # persist the update token's credentials, so the later git push (which changes
+          # .github/workflows/ci.yml) authenticates with it, not with the default GITHUB_TOKEN
+          token: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN }}
+      - name: Require an update token that can change workflow files
+        env:
+          TOKEN_PRESENT: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN != '' }}
+        if: env.TOKEN_PRESENT != 'true'
+        run: |
+          echo "::error::Set the repository secret SOLIDCRAFT_UPDATE_TOKEN (fine-grained PAT or GitHub App token with contents: write, pull-requests: write, workflows: write). The default GITHUB_TOKEN cannot push the update branch, because it changes .github/workflows/ci.yml and the workflows scope cannot be granted from a workflow file's permissions key."
+          exit 1
+      - name: Re-vendor the interface and bump all version references
+        env:
+          GH_TOKEN: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN }}
+          CURRENT: ${{ needs.check.outputs.current }}
+          LATEST: ${{ needs.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          branch="dependabot/solidcraft/v${LATEST}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${branch}"
+          gh api "repos/${SOLIDCRAFT_REPO}/contents/crates/craft-plugin/wit/plugin.wit?ref=v${LATEST}" \
+            --jq .content | base64 -d > crates/revmesh-plugin/wit/plugin.wit
+          cur_short="${CURRENT%.*}"
+          new_short="${LATEST%.*}"
+          git grep -l -E "${CURRENT}|${cur_short}" -- . ':(exclude)Cargo.lock' > "${RUNNER_TEMP}/files.txt" || true
+          if [ -s "${RUNNER_TEMP}/files.txt" ]; then
+            xargs -a "${RUNNER_TEMP}/files.txt" sed -i \
+              -e "s/${CURRENT}/${LATEST}/g" \
+              -e "s/\(^\|[^0-9.]\)${cur_short}\b/\1${new_short}/g"
+          fi
+          new_fmt="$(gh api "repos/${SOLIDCRAFT_REPO}/git/trees/v${LATEST}?recursive=1" --jq '.tree[].path' \
+            | grep -oE 'crates/doc/src/format/v[0-9]+' | sed 's/.*v//' | sort -n | tail -1)"
+          sed -i -E "s/(saves \`)solidcraft\/[0-9]+/\1solidcraft\/${new_fmt}/" docs/design-format.md || true
+          git add -A
+          git commit -m "chore: target SolidCraft v${LATEST}" \
+            -m "Re-vendor crates/revmesh-plugin/wit/plugin.wit from the v${LATEST} tag and bump every SolidCraft version reference (CI SOLIDCRAFT_VERSION, NOTICE, docs, crate docs, issue template)."
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+        id: bump
+      - name: Push branch and open the update PR
+        env:
+          GH_TOKEN: ${{ secrets.SOLIDCRAFT_UPDATE_TOKEN }}
+          LATEST: ${{ needs.check.outputs.latest }}
+          CURRENT: ${{ needs.check.outputs.current }}
+        run: |
+          set -euo pipefail
+          branch="dependabot/solidcraft/v${LATEST}"
+          if gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" --json number --jq 'length' | grep -q '^0$'; then
+            git push -u origin "${branch}"
+            cat > "${RUNNER_TEMP}/pr-body.md" <<EOF
+          Automated by the SolidCraft version workflow: SolidCraft v${LATEST} is the latest release, this repo targeted v${CURRENT}.
+
+          - re-vendors \`crates/revmesh-plugin/wit/plugin.wit\` from the v${LATEST} tag
+          - bumps every SolidCraft version reference (CI \`SOLIDCRAFT_VERSION\`, NOTICE, docs, crate docs, issue template)
+
+          CI on this PR runs the plugin tests against v${LATEST}. Please review the \`solidcraft/NN\` mention in \`docs/design-format.md\`.
+          EOF
+            gh pr create --repo "${GITHUB_REPOSITORY}" --head "${branch}" \
+              --title "chore: target SolidCraft v${LATEST}" --body-file "${RUNNER_TEMP}/pr-body.md"
+          else
+            echo "An update PR for ${branch} already exists"
+          fi

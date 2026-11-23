@@ -35,7 +35,7 @@ body:
     attributes:
       label: SolidCraft version
       description: Help › About, or `solidcraft-cli --version`.
-      placeholder: "0.45.0"
+      placeholder: "0.47.0"
     validations:
       required: true
   - type: dropdown

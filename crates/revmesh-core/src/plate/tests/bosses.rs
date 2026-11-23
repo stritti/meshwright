@@ -7,7 +7,7 @@ use crate::synth;
 
 use super::{circle, found, reason};
 
-/// A 70 x 40 x 6 plate exported from SolidCraft 0.45 with an Ø10 x 5 and an Ø8 x 3 boss on
+/// A 70 x 40 x 6 plate exported from SolidCraft 0.47 with an Ø10 x 5 and an Ø8 x 3 boss on
 /// its top face and an Ø5 hole.
 #[test]
 fn recognises_bosses() {

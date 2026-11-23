@@ -5,7 +5,7 @@ use crate::synth;
 
 use super::{found, reason};
 
-/// A 70 x 40 x 6 plate exported from SolidCraft 0.45 with a 16 x 12 x 4 pad on its top face, a
+/// A 70 x 40 x 6 plate exported from SolidCraft 0.47 with a 16 x 12 x 4 pad on its top face, a
 /// 20 x 14 x 3 pocket in the top face, a 12 x 8 x 2 one in the bottom face and an Ø4 hole.
 #[test]
 fn recognises_pads_and_pockets() {
