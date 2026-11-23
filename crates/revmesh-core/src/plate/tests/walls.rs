@@ -37,6 +37,7 @@ fn a_corner_out_of_its_arc_is_no_wall() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(1.0),
+        edge_fillet_r: None,
     };
     let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
     // The band corner nearest the bottom-left arc's middle goes to the sharp corner (0, 0).
@@ -127,6 +128,7 @@ fn a_shifted_bottom_band_is_not_vertical() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     let mut mesh = banded(&synth::plate(&spec, 32, [0.0; 3]), 0.0, [40.0, 25.0]);
     // Shift the whole bottom 0.5 mm along X: the mesh stays closed, the faces keep their

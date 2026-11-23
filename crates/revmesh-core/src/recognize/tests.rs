@@ -55,6 +55,7 @@ fn recognises_block_on_origin() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     assert_eq!(found, Recognition::Plate { plate, offset: [0.0; 3] });
 }
@@ -72,6 +73,7 @@ fn moves_offset_block_to_the_origin() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     assert_eq!(recognize(&block(1.0, 1.0, 1.0, [5.0, 0.0, 0.0])), Recognition::Plate { plate, offset: [5.0, 0.0, 0.0] });
 }
@@ -89,6 +91,7 @@ fn describes_plates() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(3.0),
+        edge_fillet_r: None,
     };
     assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 3 mm rounded corners");
     spec.holes = vec![HoleSpec { x: 1.0, y: 1.0, d: 1.0, head: None, blind: None }; 2];
@@ -112,6 +115,7 @@ fn slots_become_sketches_and_cuts() {
         bosses: vec![],
         slots: vec![slot(15.0, 0.0), slot(40.0, 30.0)],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [-30.0, 0.0, 0.0]).to_json()).expect("valid");
     let features = json["features"].as_array().expect("features");
@@ -158,6 +162,7 @@ fn cut_outs_are_cut_after_the_fillet() {
         bosses: vec![],
         cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [5.0, 0.0, 0.0]).to_json()).expect("valid");
     let features = json["features"].as_array().expect("features");
@@ -204,6 +209,7 @@ fn pads_and_pockets_become_boxes() {
         bosses: vec![],
         cutouts: vec![],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let f = &json["features"];
@@ -230,6 +236,7 @@ fn bosses_become_cylinders() {
         pockets: vec![],
         bosses: vec![BossSpec { x: 20.0, y: 15.0, d: 10.0, h: 4.0 }],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [5.0, 0.0, 2.0]).to_json()).expect("valid");
     let boss = &json["features"][3];
@@ -258,6 +265,7 @@ fn plate_volume_matches_solidcraft() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(3.0),
+        edge_fillet_r: None,
     };
     assert!((spec.volume() - 16_452.05).abs() < 0.01, "{}", spec.volume());
 }
@@ -356,6 +364,7 @@ fn x_extruded_plate_becomes_a_yz_profile() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     let mesh = Axis::X.unrotate_mesh(&synth::plate(&spec, 32, [3.0, 7.0, 11.0]));
     let Recognition::Profile { profile, offset, axis } = recognize(&mesh) else { panic!("not recognised: {:?}", recognize(&mesh)) };
@@ -449,10 +458,56 @@ fn plate_design_matches_golden_file() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(3.0),
+        edge_fillet_r: None,
     };
     let actual = spec.to_design("plate-with-hole").to_json_pretty();
     let golden = include_str!("../../tests/data/plate-with-hole.json");
     assert_eq!(actual.trim(), golden.trim(), "regenerate with `cargo run -p revmesh-core --example plate_design`");
+}
+
+/// A box rounded all over (mesh2cad's `edge_fillet_r`) is a plate whose one fillet rounds all
+/// twelve edges of the extrude — the four vertical ones and the eight on the top and bottom
+/// caps — before the holes are cut, as mesh2cad's `.edges().fillet()` does.
+#[test]
+fn rounded_box_fillets_all_twelve_edges_before_the_holes() {
+    let spec = PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 30.0,
+        holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 6.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_r: None,
+        edge_fillet_r: Some(5.0),
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [2.0, 3.0, 1.0]).to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let fillet = &features[3];
+    assert_eq!(fillet["type"], "fillet");
+    assert_eq!(features[4]["type"], "hole", "the hole is cut after the fillet");
+    let names: Vec<&str> = fillet["edge_names"].as_array().expect("names").iter().filter_map(|n| n.as_str()).collect();
+    assert_eq!(names.len(), 12);
+    for name in ["F2:side:l1|F2:side:l4", "F2:side:l1|F2:side:l2", "F2:side:l2|F2:side:l3", "F2:side:l3|F2:side:l4"] {
+        assert!(names.contains(&name), "{name}");
+    }
+    for i in 1..=4 {
+        assert!(names.iter().any(|n| *n == format!("F2:side:l{i}|F2:top")), "l{i}|top");
+        assert!(names.iter().any(|n| *n == format!("F2:side:l{i}|F2:start")), "l{i}|start");
+    }
+    assert_eq!(fillet["radius"], "edge_fillet_r");
+    let edges = fillet["edges"].as_array().expect("edges");
+    assert_eq!(edges[0], serde_json::json!([2.0, 3.0, 16.0]), "a vertical edge, mid-height");
+    assert_eq!(edges[4], serde_json::json!([32.0, 3.0, 31.0]), "l1's middle on the top cap");
+    assert_eq!(edges[5], serde_json::json!([32.0, 3.0, 1.0]), "l1's middle on the start cap");
+    assert!(json["params"].as_array().expect("params").iter().any(|p| p["name"] == "edge_fillet_r" && p["expr"] == "5 mm"));
+    let removed =
+        4.0 * 25.0 * (1.0 - std::f64::consts::PI / 4.0) * (60.0 + 40.0 + 30.0 - 30.0) + 8.0 * 125.0 * (1.0 - std::f64::consts::PI / 6.0);
+    let expected = 60.0 * 40.0 * 30.0 - removed - std::f64::consts::PI * 3.0 * 3.0 * 30.0;
+    assert!((spec.volume() - expected).abs() < 1e-9, "{} vs {expected}", spec.volume());
+    assert_eq!(spec.describe(), "A 60 x 40 x 30 mm plate with 1 hole and 5 mm rounded edges");
 }
 
 /// On a Y extrusion the XZ plane's sketch y is -Z: the slot's middle point and the bolt circle's

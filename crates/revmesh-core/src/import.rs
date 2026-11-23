@@ -155,6 +155,7 @@ mod tests {
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: Some(4.0),
+            edge_fillet_r: None,
         };
         let bytes = stl::write_binary(&crate::synth::plate(&spec, 24, [-30.0, -20.0, 0.0]));
         let result = import(&bytes, "bracket.stl", &ImportOptions::default()).expect("imports");
@@ -264,6 +265,7 @@ mod tests {
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: None,
+            edge_fillet_r: None,
         };
         let mesh = Axis::X.unrotate_mesh(&crate::synth::plate(&spec, 32, [3.0, 7.0, 11.0]));
         let result = import(&stl::write_binary(&mesh), "x-plate.stl", &ImportOptions::default()).expect("imports");
@@ -315,6 +317,26 @@ mod tests {
         assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));
         let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
         assert!((profile.volume() - volume).abs() < 1e-6 * volume, "{} vs {volume}", profile.volume());
+    }
+
+    /// Keeps the rounded box's plugin fixture and its expectations in step.
+    #[test]
+    fn plugin_test_rounded_box_fixture() {
+        let case: serde_json::Value =
+            serde_json::from_str(include_str!("../../../plugin/revmesh/tests/rounded-box.json")).expect("valid case");
+        let bytes = include_bytes!("../../../plugin/revmesh/tests/rounded-box.stl");
+        let result = import(bytes, "rounded-box.stl", &ImportOptions::default()).expect("imports");
+        let Recognition::Plate { plate, .. } = recognize(&stl::parse(bytes).expect("parses")) else { panic!("not a plate") };
+        assert_eq!(plate.edge_fillet_r, Some(5.0));
+        assert_eq!(plate.outline_fillet_r, None);
+        let expect = &case["expect"];
+        assert_eq!(result.design.features.len() as u64, expect["reply"]["features"].as_u64().expect("count"));
+        assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));
+        let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
+        assert!((plate.volume() - volume).abs() < 1e-6 * volume, "{} vs {volume}", plate.volume());
+        let fillet = result.design.features.iter().find(|f| f.name == "Fillet1").expect("a fillet");
+        let crate::design::FeatureKind::Fillet { edge_names, .. } = &fillet.kind else { panic!("not a fillet") };
+        assert_eq!(edge_names.len(), 12, "all twelve edges are filleted");
     }
 
     /// Keeps the STL fixture of SolidCraft's plugin test and its expectations in step.

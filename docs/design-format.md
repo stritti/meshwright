@@ -131,8 +131,10 @@ F<extrude id>:side:<line id>|F<extrude id>:side:<line id>
 ```
 
 `F2:side:l1` is the side face extrusion 2 made from sketch line `l1`; an edge is the pair of
-faces it joins. Other names seen in saved designs: `F2:top`, `F3:bore:side:0` (a hole's bore),
-`F4:blend(F2:side:l1|F2:top)` (a fillet face).
+faces it joins. The extrude's caps are `F2:top` (at the far end of a positive extrusion) and
+`F2:start` (on the sketch plane), so a box rounded on all twelve edges names
+`F2:side:l<i>|F2:top` and `F2:side:l<i>|F2:start` too. Other names seen in saved designs:
+`F2:top`, `F3:bore:side:0` (a hole's bore), `F4:blend(F2:side:l1|F2:top)` (a fillet face).
 
 ## Verified
 

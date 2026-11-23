@@ -1,8 +1,10 @@
+use std::f64::consts::PI;
+
 use crate::mesh::{Mesh, cross, sub};
-use crate::recognize::{Axis, HoleSpec, Recognition, recognize};
+use crate::recognize::{Axis, HoleSpec, PlateSpec, Recognition, recognize};
 use crate::synth;
 
-use super::{ell, found, reason, spec};
+use super::{P2, ell, found, reason, spec};
 
 #[test]
 fn recognises_holes_and_rounded_corners() {
@@ -83,6 +85,113 @@ fn mesh_with_a_gap_is_not_recognised() {
     reason(&mesh);
 }
 
+/// A box with all twelve edges rounded with one radius (mesh2cad's `edge_fillet_r`): the top
+/// and bottom faces are the inner rectangle, and the rim is round, so the plate is the full box
+/// with `edge_fillet_r`.
+#[test]
+fn rounded_box_is_recognised_with_all_edges_filleted() {
+    let expected = PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 30.0,
+        holes: vec![],
+        slots: vec![],
+        bosses: vec![],
+        pads: vec![],
+        pockets: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+        edge_fillet_r: Some(5.0),
+    };
+    let (plate, offset) = found(&synth::rounded_box(60.0, 40.0, 30.0, 5.0, 32, [0.0; 3]));
+    assert_eq!(plate, expected);
+    assert_eq!(offset, [0.0; 3]);
+}
+
+#[test]
+fn rounded_box_survives_single_precision_files() {
+    let mesh = synth::rounded_box(60.0, 40.0, 30.0, 5.0, 48, [0.0; 3]);
+    let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+    let (plate, _) = found(&reread);
+    assert_eq!((plate.x, plate.y, plate.z, plate.edge_fillet_r), (60.0, 40.0, 30.0, Some(5.0)));
+}
+
+#[test]
+fn rounded_box_moves_an_offset_to_the_origin() {
+    let (plate, offset) = found(&synth::rounded_box(60.0, 40.0, 30.0, 4.0, 32, [10.0, 20.0, 3.0]));
+    assert_eq!((plate.x, plate.y, plate.z, plate.edge_fillet_r), (60.0, 40.0, 30.0, Some(4.0)));
+    assert_eq!(offset, [10.0, 20.0, 3.0]);
+}
+
+/// A box with all twelve edges rounded and a through hole along Z clear of the rounds,
+/// tessellated the way an exporter does it: the caps are the inner rectangle with the hole's
+/// circle, the rim as in [`synth::rounded_box`], the bore's wall vertical.
+fn rounded_box_with_hole(x: f64, y: f64, z: f64, r: f64, hole: (f64, f64, f64), segments: usize) -> Mesh {
+    let n = segments.max(1);
+    let corners = [[r, r], [x - r, r], [x - r, y - r], [r, y - r]];
+    let mut ring: Vec<P2> = Vec::with_capacity(4 * n);
+    for i in 0..4 {
+        let (p, q) = (corners[i], corners[(i + 1) % 4]);
+        for j in 0..n {
+            let t = j as f64 / n as f64;
+            ring.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]);
+        }
+    }
+    let (hx, hy, hd) = hole;
+    let hole_ring: Vec<P2> =
+        (0..segments).map(|i| 2.0 * PI * i as f64 / segments as f64).map(|a| [hx + hd / 2.0 * a.cos(), hy + hd / 2.0 * a.sin()]).collect();
+    let mut mesh = synth::rounded_box(x, y, z, r, segments, [0.0; 3]);
+    // The top and bottom caps come first in rounded_box's triangles; replace them with holed ones.
+    mesh.triangles.drain(..2 * (4 * n - 2));
+    for [a, b, c] in synth::triangulate(&ring, std::slice::from_ref(&hole_ring)) {
+        mesh.triangles.push([[a[0], a[1], z], [b[0], b[1], z], [c[0], c[1], z]]);
+        mesh.triangles.push([[a[0], a[1], 0.0], [c[0], c[1], 0.0], [b[0], b[1], 0.0]]);
+    }
+    // The bore's wall, wound as prism() winds a hole's.
+    let rev: Vec<P2> = hole_ring.iter().rev().copied().collect();
+    for i in 0..rev.len() {
+        let (a, b) = (rev[i], rev[(i + 1) % rev.len()]);
+        mesh.triangles.push([[a[0], a[1], 0.0], [b[0], b[1], 0.0], [b[0], b[1], z]]);
+        mesh.triangles.push([[a[0], a[1], 0.0], [b[0], b[1], z], [a[0], a[1], z]]);
+    }
+    mesh
+}
+
+/// A rounded box with a through hole clear of the rounds is the box with `edge_fillet_r` and the
+/// hole, as mesh2cad's `_edge_fillet_with_holes` recognises it.
+#[test]
+fn rounded_box_with_a_hole_is_recognised() {
+    let expected = PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 30.0,
+        holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 8.0, head: None, blind: None }],
+        slots: vec![],
+        bosses: vec![],
+        pads: vec![],
+        pockets: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+        edge_fillet_r: Some(5.0),
+    };
+    let (plate, offset) = found(&rounded_box_with_hole(60.0, 40.0, 30.0, 5.0, (30.0, 20.0, 8.0), 32));
+    assert_eq!(plate, expected);
+    assert_eq!(offset, [0.0; 3]);
+}
+
+/// A dent in the rounded rim is no rounded box: the corner between the faces lies off the
+/// surface at distance `r` from the inner box.
+#[test]
+fn rounded_box_with_a_dent_is_not_recognised() {
+    let mut mesh = synth::rounded_box(60.0, 40.0, 30.0, 5.0, 16, [0.0; 3]);
+    let t = mesh.triangles.iter_mut().find(|t| t.iter().all(|p| p[2] > 1.0 && p[2] < 29.0)).expect("a wall facet between the faces");
+    let inward = [30.0 - t[0][0], 20.0 - t[0][1]];
+    let len = inward[0].hypot(inward[1]);
+    t[0][0] += inward[0] / len * 0.2;
+    t[0][1] += inward[1] / len * 0.2;
+    reason(&mesh);
+}
+
 #[test]
 fn synthetic_volumes_match_the_specs() {
     let s = spec(&[(40.0, 25.0, 10.0)], Some(5.0));
@@ -91,6 +200,21 @@ fn synthetic_volumes_match_the_specs() {
     let l = ell(Some(2.0));
     let mesh = synth::profile(&l, 128, [0.0; 3]);
     assert!((mesh.volume() - l.volume()).abs() / l.volume() < 1e-3);
+    let b = PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 30.0,
+        holes: vec![],
+        slots: vec![],
+        bosses: vec![],
+        pads: vec![],
+        pockets: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+        edge_fillet_r: Some(5.0),
+    };
+    let mesh = synth::rounded_box(60.0, 40.0, 30.0, 5.0, 128, [0.0; 3]);
+    assert!((mesh.volume() - b.volume()).abs() / b.volume() < 1e-3, "{} vs {}", mesh.volume(), b.volume());
 }
 
 #[test]

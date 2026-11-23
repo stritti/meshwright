@@ -59,6 +59,9 @@ impl PlateSpec {
         if let Some(r) = self.outline_fillet_r {
             b.param(Param::user("fillet_r", r));
         }
+        if let Some(r) = self.edge_fillet_r {
+            b.param(Param::user("edge_fillet_r", r));
+        }
         b.param(Param::model("d1", "base_x")).param(Param::model("d2", "base_y"));
 
         let sketch = b.feature(
@@ -79,6 +82,26 @@ impl PlateSpec {
                 translate: ["base_cx - base_x / 2".into(), "base_cy - base_y / 2".into(), "base_z0".into()],
             },
         );
+        if self.edge_fillet_r.is_some() {
+            // All twelve edges of the box, as mesh2cad's `.edges().fillet(edge_fillet_r)` does;
+            // the holes are cut after the fillet. The extrude's caps are `top` (at the far end)
+            // and `start` (on the sketch plane); the sides are l1 bottom, l2 right, l3 top, l4
+            // left (see `rectangle_sketch`).
+            let mid = at[2] + self.z / 2.0;
+            let (x0, y0, x1, y1) = (at[0], at[1], at[0] + self.x, at[1] + self.y);
+            let side = |a: usize, b: usize| format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}");
+            let mut edge_names = vec![side(1, 4), side(1, 2), side(2, 3), side(3, 4)];
+            let mut edges = vec![[x0, y0, mid], [x1, y0, mid], [x1, y1, mid], [x0, y1, mid]];
+            let mids = [[f64::midpoint(x0, x1), y0], [x1, f64::midpoint(y0, y1)], [f64::midpoint(x0, x1), y1], [x0, f64::midpoint(y0, y1)]];
+            for (k, m) in mids.iter().enumerate() {
+                let i = k + 1;
+                edge_names.push(format!("F{extrude}:side:l{i}|F{extrude}:top"));
+                edges.push([m[0], m[1], at[2] + self.z]);
+                edge_names.push(format!("F{extrude}:side:l{i}|F{extrude}:start"));
+                edges.push([m[0], m[1], at[2]]);
+            }
+            b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "edge_fillet_r".into() });
+        }
         cutout_features(&mut b, &self.cutouts, at, axis);
         hole_features(&mut b, &self.holes, at, axis, "base_z0 + base_t", "base_z0", self.z);
         slot_features(&mut b, &self.slots, at, axis);

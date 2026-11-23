@@ -139,6 +139,7 @@ fn small_fine_rounds() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(0.5),
+        edge_fillet_r: None,
     };
     let mesh = crate::stl::parse(&crate::stl::write_binary(&synth::plate(&expected, 96, [0.0; 3]))).expect("round trip");
     assert_eq!(found(&mesh).0, expected);
@@ -175,6 +176,7 @@ fn subdivided_outline_facets() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(3.0),
+        edge_fillet_r: None,
     };
     let outline = synth::rounded(&[[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]], Some(3.0), 32);
     let mut split = Vec::new();
@@ -224,6 +226,7 @@ fn short_sides_between_large_rounds() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(24.95),
+        edge_fillet_r: None,
     };
     assert_eq!(found(&synth::plate(&expected, 32, [0.0; 3])).0, expected);
 }

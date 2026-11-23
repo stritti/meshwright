@@ -10,7 +10,9 @@
 //! - `patterns`: `plugin/revmesh/tests/plate-patterns.stl`, a plate with a hole grid, a hole
 //!   row and a bolt circle;
 //! - `x-plate`: `plugin/revmesh/tests/x-plate.stl`, a 40 x 20 outline extruded 60 mm along X
-//!   with a through hole along X, placed away from the origin (a part standing upright).
+//!   with a through hole along X, placed away from the origin (a part standing upright);
+//! - `rounded-box`: `plugin/revmesh/tests/rounded-box.stl`, a 60 x 40 x 30 mm box with all
+//!   twelve edges rounded with 5 mm (mesh2cad's `edge_fillet_r`).
 //!
 //! ```sh
 //! cargo run -p revmesh-core --example plate_stl > plugin/revmesh/tests/plate-holes.stl
@@ -18,6 +20,7 @@
 //! cargo run -p revmesh-core --example plate_stl -- inside-hole > plugin/revmesh/tests/l-inside-hole.stl
 //! cargo run -p revmesh-core --example plate_stl -- patterns > plugin/revmesh/tests/plate-patterns.stl
 //! cargo run -p revmesh-core --example plate_stl -- x-plate > plugin/revmesh/tests/x-plate.stl
+//! cargo run -p revmesh-core --example plate_stl -- rounded-box > plugin/revmesh/tests/rounded-box.stl
 //! ```
 
 use std::io::Write as _;
@@ -43,6 +46,7 @@ fn plate() -> PlateSpec {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(3.0),
+        edge_fillet_r: None,
     }
 }
 
@@ -92,6 +96,7 @@ fn patterns() -> PlateSpec {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(4.0),
+        edge_fillet_r: None,
     }
 }
 
@@ -105,6 +110,26 @@ fn inside_hole() -> ProfileSpec {
         outline_fillet_r: Some(5.0),
         ..bracket()
     }
+}
+
+/// The box in `rounded-box.stl`: 60 x 40 x 30 mm with all twelve edges rounded with 5 mm.
+fn rounded_box() -> (PlateSpec, revmesh_core::mesh::Vec3) {
+    (
+        PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 30.0,
+            holes: vec![],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: None,
+            edge_fillet_r: Some(5.0),
+        },
+        [0.0; 3],
+    )
 }
 
 /// The part in `x-plate.stl`: a 40 x 20 outline extruded 60 mm along X, with a 6 mm hole through
@@ -122,6 +147,7 @@ fn x_plate() -> (revmesh_core::mesh::Mesh, String, f64) {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     let mesh = Axis::X.unrotate_mesh(&synth::plate(&spec, 48, [3.0, 7.0, 11.0]));
     let profile = spec.into_profile();
@@ -132,6 +158,13 @@ fn main() -> std::io::Result<()> {
     let which = std::env::args().nth(1);
     let (mesh, describe, volume) = if which.as_deref() == Some("x-plate") {
         x_plate()
+    } else if which.as_deref() == Some("rounded-box") {
+        let (spec, offset) = rounded_box();
+        (
+            synth::rounded_box(spec.x, spec.y, spec.z, spec.edge_fillet_r.expect("the rounded box"), 48, offset),
+            spec.describe(),
+            spec.volume(),
+        )
     } else if let Some((spec, offset)) = match which.as_deref() {
         Some("bracket") => Some((bracket(), [20.0, 10.0, 0.0])),
         Some("inside-hole") => Some((inside_hole(), [0.0; 3])),
