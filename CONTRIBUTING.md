@@ -43,6 +43,16 @@ cargo deny check            # cargo install cargo-deny
 cargo xtask plugin-test     # if you have SolidCraft
 ```
 
+### Staying current with SolidCraft
+
+`SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml` is the SolidCraft release the plugin is built and
+tested against. The `SolidCraft version` workflow (`.github/workflows/solidcraft-version.yml`) checks
+it weekly against the latest release of
+[tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft): pull requests that lag behind
+fail that check, and when a newer release exists the workflow opens a dependabot-style update PR
+(re-vendored `wit/plugin.wit` plus all version references). Dependabot itself cannot track another
+repo's release into a vendored file, which is why this is a workflow.
+
 Guidelines:
 
 - **Keep the plugin crate thin.** Logic belongs in `revmesh-core`, where it can be tested
