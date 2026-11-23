@@ -1,6 +1,6 @@
-# Contributing to meshwright
+# Contributing to revmesh
 
-Thank you for helping! meshwright is a young project and every contribution counts: a bug
+Thank you for helping! revmesh is a young project and every contribution counts: a bug
 report, an STL file that imports badly, a ported recogniser, a fix in the docs.
 
 ## Ways to help
@@ -12,14 +12,14 @@ report, an STL file that imports badly, a ported recogniser, a fix in the docs.
 - **Port a recogniser** from [mesh2cad](https://github.com/emirmrkaljevic/mesh2cad). Please open
   an issue first, so two people don't port the same thing.
 - **Improve the docs.** Small fixes can go straight into a pull request. The site at
-  <https://stritti.github.io/meshwright/> is built from `docs/` with VitePress: `cd docs && npm ci && npm run dev`
+  <https://stritti.github.io/revmesh/> is built from `docs/` with VitePress: `cd docs && npm ci && npm run dev`
   previews it.
 
 ## Development setup
 
 ```sh
-git clone https://github.com/stritti/meshwright
-cd meshwright
+git clone https://github.com/stritti/revmesh
+cd revmesh
 cargo test              # rustup installs the pinned toolchain and the wasm target on first use
 cargo xtask component   # the WebAssembly component
 ```
@@ -37,7 +37,7 @@ CI runs these gates; run them locally first:
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy -p meshwright-plugin --target wasm32-unknown-unknown -- -D warnings
+cargo clippy -p revmesh-plugin --target wasm32-unknown-unknown -- -D warnings
 cargo test --workspace
 cargo deny check            # cargo install cargo-deny
 cargo xtask plugin-test     # if you have SolidCraft
@@ -45,11 +45,11 @@ cargo xtask plugin-test     # if you have SolidCraft
 
 Guidelines:
 
-- **Keep the plugin crate thin.** Logic belongs in `meshwright-core`, where it can be tested
+- **Keep the plugin crate thin.** Logic belongs in `revmesh-core`, where it can be tested
   natively. The plugin only moves bytes between SolidCraft and the core.
 - **Test what you add.** Recognisers get unit tests with small synthetic meshes, and, where it
-  matters, a case in `plugin/meshwright/tests` that SolidCraft runs on the real component.
-- **Golden files** (`crates/meshwright-core/tests/data/*.json`) are regenerated, never edited by
+  matters, a case in `plugin/revmesh/tests` that SolidCraft runs on the real component.
+- **Golden files** (`crates/revmesh-core/tests/data/*.json`) are regenerated, never edited by
   hand: see the comment in the failing test.
 - **No `unsafe`** outside the generated bindings.
 - **Ported code** from mesh2cad names the module it comes from in the file header, e.g.
@@ -69,12 +69,12 @@ docs: explain the loss report
 `feat` and `fix` appear in the changelog. [release-please](https://github.com/googleapis/release-please)
 turns them into a release pull request; merging it tags the version, and CI attaches the plugin
 zip to the GitHub release. Breaking changes (`feat!:` or a `BREAKING CHANGE:` footer) bump the
-minor version while meshwright is below 1.0. Maintainers: the setup is in
+minor version while revmesh is below 1.0. Maintainers: the setup is in
 [docs/releasing.md](docs/releasing.md).
 
 ### Beta phase
 
-meshwright is in its beta phase: releases are pre-releases, versioned `0.1.0-beta.1`,
+revmesh is in its beta phase: releases are pre-releases, versioned `0.1.0-beta.1`,
 `0.1.0-beta.2`, … (`versioning: prerelease` with `prerelease-type: beta` in
 `release-please-config.json`), and GitHub marks them as pre-releases.
 
@@ -87,7 +87,7 @@ start a new beta line with `Release-As: 0.2.0-beta.1`.
 
 ## Licence of contributions
 
-meshwright is licensed under the MIT License. By submitting a contribution you agree that it is
+revmesh is licensed under the MIT License. By submitting a contribution you agree that it is
 licensed under the same terms, and that you have the right to submit it. Code ported from
 mesh2cad keeps its original copyright notice (see `NOTICE`).
 

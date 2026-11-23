@@ -4,7 +4,7 @@
 
 SolidCraft runs plugins as WebAssembly components built for `wasm32-unknown-unknown`: no WASI,
 no threads, no network, no subprocesses, no system randomness. mesh2cad itself (Python with
-numpy, scipy, trimesh and OpenCascade) cannot run there, so meshwright ports its recognition to
+numpy, scipy, trimesh and OpenCascade) cannot run there, so revmesh ports its recognition to
 Rust.
 
 It does **not** port mesh2cad's OpenCascade part, which stitches recognised faces into a solid.
@@ -16,7 +16,7 @@ editable.
 
 ```text
 crates/
-  meshwright-core/     host-independent: STL → Mesh → Recognition → Design + LossReport
+  revmesh-core/     host-independent: STL → Mesh → Recognition → Design + LossReport
     src/stl.rs         binary and ASCII STL
     src/mesh.rs        triangle soup, bounds, volume, area
     src/recognize/     what recognition finds (`Recognition`), the specs (spec.rs) and
@@ -28,22 +28,22 @@ crates/
                        check, face loops, hole pairing), tests/ (the tests, one file per
                        concern)
     src/synth.rs       synthetic meshes of known parts, for tests and STL fixtures
-    src/design/        the SolidCraft document model (the subset meshwright writes):
+    src/design/        the SolidCraft document model (the subset revmesh writes):
                        mod.rs (Design, features, DesignBuilder), sketch.rs (sketches and
                        their constructors)
     src/report.rs      the loss report SolidCraft shows after an import
     src/import.rs      the whole pipeline, and the import options
     tests/data/        fixtures and golden designs
-  meshwright-plugin/   the component: craft:plugin@0.2.0, importer-plugin world
+  revmesh-plugin/   the component: craft:plugin@0.2.0, importer-plugin world
     wit/plugin.wit     vendored from SolidCraft v0.45.0
-plugin/meshwright/     the package: plugin.json, the built .wasm, SolidCraft test cases
+plugin/revmesh/     the package: plugin.json, the built .wasm, SolidCraft test cases
 xtask/                 component wrapping, packaging, plugin tests
 ```
 
 ## Rules of thumb
 
 - **Everything testable lives in the core.** The plugin crate compiles to nothing on native
-  targets; it only reads the source in 1 MiB chunks, calls `meshwright_core::import` and writes
+  targets; it only reads the source in 1 MiB chunks, calls `revmesh_core::import` and writes
   the design in 1 MiB chunks.
 - **The output side is fixed before the recognisers.** `PlateSpec::to_design` already writes the
   history a recognised plate becomes, and its golden file has been opened and rebuilt in
@@ -60,7 +60,7 @@ xtask/                 component wrapping, packaging, plugin tests
   of arcs and rims unevenly. So a corner between the faces is checked against the walls
   themselves (it must lie on a hole's circle, a side or a corner's arc), not against its facet's
   normal, and arcs and holes are read from where their corners lie, not from equal facets.
-  `plugin/meshwright/tests/solidcraft-l-bracket.stl` is such an export.
+  `plugin/revmesh/tests/solidcraft-l-bracket.stl` is such an export.
 - **Deterministic numerics.** No threads and no system randomness in the sandbox: algorithms
   such as RANSAC use a fixed seed.
 
@@ -80,7 +80,7 @@ mesh in about 8 s; 2 million triangles exceed 128 MiB (before streaming, 600,000
 
 1. `cargo test`: unit tests of the core with synthetic meshes, and golden designs.
 2. `cargo xtask plugin-test`: `solidcraft-cli plugin test` installs the real component in a
-   scratch folder and imports each file in `plugin/meshwright/tests` through SolidCraft's
+   scratch folder and imports each file in `plugin/revmesh/tests` through SolidCraft's
    `file.import`, then checks bodies, features, the loss report and the measured volume.
-3. By hand: open a golden design (`cargo run -p meshwright-core --example plate_design`) in
+3. By hand: open a golden design (`cargo run -p revmesh-core --example plate_design`) in
    SolidCraft, change parameters and watch it rebuild.

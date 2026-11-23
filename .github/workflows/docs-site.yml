@@ -1,7 +1,7 @@
 name: Docs site
 
 # Builds the VitePress site in docs/ and publishes it to GitHub Pages:
-# https://stritti.github.io/meshwright/
+# https://stritti.github.io/revmesh/
 # Pull requests only build it, so a broken page or dead link shows up before merging.
 # Not part of "CI ok": the site never blocks a code change.
 on:

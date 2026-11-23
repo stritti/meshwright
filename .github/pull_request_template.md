@@ -10,6 +10,6 @@
 
 - [ ] The PR title follows [Conventional Commits](https://www.conventionalcommits.org/) (`feat: …`, `fix: …`).
 - [ ] `cargo fmt`, `cargo clippy -- -D warnings` and `cargo test` pass locally.
-- [ ] New behaviour has tests (core unit tests and, where it matters, `plugin/meshwright/tests`).
+- [ ] New behaviour has tests (core unit tests and, where it matters, `plugin/revmesh/tests`).
 - [ ] Code ported from mesh2cad names its source module in the file header.
 - [ ] Docs (`README.md`, `docs/`) are updated where needed.

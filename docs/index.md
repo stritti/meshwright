@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: meshwright
+  name: revmesh
   text: STL in, editable design out
   tagline: A SolidCraft importer plugin that turns triangle meshes into a parametric feature history you can keep designing on.
   image:
     src: /logo.svg
-    alt: meshwright
+    alt: revmesh
   actions:
     - theme: brand
       text: Install
@@ -17,7 +17,7 @@ hero:
       link: /guide/recognition
     - theme: alt
       text: GitHub
-      link: https://github.com/stritti/meshwright
+      link: https://github.com/stritti/revmesh
 
 features:
   - title: Editable, not a dead mesh

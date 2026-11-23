@@ -1,6 +1,6 @@
 # Security policy
 
-meshwright runs inside SolidCraft's plugin sandbox (no network, no file access beyond the file
+revmesh runs inside SolidCraft's plugin sandbox (no network, no file access beyond the file
 being imported), but it parses untrusted files, so robustness bugs matter.
 
 ## Reporting a vulnerability
@@ -11,4 +11,4 @@ will credit you in the advisory unless you prefer otherwise.
 
 ## Supported versions
 
-Only the latest release receives fixes while meshwright is below 1.0.
+Only the latest release receives fixes while revmesh is below 1.0.

@@ -1,7 +1,7 @@
 /target
 **/*.rs.bk
 # Built component; `cargo xtask component` makes it.
-/plugin/meshwright/*.wasm
+/plugin/revmesh/*.wasm
 # Output of `solidcraft-cli plugin test --out`
 /plugin/out/
 .DS_Store

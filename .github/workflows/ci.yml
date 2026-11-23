@@ -37,7 +37,7 @@ jobs:
       - name: clippy (native, all targets)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: clippy (wasm32, plugin)
-        run: cargo clippy -p meshwright-plugin -p meshwright-core --target wasm32-unknown-unknown --locked -- -D warnings
+        run: cargo clippy -p revmesh-plugin -p revmesh-core --target wasm32-unknown-unknown --locked -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -61,8 +61,8 @@ jobs:
         run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal --target wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo +${{ steps.msrv.outputs.version }} check -p meshwright-core --locked
-      - run: cargo +${{ steps.msrv.outputs.version }} check -p meshwright-plugin --target wasm32-unknown-unknown --locked
+      - run: cargo +${{ steps.msrv.outputs.version }} check -p revmesh-core --locked
+      - run: cargo +${{ steps.msrv.outputs.version }} check -p revmesh-plugin --target wasm32-unknown-unknown --locked
 
   docs:
     name: docs
@@ -72,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc -p meshwright-core --no-deps --locked
+      - run: cargo doc -p revmesh-core --no-deps --locked
 
   deny:
     name: cargo-deny (licences, advisories, bans, sources)
@@ -92,13 +92,13 @@ jobs:
       - run: cargo xtask dist
       - name: Component size
         run: |
-          size=$(stat -c %s plugin/meshwright/meshwright.wasm)
-          echo "meshwright.wasm: $size bytes" >> "$GITHUB_STEP_SUMMARY"
+          size=$(stat -c %s plugin/revmesh/revmesh.wasm)
+          echo "revmesh.wasm: $size bytes" >> "$GITHUB_STEP_SUMMARY"
           # SolidCraft refuses importer components above 64 MiB.
           test "$size" -lt 67108864
       - uses: actions/upload-artifact@v7
         with:
-          name: meshwright-plugin
+          name: revmesh-plugin
           path: target/dist/*.zip
           if-no-files-found: error
 
@@ -129,8 +129,8 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
-      - run: cargo llvm-cov -p meshwright-core --lcov --output-path lcov.info
-      - run: cargo llvm-cov report -p meshwright-core --summary-only >> "$GITHUB_STEP_SUMMARY"
+      - run: cargo llvm-cov -p revmesh-core --lcov --output-path lcov.info
+      - run: cargo llvm-cov report -p revmesh-core --summary-only >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov
