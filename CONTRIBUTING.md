@@ -50,8 +50,8 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy -p revmesh-plugin --target wasm32-unknown-unknown -- -D warnings
 cargo test --workspace
+cargo llvm-cov --workspace --fail-under-lines 80   # coverage gate >= 80% lines, whole workspace (llvm-tools-preview + cargo-llvm-cov)
 cargo deny check            # cargo install cargo-deny
-cargo llvm-cov -p revmesh-core --fail-under-lines 80   # coverage gate >= 80% (llvm-tools-preview + cargo-llvm-cov)
 cargo xtask plugin-test     # if you have SolidCraft
 ```
 

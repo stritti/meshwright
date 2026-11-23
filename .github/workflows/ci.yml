@@ -124,7 +124,7 @@ jobs:
       - run: cargo xtask check
 
   coverage:
-    name: "coverage (gate: >= 80% lines on revmesh-core)"
+    name: "coverage (gate: >= 80% lines, whole workspace)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -133,8 +133,13 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
-      - run: cargo llvm-cov -p revmesh-core --lcov --output-path lcov.info --fail-under-lines 80
-      - run: cargo llvm-cov report -p revmesh-core --summary-only >> "$GITHUB_STEP_SUMMARY"
+      # Whole workspace, no source excluded; the job fails below 80% line coverage.
+      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 80
+      - run: cargo llvm-cov report --workspace --summary-only >> "$GITHUB_STEP_SUMMARY"
+      - uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
       - uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov
