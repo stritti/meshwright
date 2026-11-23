@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "x-plate.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 4, "loss_report": {"summary": "A 40 x 20 x 60 mm plate with a 4-sided outline and 1 hole"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 46303.539967}},
+    "tolerance": 1e-4
+  }
+}

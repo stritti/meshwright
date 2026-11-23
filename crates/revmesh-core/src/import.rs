@@ -59,7 +59,9 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
     if options.mode == Mode::Auto {
         let recognised = match recognize(&mesh) {
             Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", offset), plate.describe(), plate.volume())),
-            Recognition::Profile { profile, offset } => Ok((profile.to_design_at("", offset), profile.describe(), profile.volume())),
+            Recognition::Profile { profile, offset, axis } => {
+                Ok((profile.to_design_on("", offset, axis), profile.describe(), profile.volume()))
+            }
             Recognition::Unrecognized { reason } => Err(reason),
         };
         match recognised {
@@ -246,6 +248,34 @@ mod tests {
         assert_eq!(param("hole_1_d"), Some("10 mm"));
     }
 
+    /// A plate standing along X imports as an outline on the YZ plane, with the hole's position
+    /// parameters named after the world axes Y and Z, as mesh2cad's extrusion module names them.
+    #[test]
+    fn x_extruded_plate_imports_as_a_yz_profile() {
+        use crate::recognize::{Axis, HoleSpec, PlateSpec};
+        let spec = PlateSpec {
+            x: 40.0,
+            y: 20.0,
+            z: 60.0,
+            holes: vec![HoleSpec { x: 10.0, y: 5.0, d: 6.0, head: None, blind: None }],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: None,
+        };
+        let mesh = Axis::X.unrotate_mesh(&crate::synth::plate(&spec, 32, [3.0, 7.0, 11.0]));
+        let result = import(&stl::write_binary(&mesh), "x-plate.stl", &ImportOptions::default()).expect("imports");
+        let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
+        assert_eq!(json["features"][0]["plane"]["name"], "YZ");
+        let names: Vec<&str> = result.design.params.iter().filter(|p| !p.model).map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["extrude_len", "extrude_0", "hole_1_y", "hole_1_z", "hole_1_d"]);
+        let hole = json["features"].as_array().expect("features").iter().find(|f| f["type"] == "hole").expect("a hole");
+        assert_eq!(hole["direction"], serde_json::json!([-1.0, 0.0, 0.0]));
+        assert_eq!(result.report.summary, "A 40 x 20 x 60 mm plate with a 4-sided outline and 1 hole");
+    }
+
     #[test]
     fn profile_import_keeps_its_place() {
         use crate::recognize::{HoleSpec, ProfileSpec};
@@ -269,6 +299,22 @@ mod tests {
         assert_eq!(result.design.params[2].expr, "27.5 mm");
         assert_eq!(json["features"][2]["translate"], serde_json::json!(["20", "10", "extrude_0"]));
         assert_eq!(json["features"][3]["at"], serde_json::json!(["hole_1_x", "hole_1_y", "extrude_0 + extrude_len"]));
+    }
+
+    /// Keeps the standing plate's plugin fixture and its expectations in step.
+    #[test]
+    fn plugin_test_x_plate_fixture() {
+        use crate::recognize::Axis;
+        let case: serde_json::Value = serde_json::from_str(include_str!("../../../plugin/revmesh/tests/x-plate.json")).expect("valid case");
+        let bytes = include_bytes!("../../../plugin/revmesh/tests/x-plate.stl");
+        let result = import(bytes, "x-plate.stl", &ImportOptions::default()).expect("imports");
+        let Recognition::Profile { profile, axis, .. } = recognize(&stl::parse(bytes).expect("parses")) else { panic!("not a profile") };
+        assert_eq!(axis, Axis::X);
+        let expect = &case["expect"];
+        assert_eq!(result.design.features.len() as u64, expect["reply"]["features"].as_u64().expect("count"));
+        assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));
+        let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
+        assert!((profile.volume() - volume).abs() < 1e-6 * volume, "{} vs {volume}", profile.volume());
     }
 
     /// Keeps the STL fixture of SolidCraft's plugin test and its expectations in step.

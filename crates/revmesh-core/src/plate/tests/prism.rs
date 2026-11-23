@@ -1,5 +1,5 @@
 use crate::mesh::{Mesh, cross, sub};
-use crate::recognize::{HoleSpec, Recognition, recognize};
+use crate::recognize::{Axis, HoleSpec, Recognition, recognize};
 use crate::synth;
 
 use super::{ell, found, reason, spec};
@@ -51,7 +51,7 @@ fn plates_far_from_the_origin() {
 #[test]
 fn recognises_solidcraft_exports() {
     let mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/solidcraft-l-bracket.stl")).expect("parses");
-    let Recognition::Profile { profile, offset } = recognize(&mesh) else { panic!("not recognised: {:?}", recognize(&mesh)) };
+    let Recognition::Profile { profile, offset, .. } = recognize(&mesh) else { panic!("not recognised: {:?}", recognize(&mesh)) };
     assert_eq!(offset, [20.0, 10.0, 0.0]);
     assert_eq!(profile.corners, [[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]]);
     assert_eq!(
@@ -61,13 +61,19 @@ fn recognises_solidcraft_exports() {
     assert_eq!((profile.z, profile.outline_fillet_r), (5.0, Some(2.0)));
 }
 
+/// A plate standing along Y (turned by `(x, y, z) -> (x, z, -y)`) is recognised as an outline
+/// extruded along Y, as mesh2cad's extrusion module recognises it; seen along Z it is a strip
+/// with a hole through its side, no prism over its top face.
 #[test]
-fn standing_plate_is_not_recognised() {
+fn standing_plate_is_recognised_along_y() {
     let mesh = synth::plate(&spec(&[(40.0, 25.0, 10.0)], None), 32, [0.0; 3]);
     let turned = Mesh::new(mesh.triangles.iter().map(|t| t.map(|p| [p[0], p[2], -p[1]])).collect());
-    // Seen along Z it is a strip with a hole through its side: no prism over its top face.
-    let why = reason(&turned);
-    assert!(why.contains("not a flat plate") || why.contains("faces differ"), "{why}");
+    let Recognition::Profile { profile, offset, axis } = recognize(&turned) else { panic!("not recognised: {:?}", recognize(&turned)) };
+    assert_eq!(axis, Axis::Y);
+    assert_eq!(offset, [0.0; 3]);
+    assert_eq!(profile.corners, [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]]);
+    assert_eq!(profile.z, 5.0);
+    assert_eq!(profile.holes, [HoleSpec { x: 40.0, y: 25.0, d: 10.0, head: None, blind: None }]);
 }
 
 #[test]

@@ -151,7 +151,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     let mut recognised = recognize_prism(&plate)?;
     let (offset, top) = match &recognised {
         Recognition::Plate { plate, offset } => (*offset, offset[2] + plate.z),
-        Recognition::Profile { profile, offset } => (*offset, offset[2] + profile.z),
+        Recognition::Profile { profile, offset, .. } => (*offset, offset[2] + profile.z),
         Recognition::Unrecognized { .. } => return Err(why),
     };
     let (mut bosses, mut pads) = (Vec::new(), Vec::new());

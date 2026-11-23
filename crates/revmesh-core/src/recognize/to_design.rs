@@ -1,13 +1,36 @@
 use std::collections::HashMap;
 
+use super::axis::Axis;
 use super::spec::{BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions, fmt_number,
-    polygon_sketch, polygons_sketch, rectangle_sketch, slot_sketch,
+    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions, polygon_sketch,
+    polygons_sketch, rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Vec3, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
+
+/// The expressions for a point's world coordinates: along the extrusion axis the face's
+/// expression, along the profile axes the parameters named after their world axis letters.
+fn world_exprs(prefix: &str, axis: Axis, face: &str) -> [String; 3] {
+    let mut out = [const { String::new() }; 3];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = match axis.profile_axes().iter().position(|&a| a == i) {
+            Some(k) => format!("{prefix}_{}", axis.profile_letter(k)),
+            None => String::from(face),
+        };
+    }
+    out
+}
+
+/// The two position parameters of a point `(u, v)` in the profile plane, named after their world
+/// axis letters (mesh2cad's `hole_<n>_y`, `hole_<n>_z` on an X extrusion), in world coordinates
+/// for a part whose bounding box's lowest corner is at `at`.
+fn pos_params(b: &mut DesignBuilder, name: &str, axis: Axis, at: Vec3, p: [f64; 2]) {
+    for (i, value) in p.iter().enumerate() {
+        b.param(Param::user(format!("{name}_{}", axis.profile_letter(i)), snap_mm(axis.profile_world(at, i, *value))));
+    }
+}
 
 impl PlateSpec {
     /// The plate as a parametric history, its corner at the origin; see [`PlateSpec::to_design_at`].
@@ -20,18 +43,19 @@ impl PlateSpec {
     /// parameters `base_x`, `base_y`, `base_t`, the centre `base_cx`, `base_cy` and the bottom
     /// `base_z0`, `hole_<n>_x/_y/_d` (in world coordinates) and `fillet_r`; a sketch and an
     /// extrusion at the origin, a move to where the plate is, a hole per hole and a fillet of the
-    /// four vertical corners.
+    /// four vertical corners. A plate is always a Z extrusion.
     #[must_use]
     pub fn to_design_at(&self, name: &str, at: Vec3) -> Design {
+        let axis = Axis::Z;
         let mut b = DesignBuilder::new(name);
         b.param(Param::user("base_x", self.x)).param(Param::user("base_y", self.y)).param(Param::user("base_t", self.z));
         b.param(Param::user("base_cx", snap_mm(at[0] + self.x / 2.0)))
             .param(Param::user("base_cy", snap_mm(at[1] + self.y / 2.0)))
             .param(Param::user("base_z0", snap_mm(at[2])));
-        hole_params(&mut b, &self.holes, at);
-        slot_params(&mut b, &self.slots, at);
-        boss_params(&mut b, &self.bosses, at);
-        block_params(&mut b, &self.pads, &self.pockets, at);
+        hole_params(&mut b, &self.holes, at, axis);
+        slot_params(&mut b, &self.slots, at, axis);
+        boss_params(&mut b, &self.bosses, at, axis);
+        block_params(&mut b, &self.pads, &self.pockets, at, axis);
         if let Some(r) = self.outline_fillet_r {
             b.param(Param::user("fillet_r", r));
         }
@@ -55,11 +79,11 @@ impl PlateSpec {
                 translate: ["base_cx - base_x / 2".into(), "base_cy - base_y / 2".into(), "base_z0".into()],
             },
         );
-        cutout_features(&mut b, &self.cutouts, at);
-        hole_features(&mut b, &self.holes, at, "base_z0 + base_t", "base_z0", self.z);
-        slot_features(&mut b, &self.slots, at);
-        boss_features(&mut b, &self.bosses, "base_z0 + base_t");
-        block_features(&mut b, &self.pads, &self.pockets, "base_z0 + base_t", "base_z0");
+        cutout_features(&mut b, &self.cutouts, at, axis);
+        hole_features(&mut b, &self.holes, at, axis, "base_z0 + base_t", "base_z0", self.z);
+        slot_features(&mut b, &self.slots, at, axis);
+        boss_features(&mut b, &self.bosses, axis, "base_z0 + base_t");
+        block_features(&mut b, &self.pads, &self.pockets, axis, "base_z0 + base_t", "base_z0");
         if self.outline_fillet_r.is_some() {
             let mid = at[2] + self.z / 2.0;
             let side = |a: u32, b: u32| format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}");
@@ -79,35 +103,44 @@ impl PlateSpec {
 }
 
 impl ProfileSpec {
-    /// The plate as a parametric history, its bounding box's corner at the origin; see
+    /// The profile as a parametric history, its bounding box's corner at the origin; see
     /// [`ProfileSpec::to_design_at`].
     #[must_use]
     pub fn to_design(&self, name: &str) -> Design {
         self.to_design_at(name, [0.0; 3])
     }
 
-    /// The plate as a parametric history with its bounding box's lowest corner at `at`, as
-    /// mesh2cad writes an extruded outline: parameters `extrude_len` (the thickness),
-    /// `extrude_0` (where it starts along Z), `hole_<n>_x/_y/_d` (in world coordinates) and
-    /// `outline_fillet_r`; a sketch of the outline (see [`polygon_sketch`]), an extrusion, a move
-    /// to where the plate is, a fillet of every vertical corner and a hole per hole. The fillet
-    /// comes before the holes: an inside corner's rounding adds material, and a hole may lie in
-    /// it.
+    /// The profile as a parametric history with its bounding box's lowest corner at `at`,
+    /// extruded along Z; see [`ProfileSpec::to_design_on`].
     #[must_use]
     pub fn to_design_at(&self, name: &str, at: Vec3) -> Design {
+        self.to_design_on(name, at, Axis::Z)
+    }
+
+    /// The profile as a parametric history with its bounding box's lowest corner at `at`,
+    /// extruded along `axis`, as mesh2cad writes an extruded outline: parameters `extrude_len`
+    /// (the thickness), `extrude_0` (where it starts along the axis), `hole_<n>_<a>/_<b>/_d` for
+    /// the profile plane's world axis letters and `outline_fillet_r`; a sketch of the outline on
+    /// the axis's plane (see [`Axis::plane`]), an extrusion along the plane's normal, a move to
+    /// where the part is, a fillet of every corner edge parallel to the axis and a hole per
+    /// hole. The fillet comes before the holes: an inside corner's rounding adds material, and a
+    /// hole may lie in it.
+    #[must_use]
+    pub fn to_design_on(&self, name: &str, at: Vec3, axis: Axis) -> Design {
         let mut b = DesignBuilder::new(name);
-        b.param(Param::user("extrude_len", self.z)).param(Param::user("extrude_0", snap_mm(at[2])));
-        hole_params(&mut b, &self.holes, at);
-        slot_params(&mut b, &self.slots, at);
-        boss_params(&mut b, &self.bosses, at);
-        block_params(&mut b, &self.pads, &self.pockets, at);
+        let top = "extrude_0 + extrude_len";
+        b.param(Param::user("extrude_len", self.z)).param(Param::user("extrude_0", snap_mm(at[axis.index()])));
+        hole_params(&mut b, &self.holes, at, axis);
+        slot_params(&mut b, &self.slots, at, axis);
+        boss_params(&mut b, &self.bosses, at, axis);
+        block_params(&mut b, &self.pads, &self.pockets, at, axis);
         if let Some(r) = self.outline_fillet_r {
             b.param(Param::user("outline_fillet_r", r));
         }
         let sketch = b.feature(
             "Sketch1",
             vec![],
-            FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: polygon_sketch(&self.corners) },
+            FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygon_sketch(&self.corners) },
         );
         let extrude = b.feature(
             "Extrude1",
@@ -119,11 +152,7 @@ impl ProfileSpec {
                 operation: Operation::NewBody,
             },
         );
-        b.feature(
-            "Move1",
-            vec![],
-            FeatureKind::Move { bodies: vec!["Body1".into()], translate: [fmt_number(at[0]), fmt_number(at[1]), "extrude_0".into()] },
-        );
+        b.feature("Move1", vec![], FeatureKind::Move { bodies: vec!["Body1".into()], translate: axis.translate(at) });
         if self.outline_fillet_r.is_some() {
             let n = self.corners.len();
             // Corner i joins line l<i> (ending there) and line l<i+1> (starting there).
@@ -134,36 +163,42 @@ impl ProfileSpec {
                     format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}")
                 })
                 .collect();
-            let edges = self.corners.iter().map(|c| [at[0] + c[0], at[1] + c[1], at[2] + self.z / 2.0]).collect();
+            let edges = self.corners.iter().map(|c| axis.world(at, c[0], c[1], self.z / 2.0)).collect();
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
         }
-        cutout_features(&mut b, &self.cutouts, at);
-        hole_features(&mut b, &self.holes, at, "extrude_0 + extrude_len", "extrude_0", self.z);
-        slot_features(&mut b, &self.slots, at);
-        boss_features(&mut b, &self.bosses, "extrude_0 + extrude_len");
-        block_features(&mut b, &self.pads, &self.pockets, "extrude_0 + extrude_len", "extrude_0");
+        cutout_features(&mut b, &self.cutouts, at, axis);
+        hole_features(&mut b, &self.holes, at, axis, top, "extrude_0", self.z);
+        slot_features(&mut b, &self.slots, at, axis);
+        boss_features(&mut b, &self.bosses, axis, top);
+        block_features(&mut b, &self.pads, &self.pockets, axis, top, "extrude_0");
         b.build()
     }
 }
 
 /// The slots' parameters, as mesh2cad names them: `slot_<n>_len` (between the end centres),
-/// `_w`, the middle `_x`, `_y` (in world coordinates for a plate whose corner is at `at`) and
-/// `_angle` (of the long axis from X).
-fn slot_params(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3) {
+/// `_w`, the middle's two profile-plane coordinates (in world coordinates, named after their
+/// world axis letters) and `_angle` (of the long axis from the profile's first axis).
+fn slot_params(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3, axis: Axis) {
     for (i, s) in slots.iter().enumerate() {
         let p = format!("slot_{}", i + 1);
-        b.param(Param::user(format!("{p}_len"), s.len))
-            .param(Param::user(format!("{p}_w"), s.w))
-            .param(Param::user(format!("{p}_x"), snap_mm(at[0] + s.x)))
-            .param(Param::user(format!("{p}_y"), snap_mm(at[1] + s.y)))
-            .param(Param::angle(format!("{p}_angle"), s.angle));
+        b.param(Param::user(format!("{p}_len"), s.len)).param(Param::user(format!("{p}_w"), s.w));
+        pos_params(b, &p, axis, at, [s.x, s.y]);
+        b.param(Param::angle(format!("{p}_angle"), s.angle));
     }
 }
 
-/// A sketch of each slot on the XY plane, in world coordinates for a plate whose corner is at
-/// `at`, and a cut through everything both ways from it. The sketch's dimensions are model
-/// parameters driven by the slot's user parameters.
-fn slot_features(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3) {
+/// The expression placing a slot's middle in sketch coordinates on the axis's plane: the
+/// parameter named after the profile coordinate's world axis, negated where the plane's sketch
+/// axis runs against the world axis (the XZ plane's sketch y is -Z).
+fn sketch_pos_expr(p: &str, axis: Axis, i: usize) -> String {
+    let name = format!("{p}_{}", axis.profile_letter(i));
+    if axis.profile_sign(i) < 0.0 { format!("-{name}") } else { name }
+}
+
+/// A sketch of each slot on the profile plane, at its world profile coordinates for a part whose
+/// corner is at `at`, and a cut through everything both ways from it. The sketch's dimensions are
+/// model parameters driven by the slot's user parameters.
+fn slot_features(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3, axis: Axis) {
     for (i, s) in slots.iter().enumerate() {
         let p = format!("slot_{}", i + 1);
         let mut model = |expr: String, angle: bool| {
@@ -171,19 +206,19 @@ fn slot_features(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3) {
             b.param(if angle { Param::model_angle(&name, expr) } else { Param::model(&name, expr) });
             name
         };
-        let centre = [snap_mm(at[0] + s.x), snap_mm(at[1] + s.y)];
+        let centre = axis.sketch_point(at, [s.x, s.y]).map(snap_mm);
         let dims = SlotDimensions {
             len: model(format!("{p}_len"), false),
             w: model(format!("{p}_w"), false),
-            x: format!("{p}_x"),
-            y: format!("{p}_y"),
+            x: sketch_pos_expr(&p, axis, 0),
+            y: sketch_pos_expr(&p, axis, 1),
             angle: Some(model(format!("{p}_angle"), true)),
         };
         let n = i + 1;
         let sketch = b.feature(
             format!("Slot{n}Sketch"),
             vec![],
-            FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: slot_sketch(centre, s.len, s.w, s.angle, &dims) },
+            FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: slot_sketch(centre, s.len, s.w, s.angle, &dims) },
         );
         b.feature(
             format!("Slot{n}"),
@@ -193,17 +228,19 @@ fn slot_features(b: &mut DesignBuilder, slots: &[SlotSpec], at: Vec3) {
     }
 }
 
-/// The cut-outs as one sketch (in world coordinates for a plate whose corner is at `at`) and a
-/// cut through everything both ways from it. It comes after the outline's fillet: a cut-out may
-/// lie in the material an inside corner's rounding adds.
-fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3) {
+/// The cut-outs as one sketch on the profile plane (at their world profile coordinates for a part
+/// whose corner is at `at`) and a cut through everything both ways from it. It comes after the
+/// outline's fillet: a cut-out may lie in the material an inside corner's rounding adds.
+fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3, axis: Axis) {
     if cutouts.is_empty() {
         return;
     }
-    let world: Vec<Vec<[f64; 2]>> =
-        cutouts.iter().map(|c| c.iter().map(|p| [snap_mm(at[0] + p[0]), snap_mm(at[1] + p[1])]).collect()).collect();
-    let sketch =
-        b.feature("CutoutsSketch", vec![], FeatureKind::Sketch { plane: Plane::Origin { name: "XY" }, sketch: polygons_sketch(&world) });
+    let sketched: Vec<Vec<[f64; 2]>> = cutouts.iter().map(|c| c.iter().map(|p| axis.sketch_point(at, *p).map(snap_mm)).collect()).collect();
+    let sketch = b.feature(
+        "CutoutsSketch",
+        vec![],
+        FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygons_sketch(&sketched) },
+    );
     b.feature(
         "Cutouts",
         vec![],
@@ -211,29 +248,27 @@ fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3) {
     );
 }
 
-/// The bosses' parameters, as mesh2cad names them: `boss_<n>_d`, `_h` (above the top face) and
-/// the centre `_x`, `_y` (in world coordinates for a plate whose corner is at `at`).
-fn boss_params(b: &mut DesignBuilder, bosses: &[BossSpec], at: Vec3) {
+/// The bosses' parameters, as mesh2cad names them: `boss_<n>_d`, `_h` (above the face the boss
+/// stands on) and the centre's two profile-plane coordinates (in world coordinates).
+fn boss_params(b: &mut DesignBuilder, bosses: &[BossSpec], at: Vec3, axis: Axis) {
     for (i, s) in bosses.iter().enumerate() {
         let p = format!("boss_{}", i + 1);
-        b.param(Param::user(format!("{p}_d"), s.d))
-            .param(Param::user(format!("{p}_h"), s.h))
-            .param(Param::user(format!("{p}_x"), snap_mm(at[0] + s.x)))
-            .param(Param::user(format!("{p}_y"), snap_mm(at[1] + s.y)));
+        b.param(Param::user(format!("{p}_d"), s.d)).param(Param::user(format!("{p}_h"), s.h));
+        pos_params(b, &p, axis, at, [s.x, s.y]);
     }
 }
 
-/// A cylinder joined to the plate per boss, standing on the top face at height `top` (its
-/// expression).
-fn boss_features(b: &mut DesignBuilder, bosses: &[BossSpec], top: &str) {
+/// A cylinder joined to the part per boss, standing on the face at height `top` (its
+/// expression) along the axis.
+fn boss_features(b: &mut DesignBuilder, bosses: &[BossSpec], axis: Axis, top: &str) {
     for i in 1..=bosses.len() {
         let p = format!("boss_{i}");
         b.feature(
             format!("Boss{i}"),
             vec![],
             FeatureKind::Cylinder {
-                base: [format!("{p}_x"), format!("{p}_y"), top.into()],
-                axis: [0.0, 0.0, 1.0],
+                base: world_exprs(&p, axis, top),
+                axis: axis.dir(),
                 radius: format!("{p}_d / 2"),
                 height: format!("{p}_h"),
                 operation: Operation::Join,
@@ -242,53 +277,81 @@ fn boss_features(b: &mut DesignBuilder, bosses: &[BossSpec], top: &str) {
     }
 }
 
-/// The pads' and the pockets' parameters: `pad_<n>_w` (along X), `_l` (along Y), `_h` and the
-/// middle `_x`, `_y`, as mesh2cad names a pad, and `pocket_<n>_w`, `_l`, `_depth`, `_x`, `_y`
-/// alike (in world coordinates for a plate whose corner is at `at`).
-fn block_params(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec], at: Vec3) {
-    let middle = |b: &mut DesignBuilder, p: &str, x: f64, y: f64| {
-        b.param(Param::user(format!("{p}_x"), snap_mm(at[0] + x))).param(Param::user(format!("{p}_y"), snap_mm(at[1] + y)));
-    };
+/// The pads' and the pockets' parameters: `pad_<n>_w` (along the profile's first axis), `_l`
+/// (along its second), `_h` and the middle's two profile-plane coordinates, as mesh2cad names
+/// a pad, and `pocket_<n>_w`, `_l`, `_depth`, and the middle's alike (in world coordinates for a
+/// part whose corner is at `at`).
+fn block_params(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec], at: Vec3, axis: Axis) {
     for (i, s) in pads.iter().enumerate() {
         let p = format!("pad_{}", i + 1);
         b.param(Param::user(format!("{p}_w"), s.w)).param(Param::user(format!("{p}_l"), s.l)).param(Param::user(format!("{p}_h"), s.h));
-        middle(b, &p, s.x, s.y);
+        pos_params(b, &p, axis, at, [s.x, s.y]);
     }
     for (i, s) in pockets.iter().enumerate() {
         let p = format!("pocket_{}", i + 1);
         b.param(Param::user(format!("{p}_w"), s.w))
             .param(Param::user(format!("{p}_l"), s.l))
             .param(Param::user(format!("{p}_depth"), s.depth));
-        middle(b, &p, s.x, s.y);
+        pos_params(b, &p, axis, at, [s.x, s.y]);
     }
 }
 
-/// A box joined to the plate per pad, standing on the top face at height `top` (its
-/// expression), and a box cut out of it per pocket, down from `top` or up from `bottom`.
-fn block_features(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec], top: &str, bottom: &str) {
-    let corner = |p: &str, z: String| [format!("{p}_x - {p}_w / 2"), format!("{p}_y - {p}_l / 2"), z];
+/// A box joined to the part per pad, standing on the face at `top`, and a box cut out of it per
+/// pocket, from `top` or from `bottom`. The box's corner and extents are in world axes: along
+/// the extrusion axis the pad's height or the pocket's depth, along the profile axes its width
+/// and length.
+fn block_features(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec], axis: Axis, top: &str, bottom: &str) {
+    let box_at = |p: &str, along: &str, extent: &str| -> ([String; 3], [String; 3]) {
+        let mut corner = [const { String::new() }; 3];
+        let mut size = [const { String::new() }; 3];
+        for i in 0..3 {
+            match axis.profile_axes().iter().position(|&a| a == i) {
+                Some(0) => {
+                    corner[i] = format!("{p}_{} - {p}_w / 2", axis.profile_letter(0));
+                    size[i] = format!("{p}_w");
+                }
+                Some(1) => {
+                    corner[i] = format!("{p}_{} - {p}_l / 2", axis.profile_letter(1));
+                    size[i] = format!("{p}_l");
+                }
+                _ => {
+                    corner[i] = String::from(along);
+                    size[i] = String::from(extent);
+                }
+            }
+        }
+        (corner, size)
+    };
     for i in 1..=pads.len() {
         let p = format!("pad_{i}");
-        let kind = FeatureKind::Box {
-            corner: corner(&p, top.into()),
-            length: format!("{p}_w"),
-            width: format!("{p}_l"),
-            height: format!("{p}_h"),
-            operation: Operation::Join,
-        };
-        b.feature(format!("Pad{i}"), vec![], kind);
+        let (corner, size) = box_at(&p, top, &format!("{p}_h"));
+        b.feature(
+            format!("Pad{i}"),
+            vec![],
+            FeatureKind::Box {
+                corner,
+                length: size[0].clone(),
+                width: size[1].clone(),
+                height: size[2].clone(),
+                operation: Operation::Join,
+            },
+        );
     }
     for (i, s) in pockets.iter().enumerate() {
         let p = format!("pocket_{}", i + 1);
-        let z = if s.bottom { bottom.to_owned() } else { format!("{top} - {p}_depth") };
-        let kind = FeatureKind::Box {
-            corner: corner(&p, z),
-            length: format!("{p}_w"),
-            width: format!("{p}_l"),
-            height: format!("{p}_depth"),
-            operation: Operation::Cut,
-        };
-        b.feature(format!("Pocket{}", i + 1), vec![], kind);
+        let along = if s.bottom { bottom.to_owned() } else { format!("{top} - {p}_depth") };
+        let (corner, size) = box_at(&p, &along, &format!("{p}_depth"));
+        b.feature(
+            format!("Pocket{}", i + 1),
+            vec![],
+            FeatureKind::Box {
+                corner,
+                length: size[0].clone(),
+                width: size[1].clone(),
+                height: size[2].clone(),
+                operation: Operation::Cut,
+            },
+        );
     }
 }
 
@@ -313,16 +376,15 @@ fn hole_groups(holes: &[HoleSpec]) -> Vec<(String, HoleGroup)> {
         .collect()
 }
 
-/// The holes' parameters, positions in world coordinates for a plate whose corner is at `at`.
+/// The holes' parameters, positions in world coordinates for a part whose corner is at `at`,
+/// named after the profile plane's world axis letters.
 #[allow(clippy::many_single_char_names)] // x, y, d, r as in the parameter names
-fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3) {
-    let (ax, ay) = (at[0], at[1]);
+fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, axis: Axis) {
     for (p, group) in hole_groups(holes) {
         match group {
             HoleGroup::Single(h) => {
-                b.param(Param::user(format!("{p}_x"), snap_mm(ax + h.x)))
-                    .param(Param::user(format!("{p}_y"), snap_mm(ay + h.y)))
-                    .param(Param::user(format!("{p}_d"), h.d));
+                pos_params(b, &p, axis, at, [h.x, h.y]);
+                b.param(Param::user(format!("{p}_d"), h.d));
                 if let Some(blind) = h.blind {
                     b.param(Param::user(format!("{p}_depth"), blind.depth));
                 }
@@ -339,128 +401,182 @@ fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3) {
             HoleGroup::Row { n, pitch, d, x, y, .. } => {
                 b.param(Param::count(format!("{p}_n"), n))
                     .param(Param::user(format!("{p}_pitch"), pitch))
-                    .param(Param::user(format!("{p}_d"), d))
-                    .param(Param::user(format!("{p}_x"), snap_mm(ax + x)))
-                    .param(Param::user(format!("{p}_y"), snap_mm(ay + y)));
+                    .param(Param::user(format!("{p}_d"), d));
+                pos_params(b, &p, axis, at, [x, y]);
             }
             HoleGroup::Grid { nx, ny, pitch_x, pitch_y, d, x, y } => {
                 b.param(Param::count(format!("{p}_nx"), nx))
                     .param(Param::count(format!("{p}_ny"), ny))
                     .param(Param::user(format!("{p}_pitch_x"), pitch_x))
                     .param(Param::user(format!("{p}_pitch_y"), pitch_y))
-                    .param(Param::user(format!("{p}_d"), d))
-                    .param(Param::user(format!("{p}_x"), snap_mm(ax + x)))
-                    .param(Param::user(format!("{p}_y"), snap_mm(ay + y)));
+                    .param(Param::user(format!("{p}_d"), d));
+                pos_params(b, &p, axis, at, [x, y]);
             }
             HoleGroup::Circle { n, d, r, cx, cy, angle } => {
-                b.param(Param::count(format!("{p}_n"), n))
-                    .param(Param::user(format!("{p}_d"), d))
-                    .param(Param::user(format!("{p}_r"), r))
-                    .param(Param::user(format!("{p}_cx"), snap_mm(ax + cx)))
-                    .param(Param::user(format!("{p}_cy"), snap_mm(ay + cy)))
-                    .param(Param::angle(format!("{p}_angle"), angle));
+                b.param(Param::count(format!("{p}_n"), n)).param(Param::user(format!("{p}_d"), d)).param(Param::user(format!("{p}_r"), r));
+                for (i, c) in [cx, cy].iter().enumerate() {
+                    b.param(Param::user(format!("{p}_c{}", axis.profile_letter(i)), snap_mm(axis.profile_world(at, i, *c))));
+                }
+                b.param(Param::angle(format!("{p}_angle"), angle));
             }
         }
     }
 }
 
+/// The part the holes are drilled into: where its corner is in the file, the extrusion axis, the
+/// two faces' expressions, the thickness and the drilling direction from the +axis face.
+struct HoleCtx<'a> {
+    at: Vec3,
+    axis: Axis,
+    top: &'a str,
+    bottom: &'a str,
+    z: f64,
+    down: Vec3,
+}
+
 /// A through hole per hole, or per pattern a hole and a pattern feature that repeats it, drilled
-/// down from the top face at height `top` (its expression) of a plate `z` thick whose corner is
-/// at `at`; a hole with a counterbore or countersink on the bottom face (at height `bottom`) is
-/// drilled up from there.
-#[allow(clippy::many_single_char_names)] // x, y, d, r as in the parameter names
-fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, top: &str, bottom: &str, z: f64) {
-    let top_z = at[2] + z;
-    let hole = |b: &mut DesignBuilder, name: String, position: [f64; 2], x: String, y: String, d: String| {
-        b.feature(
-            name,
-            vec![],
-            FeatureKind::Hole {
-                position: [position[0], position[1], top_z],
-                at: [x, y, top.into()],
-                direction: [0.0, 0.0, -1.0],
-                diameter: d,
-                depth: None,
-                hole: HoleKind::Simple,
-            },
-        )
+/// from the face at depth `z` along the axis (the `top` expression); a hole with a counterbore or
+/// countersink on the other face (at depth 0, the `bottom` expression) is drilled from there
+/// along the axis.
+fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, axis: Axis, top: &str, bottom: &str, z: f64) {
+    // Drilled from the +axis face: against the axis. (Built component-wise, so no -0.0.)
+    let down = {
+        let mut d = [0.0; 3];
+        d[axis.index()] = -1.0;
+        d
     };
-    let (mut singles, mut rows, mut grids, mut circles) = (0, 0, 0, 0);
+    let ctx = HoleCtx { at, axis, top, bottom, z, down };
+    let mut counts = [0, 0, 0, 0]; // singles, rows, grids, circles
     for (p, group) in hole_groups(holes) {
-        let (x, y, d) = (format!("{p}_x"), format!("{p}_y"), format!("{p}_d"));
         match group {
             HoleGroup::Single(h) => {
-                singles += 1;
-                let (kind, from_bottom) = match h.head {
-                    None => (HoleKind::Simple, h.blind.is_some_and(|b| b.bottom)),
-                    Some(HoleHead::Counterbore { bottom, .. }) => {
-                        (HoleKind::Counterbore { cb_diameter: format!("{p}_cbore_d"), cb_depth: format!("{p}_cbore_depth") }, bottom)
+                counts[0] += 1;
+                single_hole(b, &ctx, &p, &h, counts[0]);
+            }
+            group => pattern_hole(b, &ctx, &p, &group, &mut counts),
+        }
+    }
+}
+
+/// One hole in no pattern: drilled from the face its counterbore, countersink or blind floor is
+/// on, or from the +axis face into the part.
+#[allow(clippy::many_single_char_names)] // x, y, d, r as in the parameter names
+fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: usize) {
+    let (kind, from_bottom) = match h.head {
+        None => (HoleKind::Simple, h.blind.is_some_and(|b| b.bottom)),
+        Some(HoleHead::Counterbore { bottom, .. }) => {
+            (HoleKind::Counterbore { cb_diameter: format!("{p}_cbore_d"), cb_depth: format!("{p}_cbore_depth") }, bottom)
+        }
+        Some(HoleHead::Countersink { bottom, .. }) => {
+            (HoleKind::Countersink { cs_diameter: format!("{p}_csk_d"), cs_angle: format!("{p}_csk_angle") }, bottom)
+        }
+    };
+    let (face_w, face, direction) = if from_bottom { (0.0, ctx.bottom, ctx.axis.dir()) } else { (ctx.z, ctx.top, ctx.down) };
+    b.feature(
+        format!("Hole{n}"),
+        vec![],
+        FeatureKind::Hole {
+            position: ctx.axis.world(ctx.at, h.x, h.y, face_w),
+            at: world_exprs(p, ctx.axis, face),
+            direction,
+            diameter: format!("{p}_d"),
+            depth: h.blind.map(|_| format!("{p}_depth")),
+            hole: kind,
+        },
+    );
+}
+
+/// A pattern's seed hole: drilled from the +axis face at depth `z`.
+fn seed_hole(b: &mut DesignBuilder, ctx: &HoleCtx, name: String, profile: [f64; 2], p: &str) -> u32 {
+    b.feature(
+        name,
+        vec![],
+        FeatureKind::Hole {
+            position: ctx.axis.world(ctx.at, profile[0], profile[1], ctx.z),
+            at: world_exprs(p, ctx.axis, ctx.top),
+            direction: ctx.down,
+            diameter: format!("{p}_d"),
+            depth: None,
+            hole: HoleKind::Simple,
+        },
+    )
+}
+
+/// One hole and a pattern feature per pattern: a row, a grid or a bolt circle, all in the profile
+/// plane, so the pattern's directions and axis are the frame's vectors rotated back to world.
+#[allow(clippy::many_single_char_names)] // x, y, d, r as in the parameter names
+fn pattern_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, group: &HoleGroup, counts: &mut [usize; 4]) {
+    let axis = ctx.axis;
+    match group {
+        HoleGroup::Single(_) => unreachable!("a single hole has no pattern"),
+        HoleGroup::Row { x: hx, y: hy, angle, .. } => {
+            counts[1] += 1;
+            let n = counts[1];
+            let seed = seed_hole(b, ctx, format!("HoleRow{n}"), [*hx, *hy], p);
+            let (sin, cos) = angle.to_radians().sin_cos();
+            let pattern = PatternKind::Rectangular {
+                dir1: axis.unrotate([cos, sin, 0.0]),
+                count1: format!("{p}_n"),
+                spacing1: format!("{p}_pitch"),
+                dir2: None,
+                count2: None,
+                spacing2: None,
+            };
+            b.feature(format!("HoleRow{n}Pattern"), vec![], FeatureKind::Pattern { features: vec![seed], pattern });
+        }
+        HoleGroup::Grid { x: hx, y: hy, .. } => {
+            counts[2] += 1;
+            let n = counts[2];
+            let seed = seed_hole(b, ctx, format!("HoleGrid{n}"), [*hx, *hy], p);
+            let pattern = PatternKind::Rectangular {
+                dir1: axis.unrotate([1.0, 0.0, 0.0]),
+                count1: format!("{p}_nx"),
+                spacing1: format!("{p}_pitch_x"),
+                dir2: Some(axis.unrotate([0.0, 1.0, 0.0])),
+                count2: Some(format!("{p}_ny")),
+                spacing2: Some(format!("{p}_pitch_y")),
+            };
+            b.feature(format!("HoleGrid{n}Pattern"), vec![], FeatureKind::Pattern { features: vec![seed], pattern });
+        }
+        HoleGroup::Circle { r, cx, cy, angle, .. } => {
+            counts[3] += 1;
+            let n = counts[3];
+            let (sin, cos) = angle.to_radians().sin_cos();
+            let profile = [cx + r * cos, cy + r * sin]; // Copy fields of &HoleGroup
+            let mut at_exprs = [const { String::new() }; 3];
+            for (i, slot) in at_exprs.iter_mut().enumerate() {
+                *slot = match axis.profile_axes().iter().position(|&a| a == i) {
+                    Some(k) => {
+                        // The centre's parameter is a world coordinate; the radius's offset is
+                        // in profile coordinates, so it carries the profile sign (the second
+                        // profile coordinate maps to -Z on a Y extrusion).
+                        let trig = if k == 0 { ("cos", "+") } else { ("sin", if axis.profile_sign(k) < 0.0 { "-" } else { "+" }) };
+                        format!("{p}_c{} {} {p}_r * {}({p}_angle)", axis.profile_letter(k), trig.1, trig.0)
                     }
-                    Some(HoleHead::Countersink { bottom, .. }) => {
-                        (HoleKind::Countersink { cs_diameter: format!("{p}_csk_d"), cs_angle: format!("{p}_csk_angle") }, bottom)
-                    }
+                    _ => String::from(ctx.top),
                 };
-                let (face_z, face, direction) = if from_bottom { (at[2], bottom, 1.0) } else { (top_z, top, -1.0) };
-                b.feature(
-                    format!("Hole{singles}"),
-                    vec![],
-                    FeatureKind::Hole {
-                        position: [at[0] + h.x, at[1] + h.y, face_z],
-                        at: [x, y, face.into()],
-                        direction: [0.0, 0.0, direction],
-                        diameter: d,
-                        depth: h.blind.map(|_| format!("{p}_depth")),
-                        hole: kind,
-                    },
-                );
             }
-            HoleGroup::Row { x: hx, y: hy, angle, .. } => {
-                rows += 1;
-                let seed = hole(b, format!("HoleRow{rows}"), [at[0] + hx, at[1] + hy], x, y, d);
-                let (sin, cos) = angle.to_radians().sin_cos();
-                let pattern = PatternKind::Rectangular {
-                    dir1: [cos, sin, 0.0],
-                    count1: format!("{p}_n"),
-                    spacing1: format!("{p}_pitch"),
-                    dir2: None,
-                    count2: None,
-                    spacing2: None,
+            let seed = b.feature(
+                format!("HoleCircle{n}"),
+                vec![],
+                FeatureKind::Hole {
+                    position: axis.world(ctx.at, profile[0], profile[1], ctx.z),
+                    at: at_exprs,
+                    direction: ctx.down,
+                    diameter: format!("{p}_d"),
+                    depth: None,
+                    hole: HoleKind::Simple,
+                },
+            );
+            let mut origin = [const { String::new() }; 3];
+            for (i, slot) in origin.iter_mut().enumerate() {
+                *slot = match axis.profile_axes().iter().position(|&a| a == i) {
+                    Some(k) => format!("{p}_c{}", axis.profile_letter(k)),
+                    _ => "0".into(),
                 };
-                b.feature(format!("HoleRow{rows}Pattern"), vec![], FeatureKind::Pattern { features: vec![seed], pattern });
             }
-            HoleGroup::Grid { x: hx, y: hy, .. } => {
-                grids += 1;
-                let seed = hole(b, format!("HoleGrid{grids}"), [at[0] + hx, at[1] + hy], x, y, d);
-                let pattern = PatternKind::Rectangular {
-                    dir1: [1.0, 0.0, 0.0],
-                    count1: format!("{p}_nx"),
-                    spacing1: format!("{p}_pitch_x"),
-                    dir2: Some([0.0, 1.0, 0.0]),
-                    count2: Some(format!("{p}_ny")),
-                    spacing2: Some(format!("{p}_pitch_y")),
-                };
-                b.feature(format!("HoleGrid{grids}Pattern"), vec![], FeatureKind::Pattern { features: vec![seed], pattern });
-            }
-            HoleGroup::Circle { r, cx, cy, angle, .. } => {
-                circles += 1;
-                let (sin, cos) = angle.to_radians().sin_cos();
-                let position = [at[0] + cx + r * cos, at[1] + cy + r * sin];
-                let seed = hole(
-                    b,
-                    format!("HoleCircle{circles}"),
-                    position,
-                    format!("{p}_cx + {p}_r * cos({p}_angle)"),
-                    format!("{p}_cy + {p}_r * sin({p}_angle)"),
-                    d,
-                );
-                let pattern = PatternKind::Circular {
-                    origin: [format!("{p}_cx"), format!("{p}_cy"), "0".into()],
-                    axis: [0.0, 0.0, 1.0],
-                    count: format!("{p}_n"),
-                    angle: "360 deg".into(),
-                };
-                b.feature(format!("HoleCircle{circles}Pattern"), vec![], FeatureKind::Pattern { features: vec![seed], pattern });
-            }
+            let pattern = PatternKind::Circular { origin, axis: axis.dir(), count: format!("{p}_n"), angle: "360 deg".into() };
+            b.feature(format!("HoleCircle{n}Pattern"), vec![], FeatureKind::Pattern { features: vec![seed], pattern });
         }
     }
 }

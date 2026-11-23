@@ -45,6 +45,16 @@ to features (sketch dimensions) and are driven by an expression.
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
 | `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flat `x,y,z` positions and flat corner indices; `body_names` lists the bodies. |
 
+## Planes
+
+A sketch's `plane` names one of the origin planes. Their axes, as SolidCraft defines them
+(`solidcore-record`'s `Plane`): `XY` sketches (x, y) with normal +Z, `YZ` sketches (y, z) with
+normal +X, and `XZ` sketches (x, -z) with normal +Y. An extrusion with `direction: "positive"`
+runs along the plane normal, so a sketch on `YZ` extrudes along +X and one on `XZ` along +Y.
+revmesh writes a part standing along X or Y this way: the recognised profile's coordinates are
+exactly the sketch coordinates on that plane, and the part is moved to where it is in the file by
+the `move` after the extrusion, as for a Z plate.
+
 ## Cut-outs
 
 The cut-outs of straight sides are one sketch, `CutoutsSketch`, of closed loops in world
