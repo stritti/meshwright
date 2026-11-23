@@ -7,7 +7,7 @@ use crate::synth;
 
 use super::{banded, found, plate_with_cutout, reason, stadium};
 
-/// An 80 x 50 x 8 plate exported from SolidCraft 0.45 with three slots (along X, along Y and
+/// An 80 x 50 x 8 plate exported from SolidCraft 0.47 with three slots (along X, along Y and
 /// at 30°) and a hole.
 #[test]
 fn recognises_slots() {

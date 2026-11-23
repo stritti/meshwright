@@ -328,7 +328,7 @@ fn leaves_tetrahedron_alone() {
     assert!(matches!(recognize(&tetrahedron(10.0)), Recognition::Unrecognized { .. }));
 }
 
-/// The design the spike opened in SolidCraft 0.45: a plate with a centred hole and rounded
+/// The design the spike opened in SolidCraft 0.47: a plate with a centred hole and rounded
 /// corners. The golden file was opened in SolidCraft and rebuilt without errors or warnings
 /// after changing `base_x` and `hole_1_d`.
 #[test]

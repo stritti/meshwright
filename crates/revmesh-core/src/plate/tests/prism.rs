@@ -46,7 +46,7 @@ fn plates_far_from_the_origin() {
     assert_eq!(plate.holes.len(), 2);
 }
 
-/// An L-bracket exported from SolidCraft 0.45 (`file.export_stl`, standard quality): walls in
+/// An L-bracket exported from SolidCraft 0.47 (`file.export_stl`, standard quality): walls in
 /// bands, top and bottom faces meshed apart, arcs and rims of uneven facets.
 #[test]
 fn recognises_solidcraft_exports() {
