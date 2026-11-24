@@ -212,24 +212,26 @@ fn outline_and_cutout_sides_are_dimensioned() {
     let param = |name: &str| {
         params.iter().find(|p| p["name"] == name).map(|p| (p["expr"].as_str().expect("expr"), p["model"].as_bool().expect("model")))
     };
-    // One user parameter per outline side with the side's length; the slanted side's too.
-    let sides = [60.0, 15.0, (30.0f64).hypot(25.0), 30.0, 40.0];
-    for (i, len) in sides.iter().enumerate() {
+    // One user parameter per driving side with the side's length; the single slanted side (side 3,
+    // the diagonal) is dependent on the axis-aligned ones and gets none.
+    let sides: [(usize, f64); 4] = [(0, 60.0), (1, 15.0), (3, 30.0), (4, 40.0)];
+    for (i, len) in sides {
         let snapped = (len * 1000.0).round() / 1000.0;
         let (expr, model) = param(&format!("outline_{}_len", i + 1)).expect("user param");
         assert!(!model);
         assert_eq!(expr, format!("{} mm", fmt_number(snapped)));
     }
+    assert!(param("outline_3_len").is_none(), "the diagonal's length is derived");
     let sketch = &json["features"][0]["sketch"];
     let constraints = sketch["constraints"].as_array().expect("constraints");
-    let lengths: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "length").collect();
-    assert_eq!(lengths.len(), 5, "one Length per outline side");
-    // The four axis-aligned sides keep their horizontal/vertical constraints; the slanted one
-    // gets only its length.
+    let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    assert_eq!(lengths, [0, 1, 3, 4], "one Length per driving side, none on the diagonal");
+    // The four axis-aligned sides keep their horizontal/vertical constraints.
     assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 4);
-    for (i, c) in lengths.iter().enumerate() {
-        assert_eq!(c["l"].as_u64(), Some(i as u64));
-        let model = c["param"].as_str().expect("param");
+    for c in lengths.iter().enumerate() {
+        let (_, i) = c;
+        let length = &constraints.iter().find(|c| c["type"] == "length" && c["l"].as_u64() == Some(*i as u64)).expect("length");
+        let model = length["param"].as_str().expect("param");
         let (expr, is_model) = param(model).expect("model param");
         assert!(is_model);
         assert_eq!(expr, format!("outline_{}_len", i + 1));

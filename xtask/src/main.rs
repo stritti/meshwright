@@ -157,20 +157,11 @@ fn default_cli() -> String {
 ///    (Hausdorff) between the source STL and the rebuilt STL, and applies mesh2cad's gate.
 ///
 /// Fixtures that do not import (the error cases of `plugin test`) are skipped.
-/// The first user parameter that drives a sketch side or an extrusion — a plain `"<n> mm"` length
-/// named `outline_*`, `cutout_*`, `base_*` or `extrude_*` — with its value.
-/// Rebuilds the design at `design_path` in SolidCraft after bumping its first driving
-/// sketch/extrude length parameter by 1 mm (see [`first_driving_length`]). `Ok(false)` when the
-/// rebuild reports a feature error.
-fn eval_after_param_change(
-    cli: &str,
-    design: &revmesh_core::design::Design,
-    design_path: &Path,
-    script_path: &Path,
-) -> Result<bool, String> {
-    let Some((param, value)) = first_driving_length(design) else { return Ok(true) };
+/// Rebuilds the design at `design_path` in SolidCraft after setting `param` to `value + 1 mm`.
+/// `Ok(false)` when the rebuild reports a feature error.
+fn eval_after_param_change(cli: &str, param: &str, value: f64, design_path: &Path, script_path: &Path) -> Result<bool, String> {
     let mut changes = serde_json::Map::new();
-    changes.insert(param, serde_json::json!(format!("{} mm", value + 1.0)));
+    changes.insert(param.to_string(), serde_json::json!(format!("{} mm", value + 1.0)));
     let script = serde_json::json!({ "commands": [{ "command": "parameters.change", "params": { "changes": changes } }] });
     fs::write(script_path, script.to_string()).map_err(|e| format!("{}: {e}", script_path.display()))?;
     let out = Command::new(cli)
@@ -180,14 +171,22 @@ fn eval_after_param_change(
     Ok(out.status.success())
 }
 
-fn first_driving_length(design: &revmesh_core::design::Design) -> Option<(String, f64)> {
-    design.params.iter().filter(|p| !p.model).find_map(|p| {
-        if !["outline_", "cutout_", "base_", "extrude_"].iter().any(|pre| p.name.starts_with(pre)) {
+/// The user parameters that drive sketch sides — plain `"<n> mm"` lengths named `outline_*` or
+/// `cutout_*`; if there are none, the first driving extrude/box length (`base_*`/`extrude_*`).
+fn driving_lengths(design: &revmesh_core::design::Design) -> Vec<(String, f64)> {
+    let plain = |p: &revmesh_core::design::Param| -> Option<(String, f64)> {
+        if p.model {
             return None;
         }
         let value: f64 = p.expr.strip_suffix(" mm")?.parse().ok()?;
         Some((p.name.clone(), value))
-    })
+    };
+    let sides: Vec<(String, f64)> =
+        design.params.iter().filter_map(plain).filter(|(name, _)| name.starts_with("outline_") || name.starts_with("cutout_")).collect();
+    if !sides.is_empty() {
+        return sides;
+    }
+    design.params.iter().filter_map(plain).find(|(name, _)| name.starts_with("base_") || name.starts_with("extrude_")).into_iter().collect()
 }
 
 fn check(root: &Path) -> Result<(), String> {
@@ -242,12 +241,13 @@ fn check(root: &Path) -> Result<(), String> {
                 .map_err(|e| format!("{}: {e}", eval_path.display()))?;
         let eval_volume = eval["total"]["volume_mm3"].as_f64().unwrap_or(f64::NAN);
 
-        // Rebuild after a parameter change too: bump the first driving sketch/extrude length by
-        // 1 mm, so a dimension that is dependent on the others (an over-constrained sketch) fails
-        // here as well, not only when the user edits it in SolidCraft.
-        if let Some((param, _)) = first_driving_length(&imported.design) {
+        // Rebuild after parameter changes too: bump each driving sketch-side length by 1 mm (the
+        // first extrude/box length when there are none), each change rebuilt from the original
+        // design, so a dimension that is dependent on the others (an over-constrained sketch)
+        // fails here as well, not only when the user edits it in SolidCraft.
+        for (param, value) in driving_lengths(&imported.design) {
             let script_path = out.join(format!("{stem}-change.json"));
-            if !eval_after_param_change(&cli, &imported.design, &design_path, &script_path)? {
+            if !eval_after_param_change(&cli, &param, value, &design_path, &script_path)? {
                 failures.push(format!("{name}: rebuild after changing {param} reported a feature error"));
                 println!("FAIL {name}: eval after changing {param} failed");
             }

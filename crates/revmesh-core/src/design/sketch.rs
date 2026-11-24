@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::mesh::snap_mm;
+
 /// A sketch: points, curves between them, and constraints on both.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Sketch {
@@ -278,10 +280,11 @@ pub fn polygon_sketch_dimensioned(corners: &[[f64; 2]], lens: &[Option<String>])
     polygon_sketch_sized(corners, lens)
 }
 
-/// Which sides of a closed polygon may get a driving `Length` constraint. In a fully
-/// axis-aligned polygon the longest horizontal and the longest vertical side are left out: with
-/// every side held horizontal or vertical, loop closure makes those two lengths sums of the
-/// others, so driving them too would leave no solution when one parameter changes.
+/// Which sides of a closed polygon may get a driving `Length` constraint. Loop closure makes some
+/// lengths dependent on the others, and driving a dependent one too would leave no solution when
+/// one parameter changes: in a fully axis-aligned polygon the longest horizontal and the longest
+/// vertical side (each a sum of the others in its direction), and in a polygon with exactly one
+/// slanted side that slanted side (the axis-aligned sides determine its length).
 #[must_use]
 pub fn dimensioned_sides(corners: &[[f64; 2]]) -> Vec<bool> {
     let n = corners.len();
@@ -301,14 +304,19 @@ pub fn dimensioned_sides(corners: &[[f64; 2]]) -> Vec<bool> {
         }
     };
     let mut dim = vec![true; n];
-    if (0..n).all(|i| axis(i).is_some()) {
-        let longest = |horizontal: bool| (0..n).filter(|&i| axis(i) == Some(horizontal)).max_by(|&a, &b| len(a).total_cmp(&len(b)));
-        if let Some(i) = longest(true) {
-            dim[i] = false;
+    let slanted: Vec<usize> = (0..n).filter(|&i| axis(i).is_none()).collect();
+    match slanted.len() {
+        0 => {
+            let longest = |horizontal: bool| (0..n).filter(|&i| axis(i) == Some(horizontal)).max_by(|&a, &b| len(a).total_cmp(&len(b)));
+            if let Some(i) = longest(true) {
+                dim[i] = false;
+            }
+            if let Some(i) = longest(false) {
+                dim[i] = false;
+            }
         }
-        if let Some(i) = longest(false) {
-            dim[i] = false;
-        }
+        1 => dim[slanted[0]] = false,
+        _ => {}
     }
     dim
 }
@@ -332,7 +340,7 @@ fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[Option<String>]) -> Sketch
             constraints.push(Constraint::Length {
                 id: format!("k{}", constraints.len() + 1),
                 l: i,
-                value: (a[0] - b[0]).hypot(a[1] - b[1]),
+                value: snap_mm((a[0] - b[0]).hypot(a[1] - b[1])),
                 param: param.clone(),
                 text: None,
             });
@@ -400,7 +408,7 @@ fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Opt
                 sketch.constraints.push(Constraint::Length {
                     id: format!("k{}", sketch.counters.k + 1),
                     l: line,
-                    value: (a[0] - b[0]).hypot(a[1] - b[1]),
+                    value: snap_mm((a[0] - b[0]).hypot(a[1] - b[1])),
                     param: param.clone(),
                     text: None,
                 });
