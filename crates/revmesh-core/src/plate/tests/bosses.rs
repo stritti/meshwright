@@ -177,3 +177,34 @@ fn rounded_feet_in_two_bands() {
     let (plate, _) = found(&layered_boss(&rings, 48));
     assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 20.0, h: 8.0, fillet: Some(2.0) }]);
 }
+
+/// A rounded boss of only 16 facets round, its top a polygon well inside the circle; a cone
+/// from the footprint straight up to a smaller top is no round; and a cylinder wall facet split
+/// at its diagonal's middle (the new corner inside the circle) still is the wall.
+#[test]
+fn rounded_feet_coarse_coned_and_split() {
+    let (r, f) = (5.0, 2.0);
+    let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+    rings.push((r, 8.0));
+    let (plate, _) = found(&layered_boss(&rings, 16));
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
+    reason(&layered_boss(&[(6.0, 0.0), (2.0, 4.1)], 48));
+    let mut split = layered_boss(&rings, 48);
+    // The wall's first facet above the round: corners at Z = 6 + 2 and 6 + 8 on the cylinder.
+    let k = split
+        .triangles
+        .iter()
+        .position(|t| t.iter().all(|p| p[2] >= 8.0 - 1e-9) && t.iter().any(|p| p[2] < 14.0 - 1e-9) && t.iter().any(|p| p[2] > 14.0 - 1e-9))
+        .expect("a wall facet");
+    let [a, b, c] = split.triangles.swap_remove(k);
+    // Split the edge whose ends differ most (the diagonal) at its middle.
+    let pairs = [(a, b, c), (b, c, a), (c, a, b)];
+    let (p, q, o) = pairs
+        .into_iter()
+        .max_by(|x, y| crate::mesh::length(crate::mesh::sub(x.0, x.1)).total_cmp(&crate::mesh::length(crate::mesh::sub(y.0, y.1))))
+        .expect("edges");
+    let m = [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])];
+    split.triangles.extend([[p, m, o], [m, q, o]]);
+    let (plate, _) = found(&split);
+    assert_eq!(plate.bosses[0].fillet, Some(2.0));
+}

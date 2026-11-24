@@ -74,12 +74,22 @@ pub(super) fn level(t: &crate::mesh::Triangle, tol: f64) -> Option<f64> {
 fn filleted_boss_holds(b: &FoundBoss, t: &crate::mesh::Triangle, top_z: f64, tol: f64) -> bool {
     let Footprint::Round { centre, r: foot } = b.foot else { return false };
     let (f, r) = (b.fillet, foot - b.fillet);
+    // Round the axis the surfaces are faceted as the footprint is: a corner an exporter adds
+    // within a facet lies up to that facet's sagitta inside them (scaled to the radius there).
+    let inside = |rho: f64| b.foot.sagitta(&b.ring) * rho / foot;
     let off = |p: Vec3, slack: f64| {
         let rho = super::geometry::distance([p[0], p[1]], centre);
         let z = p[2];
-        let wall = if z >= top_z + f - slack && z <= b.top + slack { (rho - r).abs() } else { f64::INFINITY };
-        let round =
-            if rho >= r - slack && z <= top_z + f + slack { ((rho - (r + f)).hypot(z - (top_z + f)) - f).abs() } else { f64::INFINITY };
+        let wall = if z >= top_z + f - slack && z <= b.top + slack {
+            if rho < r { (r - rho - inside(r)).max(0.0) } else { rho - r }
+        } else {
+            f64::INFINITY
+        };
+        let round = if rho >= r - slack - inside(r) && z <= top_z + f + slack {
+            (((rho - (r + f)).hypot(z - (top_z + f)) - f).abs() - inside(rho)).max(0.0)
+        } else {
+            f64::INFINITY
+        };
         let lid = if rho <= r + slack { (z - b.top).abs() } else { f64::INFINITY };
         wall.min(round).min(lid) <= slack
     };
@@ -90,6 +100,11 @@ fn filleted_boss_holds(b: &FoundBoss, t: &crate::mesh::Triangle, top_z: f64, tol
     // the axis (a straight edge up the wall not at all).
     let middles = (0..3).all(|i| {
         let (p, q) = (t[i], t[(i + 1) % 3]);
+        // No edge runs from the round past its top: there the wall would be a cone.
+        let (low, high) = (p[2].min(q[2]), p[2].max(q[2]));
+        if low < top_z + f - tol && high > top_z + f + tol {
+            return false;
+        }
         let across = (p[0] - q[0]).hypot(p[1] - q[1]);
         let on_round = p[2].max(q[2]) <= top_z + f + tol;
         let (radial, rise) =
@@ -193,12 +208,24 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
         }
     }
     // Each top covers its footprint (the two may be meshed apart, with their own corners); a
-    // filleted boss's top is the cylinder's, a polygon of its facets just inside the circle.
+    // filleted boss's top covers the polygon of its own rim, the cylinder's corners at the top.
     for (b, area) in bosses.iter().zip(&tops) {
         let covers = match b.foot {
-            Footprint::Round { r, .. } if b.fillet > 0.0 => {
-                let disk = std::f64::consts::PI * (r - b.fillet).powi(2);
-                *area <= disk * (1.0 + 1e-3) && *area >= disk * 0.98
+            Footprint::Round { centre, r } if b.fillet > 0.0 => {
+                let rim_r = r - b.fillet;
+                let near = rim_r * (super::MAX_HOLE_STEP / 2.0).cos() - tol;
+                let mut rim: Vec<P2> = upper
+                    .iter()
+                    .flat_map(|t| t.iter())
+                    .filter(|p| (p[2] - b.top).abs() <= tol)
+                    .map(|p| flat(p))
+                    .filter(|q| super::geometry::distance(*q, centre) >= near && super::geometry::distance(*q, centre) <= rim_r + tol)
+                    .collect();
+                let turn = |q: &P2| (q[1] - centre[1]).atan2(q[0] - centre[0]);
+                rim.sort_by(|a, b| turn(a).total_cmp(&turn(b)));
+                rim.dedup_by(|a, b| super::geometry::distance(*a, *b) <= tol);
+                let polygon = signed_area(&rim).abs();
+                rim.len() >= 3 && (area - polygon).abs() <= 1e-3 * area.max(tol)
             }
             _ => (area - b.foot.area(&b.ring)).abs() <= 1e-3 * area.max(tol),
         };
