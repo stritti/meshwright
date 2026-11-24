@@ -56,17 +56,14 @@ use prism::recognize_prism;
 use crate::mesh::{Mesh, snap_mm};
 use crate::recognize::{BossChamfer, BossSpec, PadSpec, Recognition};
 
-/// The draft of a boss `h` high narrowing from radius `foot` to `top`, in degrees as a
-/// parameter: a whole degree, else a hundredth of one, as long as the top's radius it gives
-/// (`foot - h * tan(angle)`) moves by no more than a micrometre and stays positive; else the
-/// angle as it is.
-fn draft_angle(foot: f64, top: f64, h: f64) -> f64 {
+/// The draft of a boss `h` high (as written) narrowing from radius `foot` (as written) to the
+/// measured `top`, in degrees as a parameter: a whole degree, else a hundredth of one, else the
+/// angle as it is, the first whose top radius as SolidCraft computes it (`foot - h * tan(angle)`)
+/// lies within a micrometre of `top` and is positive. `None`: no angle does.
+fn draft_angle(foot: f64, top: f64, h: f64) -> Option<f64> {
     let degrees = (foot - top).atan2(h).to_degrees();
     let top_at = |d: f64| foot - h * d.to_radians().tan();
-    [degrees.round(), (degrees * 100.0).round() / 100.0]
-        .into_iter()
-        .find(|d| (top_at(*d) - top).abs() <= 1e-3 && top_at(*d) > 0.0)
-        .unwrap_or(degrees)
+    [degrees.round(), (degrees * 100.0).round() / 100.0, degrees].into_iter().find(|d| (top_at(*d) - top).abs() <= 1e-3 && top_at(*d) > 0.0)
 }
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
@@ -182,7 +179,13 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
                     Shape::Straight => {}
                     // A round foot widens the footprint by its radius beyond the cylinder.
                     Shape::Fillet => (boss.d, boss.fillet) = (snap_mm(2.0 * b.wall_r), Some(snap_mm(b.fillet))),
-                    Shape::Draft => boss.draft_deg = Some(draft_angle(r, b.wall_r, b.top - top)),
+                    // Of the sizes as written: the cone SolidCraft builds from them.
+                    Shape::Draft => {
+                        boss.draft_deg = Some(
+                            draft_angle(boss.d / 2.0, b.wall_r, boss.h)
+                                .ok_or("a drafted boss's top would not lie where it is, or not at all (it is kept as a mesh)")?,
+                        );
+                    }
                     Shape::Chamfer { w, h: down } => boss.chamfer = Some(BossChamfer { w: snap_mm(w), h: snap_mm(down) }),
                 }
                 bosses.push(boss);
@@ -216,9 +219,13 @@ mod draft_tests {
     /// would move a 0.1 mm boss's top radius from 1 mm to below zero.
     #[test]
     fn steep_drafts_keep_their_top() {
-        let angle = super::draft_angle(5.0, 1.0, 0.1);
+        let angle = super::draft_angle(5.0, 1.0, 0.1).expect("an angle");
         let top = 5.0 - 0.1 * angle.to_radians().tan();
         assert!((top - 1.0).abs() <= 1e-3, "{angle} gives {top}");
-        assert_eq!(super::draft_angle(6.0, 6.0 - 8.0 * 5.0_f64.to_radians().tan(), 8.0), 5.0);
+        assert_eq!(super::draft_angle(6.0, 6.0 - 8.0 * 5.0_f64.to_radians().tan(), 8.0), Some(5.0));
+        // Measured 0.1006 high but written 0.101: the angle is worked out for the written height,
+        // so the top SolidCraft builds stays where it was, above zero.
+        let angle = super::draft_angle(50.0, 0.1, 0.101).expect("an angle");
+        assert!(50.0 - 0.101 * angle.to_radians().tan() > 0.0);
     }
 }
