@@ -167,7 +167,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
     let (offset, top) = match &recognised {
         Recognition::Plate { plate, offset } => (*offset, offset[2] + plate.z),
         Recognition::Profile { profile, offset, .. } => (*offset, offset[2] + profile.z),
-        Recognition::Unrecognized { .. } | Recognition::Combined { .. } => return Err(why),
+        Recognition::Unrecognized { .. } | Recognition::Combined { .. } | Recognition::Stack { .. } => return Err(why),
     };
     let (mut bosses, mut pads) = (Vec::new(), Vec::new());
     for b in &found {
@@ -205,7 +205,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
             (profile.bosses, profile.pads) = (bosses, pads);
             profile.volume()
         }
-        Recognition::Unrecognized { .. } | Recognition::Combined { .. } => unreachable!("handled above"),
+        Recognition::Unrecognized { .. } | Recognition::Combined { .. } | Recognition::Stack { .. } => unreachable!("handled above"),
     };
     let error = (volume - mesh.volume()) / mesh.volume();
     if error.abs() > MAX_VOLUME_ERROR {

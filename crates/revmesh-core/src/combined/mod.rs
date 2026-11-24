@@ -20,7 +20,7 @@
 
 mod cuts;
 mod holes;
-mod silhouette;
+pub(crate) mod silhouette;
 #[cfg(test)]
 mod tests;
 pub(crate) mod volume;
@@ -203,34 +203,36 @@ fn with_holes(mut spec: CombinedSpec, bores: &[holes::Bore], tol: f64) -> Result
     Ok(spec)
 }
 
-/// Whether the facet `t` (normal `n`) lies on the intersection's boundary: on the bounding box,
-/// or, corners and centre, on a side of an outline whose outward normal it shares.
+/// Whether the facet `t` (normal `n`) lies on the boundary: each of its corners, the middles of
+/// its sides and its centre on the bounding box, on a cut's end or wall, or on a side of an
+/// outline, each facing the way the facet does. (One flat face of the part may be several of
+/// those, and an exporter's facet may span them.)
 fn on_boundary(spec: &CombinedSpec, t: &[Vec3; 3], n: Vec3, tol: f64) -> bool {
+    let mid = |a: Vec3, b: Vec3| [0, 1, 2].map(|i| f64::midpoint(a[i], b[i]));
     let centre = [0, 1, 2].map(|i| (t[0][i] + t[1][i] + t[2][i]) / 3.0);
-    let mut points = t.to_vec();
-    points.push(centre);
-    let on_box = (0..3).any(|i| {
-        let flush = |at: f64| points.iter().all(|p| (p[i] - at).abs() <= tol);
-        (n[i] <= -1.0 + PARALLEL && flush(0.0)) || (n[i] >= 1.0 - PARALLEL && flush(spec.size[i]))
-    });
+    let points = [t[0], t[1], t[2], mid(t[0], t[1]), mid(t[1], t[2]), mid(t[2], t[0]), centre];
+    points.iter().all(|p| point_on_boundary(spec, *p, n, tol))
+}
+
+/// Whether the point `p` of a facet facing `n` lies on the boundary (see [`on_boundary`]).
+fn point_on_boundary(spec: &CombinedSpec, p: Vec3, n: Vec3, tol: f64) -> bool {
+    let on_box =
+        (0..3).any(|i| (n[i] <= -1.0 + PARALLEL && p[i].abs() <= tol) || (n[i] >= 1.0 - PARALLEL && (p[i] - spec.size[i]).abs() <= tol));
     on_box
-        || spec.cuts.iter().any(|c| cuts::on_cut(c, &points, n, tol))
+        || spec.cuts.iter().any(|c| cuts::on_cut(c, &[p], n, tol))
         || spec.extrusions.iter().any(|e| {
             let m = e.axis.rotate(n);
             if m[2].abs() > PARALLEL {
                 return false;
             }
+            let q = e.axis.rotate(p);
             // Each side with the material on its left: the outline's and the openings' (wound the
             // other way).
             e.rings().iter().flat_map(|r| (0..r.len()).map(move |i| (r[i], r[(i + 1) % r.len()]))).any(|(a, b)| {
                 let d = [b[0] - a[0], b[1] - a[1]];
                 let len = d[0].hypot(d[1]);
                 let outward = [d[1] / len, -d[0] / len];
-                dot([outward[0], outward[1], 0.0], m) >= SIDE_COS
-                    && points.iter().all(|p| {
-                        let q = e.axis.rotate(*p);
-                        segment_distance([q[0], q[1]], a, b) <= tol
-                    })
+                dot([outward[0], outward[1], 0.0], m) >= SIDE_COS && segment_distance([q[0], q[1]], a, b) <= tol
             })
         })
 }

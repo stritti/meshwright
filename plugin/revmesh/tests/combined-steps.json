@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "combined-steps.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 7, "loss_report": {"summary": "A 60 x 40 x 28 mm part of outlines extruded along X and Y with 1 pocket"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 35000}},
+    "tolerance": 1e-6
+  }
+}

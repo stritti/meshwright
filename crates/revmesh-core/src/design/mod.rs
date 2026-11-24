@@ -90,6 +90,12 @@ impl Param {
         Self { name: name.into(), expr: format!("{} mm", fmt_number(millimetres)), unit: "mm", model: false }
     }
 
+    /// A user parameter in millimetres driven by `expr`, which follows the parameters it names.
+    #[must_use]
+    pub fn user_expr(name: impl Into<String>, expr: impl Into<String>) -> Self {
+        Self { name: name.into(), expr: expr.into(), unit: "mm", model: false }
+    }
+
     /// A model parameter (a sketch dimension) driven by `expr`.
     #[must_use]
     pub fn model(name: impl Into<String>, expr: impl Into<String>) -> Self {

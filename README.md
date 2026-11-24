@@ -74,6 +74,7 @@ part that is not recognised arrives as a mesh body, and the report says why. To 
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 | A rectangular box with all twelve edges rounded with one radius, with through holes | `Fillet1` on all twelve edges of the extrude (the four `side|side`, the four `side|top`, the four `side|start`), before the holes — as mesh2cad's `.edges().fillet()` does | `edge_fillet_r` |
 | The intersection of outlines of straight sides extruded right across the part along two or three of X, Y and Z (a plate seen from above cut by a ramp seen from the side; every face flat and parallel to at least one axis) | `Sketch<k>` (each outline on its axis's plane) and `Extrude<k>` (the first a new body, each further one `intersect`), `Move1` | `extrude_<a>_len` (the length along axis `a`), `extrude_<a>_0` (where it starts along it) for each outline's axis; the outlines' corners as in the file (mesh2cad's point lists `outline_<a>`); openings of straight sides right through an outline (a window through the part along that axis) are drawn in its sketch and are the extruded profile's holes (mesh2cad's `outline_<a>_cutout_<i>`); straight blind cuts and pockets of straight sides along X, Y or Z are `Cut<n>Sketch` and `Cut<n>` (a cut extrusion from its start), `cut_<n>_len`, `cut_<n>_0` (where it starts in the file), the longest of the axes a rectangular pocket fits; round holes along X, Y or Z, through it or blind from a face, are `Hole<n>` (a cylinder cut out of it), `hole_<n>_d`, the hole's two coordinates across its axis (`hole_<n>_x`, `hole_<n>_y` along Z), `hole_<n>_depth` for a blind one |
+| Outlines stacked along X, Y or Z, each extruded over its own span (a base, a smaller block on part of it, another on that), when no intersection of outlines fits: every face square to the axis or along it | per band `Sketch<k>` (its section on the axis's plane) and `Extrude<k>` from where the band below ends (the first a new body, the others joined), `Move1` | `extrude_<a><k>_len` and `extrude_<a><k>_0` (mesh2cad's names; a band's start is `extrude_<a><k-1>_0 + extrude_<a><k-1>_len`, so a band's new height moves the bands above); of the axes it stacks along, the one with the fewest bands |
 
 The parameter names are mesh2cad's, and the part stays where it is in the file. Like mesh2cad,
 which tries a prism along X, Y and Z, revmesh recognises an outline extruded along any of them:
@@ -148,7 +149,8 @@ cargo xtask check              # checks every rebuild against its source mesh (v
    bosses on side faces still to do; 11. (done) chamfers, drafts
    and the rounds at a boss's foot or a hole's rim; 12. combined extrusions: (done) the
    intersection of outlines along X, Y and Z, with openings through them, straight blind cuts
-   into them and round holes; holes that cross and unions of partial extrusions still to do.
+   into them and round holes, and (done) unions of outlines stacked along an axis; holes
+   that cross, roofs and bevels on a stack still to do.
 4. **Checking** (done): `cargo xtask check` compares the rebuilt part with the mesh through
    SolidCraft's `eval` (feature errors, volume) and an STL re-export (surface deviation,
    Hausdorff), with mesh2cad's gate, as mesh2cad checks its scripts with CadQuery.
