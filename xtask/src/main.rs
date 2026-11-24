@@ -7,7 +7,8 @@
 //!   default) and `target/dist/revmesh-<version>-<locale>.zip` for every other locale (German:
 //!   `-de`). Each has `plugin.json` localized from `crates/revmesh-core/locales/<locale>.json` and
 //!   a component built with `REVMESH_LOCALE=<locale>` and `REVMESH_LATEST_VERSION` (the newest
-//!   GitHub release, for the import-time update check), as SolidCraft shows a plugin's texts as
+//!   published release, betas included, for the import-time update check), as SolidCraft shows a
+//!   plugin's texts as
 //!   its package gives them and tells the plugin nothing about the app's language.
 //! - `plugin-test`: `component`, then runs `solidcraft-cli plugin test --require-cases` on the
 //!   package. The CLI is taken from `$SOLIDCRAFT_CLI`, else from `PATH`, else from the default
@@ -262,22 +263,31 @@ fn note_update(root: &Path) {
     }
 }
 
-/// The newest revmesh release's version, for `REVMESH_LATEST_VERSION`: the latest GitHub release
-/// when `gh` can ask for it, else the package's own version, which makes the baked-in update check
-/// find nothing newer (offline or `gh`-less builds still package fine).
+/// The newest published revmesh release's version, for `REVMESH_LATEST_VERSION`: the newest tag
+/// among the GitHub releases — drafts excluded, pre-releases included, since revmesh releases
+/// betas and `/releases/latest` skips those — when `gh` can ask for it, else the package's own
+/// version, which makes the baked-in update check find nothing newer (offline or `gh`-less
+/// builds still package fine).
 fn latest_release(root: &Path) -> String {
     static LATEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     LATEST
         .get_or_init(|| {
             let fallback = || manifest(root).ok().and_then(|m| m["version"].as_str().map(str::to_owned)).unwrap_or_default();
-            let output =
-                Command::new("gh").args(["api", &format!("repos/{}/releases/latest", repository(root)), "--jq", ".tag_name"]).output();
+            let output = Command::new("gh")
+                .args([
+                    "api",
+                    &format!("repos/{}/releases?per_page=100", repository(root)),
+                    "--jq",
+                    ".[] | select(.draft | not) | .tag_name",
+                ])
+                .output();
             output
                 .ok()
                 .filter(|o| o.status.success())
                 .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|tag| tag.trim().trim_start_matches('v').to_owned())
-                .filter(|version| revmesh_core::version::Version::parse(version).is_some())
+                .and_then(|tags| {
+                    tags.lines().filter_map(|tag| revmesh_core::version::Version::parse(tag.trim())).max().map(|v| v.to_string())
+                })
                 .unwrap_or_else(fallback)
         })
         .clone()
