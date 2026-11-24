@@ -31,6 +31,7 @@ pub mod report;
 pub(crate) mod stack;
 pub mod stl;
 pub mod synth;
+pub mod version;
 
 pub use i18n::Locale;
 pub use import::{ImportOptions, ImportResult, import, import_mesh};

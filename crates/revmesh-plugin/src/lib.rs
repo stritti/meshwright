@@ -11,6 +11,11 @@
 //! Build it for `wasm32-unknown-unknown` (SolidCraft links no WASI) and wrap the module as a
 //! component; `cargo xtask dist` does both and packages the plugin.
 //!
+//! Every import also checks whether a newer release than this build is out and notes it in the
+//! loss report. The sandbox has no network, so the newest release cannot be asked for at import
+//! time: `cargo xtask dist` bakes it into the component as `REVMESH_LATEST_VERSION` (see
+//! [`latest_release`]).
+//!
 //! On any other target the crate is empty: the bindings export symbols a native linker refuses,
 //! and everything worth testing natively lives in `revmesh-core`. Lint it with
 //! `cargo clippy -p revmesh-plugin --target wasm32-unknown-unknown`.
@@ -21,12 +26,12 @@
 wit_bindgen::generate!({ path: "wit", world: "importer-plugin" });
 
 use craft::plugin::types::{FieldFailure, PluginError};
-use craft::plugin::{control, design, source};
+use craft::plugin::{control, design, log, source};
 use exports::craft::plugin::importer::Guest;
 use revmesh_core::import::Mode;
 use revmesh_core::mesh::Mesh;
 use revmesh_core::stl::StlReader;
-use revmesh_core::{ImportOptions, Locale, import_mesh};
+use revmesh_core::{ImportOptions, Locale, import_mesh, version};
 
 /// Largest read or write the host accepts in one call.
 const CHUNK: usize = 1 << 20;
@@ -42,6 +47,10 @@ struct Importer;
 impl Guest for Importer {
     fn import_file(_entry: String, file: source::FileInfo, options: String) -> Result<String, PluginError> {
         let locale = built_locale();
+        let update = version::update_notice(env!("CARGO_PKG_VERSION"), latest_release(), locale);
+        if let Some(notice) = &update {
+            log::log(log::Level::Warn, &notice.message);
+        }
         let mut options = ImportOptions::from_json(&options).map_err(|e| invalid("options", e))?;
         options.locale = locale;
         let max_bytes = match options.mode {
@@ -50,7 +59,10 @@ impl Guest for Importer {
         };
         let mesh = read_mesh(&file, max_bytes, locale)?;
         control::progress(0.5, locale.text("progress.recognising"));
-        let result = import_mesh(mesh, &file.name, &options);
+        let mut result = import_mesh(mesh, &file.name, &options);
+        if let Some(notice) = update {
+            result.report.push(notice);
+        }
         control::progress(0.6, locale.text("progress.writing"));
         let mut out = HostWriter { buffer: Vec::with_capacity(CHUNK), error: None };
         let written = result.design.write_json(&mut out).and_then(|()| out.flush_buffer());
@@ -142,6 +154,14 @@ impl std::io::Write for HostWriter {
 /// dist` sets it per package), English when unset.
 fn built_locale() -> Locale {
     option_env!("REVMESH_LOCALE").and_then(Locale::from_code).unwrap_or_default()
+}
+
+/// The newest release, baked into the component at package time: `cargo xtask dist` builds with
+/// `REVMESH_LATEST_VERSION` set to the latest GitHub release (the sandbox itself has no
+/// network, so the import-time check in [`Importer::import_file`] compares against this). Built
+/// without it, the plugin's own version stands in and the check finds nothing newer.
+fn latest_release() -> &'static str {
+    option_env!("REVMESH_LATEST_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
 fn invalid(field: &str, reason: impl ToString) -> PluginError {
