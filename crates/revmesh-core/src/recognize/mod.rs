@@ -25,7 +25,7 @@ pub(crate) mod tests;
 mod to_design;
 
 pub use axis::Axis;
-pub use combined::{CombinedSpec, Cut, Extrusion};
+pub use combined::{CombinedHole, CombinedSpec, Cut, Extrusion};
 pub use spec::{Blind, BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::mesh::{Mesh, Vec3};

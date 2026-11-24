@@ -380,7 +380,7 @@ mod tests {
     /// Keeps the combined extrusions' plugin fixtures and their expectations in step.
     #[test]
     fn plugin_test_combined_fixtures() {
-        let cases: [(&str, &[u8]); 5] = [
+        let cases: [(&str, &[u8]); 6] = [
             (include_str!("../../../plugin/revmesh/tests/combined.json"), include_bytes!("../../../plugin/revmesh/tests/combined.stl")),
             (include_str!("../../../plugin/revmesh/tests/combined-3.json"), include_bytes!("../../../plugin/revmesh/tests/combined-3.stl")),
             (
@@ -394,6 +394,10 @@ mod tests {
             (
                 include_str!("../../../plugin/revmesh/tests/combined-cuts.json"),
                 include_bytes!("../../../plugin/revmesh/tests/combined-cuts.stl"),
+            ),
+            (
+                include_str!("../../../plugin/revmesh/tests/combined-holes.json"),
+                include_bytes!("../../../plugin/revmesh/tests/combined-holes.stl"),
             ),
         ];
         for (case, bytes) in cases {

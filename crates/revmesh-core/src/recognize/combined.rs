@@ -49,9 +49,46 @@ pub struct Cut {
     pub to: f64,
 }
 
-/// The intersection of two or three outlines (or one, with cuts), each extruded along its own
-/// axis across the part's bounding box, less straight blind cuts; an axis whose outline would be
-/// the box's side has none.
+/// A round hole along `axis`: a circle of diameter `d` round `centre` (in the axis's profile
+/// coordinates, as an [`Extrusion`]'s outline), from `from` to `to` along the axis. A through hole
+/// runs from 0 to the box's size; a blind one opens on one of the box's faces.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CombinedHole {
+    /// The axis it is drilled along.
+    pub axis: Axis,
+    /// Its centre across the axis.
+    pub centre: [f64; 2],
+    /// Its diameter.
+    pub d: f64,
+    /// Where it starts along the axis.
+    pub from: f64,
+    /// Where it ends along the axis.
+    pub to: f64,
+}
+
+/// Corners of the polygon a circle's volume is taken with: as large as the circle, so where the
+/// part is as deep all over the hole the volume is exact.
+const CIRCLE_CORNERS: u32 = 256;
+
+impl CombinedHole {
+    /// Whether it runs right through the part along its axis.
+    #[must_use]
+    pub fn through(&self, size: [f64; 3]) -> bool {
+        self.from <= 0.0 && self.to >= size[self.axis.index()]
+    }
+
+    /// Its circle as a counter-clockwise polygon of the circle's area.
+    fn ring(&self) -> Vec<[f64; 2]> {
+        let n = f64::from(CIRCLE_CORNERS);
+        let step = std::f64::consts::TAU / n;
+        let r = self.d / 2.0 * (step / step.sin()).sqrt();
+        (0..CIRCLE_CORNERS).map(|i| f64::from(i) * step).map(|t| [self.centre[0] + r * t.cos(), self.centre[1] + r * t.sin()]).collect()
+    }
+}
+
+/// The intersection of two or three outlines (or one, with cuts or holes), each extruded along its
+/// own axis across the part's bounding box, less straight blind cuts and round holes; an axis whose
+/// outline would be the box's side has none.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CombinedSpec {
     /// The bounding box's size along X, Y and Z.
@@ -60,6 +97,8 @@ pub struct CombinedSpec {
     pub extrusions: Vec<Extrusion>,
     /// The cuts, none overlapping another.
     pub cuts: Vec<Cut>,
+    /// The round holes, by axis and position.
+    pub holes: Vec<CombinedHole>,
 }
 
 impl CombinedSpec {
@@ -72,11 +111,26 @@ impl CombinedSpec {
     /// The volume of the part, in mm³: what SolidCraft measures once it has rebuilt the design.
     #[must_use]
     pub fn volume(&self) -> f64 {
+        // Blind holes are taken out as cuts are; through holes are openings in their axis's
+        // outline (where holes along two axes cross, the intersection takes the crossing once).
+        let blind: Vec<Cut> = self
+            .holes
+            .iter()
+            .filter(|h| !h.through(self.size))
+            .map(|h| Cut { axis: h.axis, outline: h.ring(), from: h.from, to: h.to })
+            .collect();
         let outlines = |cut: Option<&Cut>| {
             let rings = |axis: Axis| match cut {
                 // Along the cut's axis its own outline (it lies within the part's there).
                 Some(c) if c.axis == axis => Some(vec![c.outline.clone()]),
-                _ => self.extrusions.iter().find(|e| e.axis == axis).map(Extrusion::rings),
+                _ => {
+                    let mut rings = self.extrusions.iter().find(|e| e.axis == axis).map(Extrusion::rings);
+                    for h in self.holes.iter().filter(|h| h.axis == axis && h.through(self.size)) {
+                        let rings = rings.get_or_insert_with(|| vec![self.box_side(axis)]);
+                        rings.push(h.ring().into_iter().rev().collect());
+                    }
+                    rings
+                }
             };
             // Along Y the profile's second coordinate is −Z; the volume takes the outline in (x, z).
             let front: Option<Vec<Vec<[f64; 2]>>> =
@@ -88,6 +142,7 @@ impl CombinedSpec {
         let cuts: f64 = self
             .cuts
             .iter()
+            .chain(&blind)
             .map(|c| {
                 let (z, x, y) = outlines(Some(c));
                 let (mut lo, mut hi) = ([0.0; 3], self.size);
@@ -96,6 +151,15 @@ impl CombinedSpec {
             })
             .sum();
         whole - cuts
+    }
+
+    /// The box's side across `axis`, counter-clockwise in its profile coordinates.
+    fn box_side(&self, axis: Axis) -> Vec<[f64; 2]> {
+        let [u, v] = axis.profile_axes();
+        let (w, h) = (self.size[u], self.size[v]);
+        // Along Y the second coordinate is −Z: the side lies below 0.
+        let low = if axis.profile_sign(1) < 0.0 { -h } else { 0.0 };
+        vec![[0.0, low], [w, low], [w, low + h], [0.0, low + h]]
     }
 
     /// One line describing the part, for the loss report.
@@ -118,10 +182,14 @@ impl CombinedSpec {
             1 => Some(locale.text(&format!("summary.{kind}.one")).to_owned()),
             n => Some(locale.format(&format!("summary.{kind}.other"), &[("n", &n)])),
         };
-        let parts: Vec<String> = [count(self.extrusions.iter().map(|e| e.cutouts.len()).sum(), "cutout"), count(self.cuts.len(), "pocket")]
-            .into_iter()
-            .flatten()
-            .collect();
+        let parts: Vec<String> = [
+            count(self.holes.len(), "hole"),
+            count(self.extrusions.iter().map(|e| e.cutouts.len()).sum(), "cutout"),
+            count(self.cuts.len(), "pocket"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         let Some((last, rest)) = parts.split_last() else { return part };
         let parts =
             if rest.is_empty() { last.clone() } else { locale.format("summary.list", &[("rest", &rest.join(", ")), ("last", last)]) };
@@ -180,25 +248,30 @@ impl CombinedSpec {
                 },
             );
         }
-        // Where the part starts along each axis: the move's translation.
-        let origin = |axis: Axis| {
-            if self.outline(axis).is_some() {
-                format!("extrude_{}_0", axis.letter().to_ascii_lowercase())
-            } else {
-                fmt_number(snap_mm(at[axis.index()]))
-            }
-        };
-        // The cuts before the move, in the part's own frame: each starts at its floor (or at the
-        // box's face) along its plane's normal, `cut_<n>_0` in the file less where the part starts.
+        self.cut_features(&mut b, at);
+        self.hole_features(&mut b, at);
+        let translate = [Axis::X, Axis::Y, Axis::Z].map(|axis| self.origin(axis, at));
+        b.feature("Move1", vec![], FeatureKind::Move { bodies: vec!["Body1".into()], translate });
+        b.build()
+    }
+
+    /// Where the part starts along `axis`: its outline's `extrude_<a>_0`, or the number where it
+    /// has none (the move's translation).
+    fn origin(&self, axis: Axis, at: Vec3) -> String {
+        if self.outline(axis).is_some() {
+            format!("extrude_{}_0", axis.letter().to_ascii_lowercase())
+        } else {
+            fmt_number(snap_mm(at[axis.index()]))
+        }
+    }
+
+    /// The cuts before the move, in the part's own frame: each starts at its floor (or at the
+    /// box's face) along its plane's normal, `cut_<n>_0` in the file less where the part starts.
+    fn cut_features(&self, b: &mut DesignBuilder, at: Vec3) {
         for (k, c) in self.cuts.iter().enumerate() {
             let (n, i) = (k + 1, c.axis.index());
             b.param(Param::user(format!("cut_{n}_len"), snap_mm(c.to - c.from)))
                 .param(Param::user(format!("cut_{n}_0"), snap_mm(at[i] + c.from)));
-            let start = match origin(c.axis).as_str() {
-                "0" => format!("cut_{n}_0"),
-                o if o.starts_with('-') => format!("cut_{n}_0 + {}", &o[1..]),
-                o => format!("cut_{n}_0 - {o}"),
-            };
             let sketch = b.feature(
                 format!("Cut{n}Sketch"),
                 vec![],
@@ -210,13 +283,58 @@ impl CombinedSpec {
                 FeatureKind::Extrude {
                     sketch,
                     profiles: Profiles::All,
-                    extent: Extent::positive(format!("cut_{n}_len")).starting_at(start),
+                    extent: Extent::positive(format!("cut_{n}_len")).starting_at(less(format!("cut_{n}_0"), &self.origin(c.axis, at))),
                     operation: Operation::Cut,
                 },
             );
         }
-        let translate = [Axis::X, Axis::Y, Axis::Z].map(origin);
-        b.feature("Move1", vec![], FeatureKind::Move { bodies: vec!["Body1".into()], translate });
-        b.build()
+    }
+
+    /// The holes as cylinders cut out of the part, also in its own frame: a through hole from 1 mm
+    /// before the part to 1 mm after it, a blind one from 1 mm outside the face it opens on.
+    fn hole_features(&self, b: &mut DesignBuilder, at: Vec3) {
+        for (k, h) in self.holes.iter().enumerate() {
+            let (n, a) = (k + 1, h.axis.index());
+            b.param(Param::user(format!("hole_{n}_d"), h.d));
+            let mut base = [String::new(), String::new(), String::new()];
+            for (i, &w) in h.axis.profile_axes().iter().enumerate() {
+                let name = format!("hole_{n}_{}", h.axis.profile_letter(i));
+                b.param(Param::user(&name, snap_mm(at[w] + h.axis.profile_sign(i) * h.centre[i])));
+                base[w] = less(name, &self.origin([Axis::X, Axis::Y, Axis::Z][w], at));
+            }
+            let length = if self.outline(h.axis).is_some() {
+                format!("extrude_{}_len", h.axis.letter().to_ascii_lowercase())
+            } else {
+                fmt_number(self.size[a])
+            };
+            let mut dir = h.axis.dir();
+            let height = if h.through(self.size) {
+                base[a] = "-1".into();
+                format!("{length} + 2")
+            } else {
+                b.param(Param::user(format!("hole_{n}_depth"), snap_mm(h.to - h.from)));
+                if h.from <= 0.0 {
+                    base[a] = "-1".into();
+                } else {
+                    base[a] = format!("{length} + 1");
+                    dir = dir.map(|c| -c);
+                }
+                format!("hole_{n}_depth + 1")
+            };
+            b.feature(
+                format!("Hole{n}"),
+                vec![],
+                FeatureKind::Cylinder { base, axis: dir, radius: format!("hole_{n}_d / 2"), height, operation: Operation::Cut },
+            );
+        }
+    }
+}
+
+/// `value` less `origin` (an expression or a number), written without `- 0` or `- -3`.
+fn less(value: String, origin: &str) -> String {
+    match origin {
+        "0" => value,
+        o if o.starts_with('-') => format!("{value} + {}", &o[1..]),
+        o => format!("{value} - {o}"),
     }
 }

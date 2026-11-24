@@ -38,6 +38,7 @@
 mod bosses;
 mod faces;
 mod geometry;
+pub(crate) use geometry::fit_circle;
 mod holes;
 mod outline;
 mod prism;
