@@ -97,7 +97,7 @@ pub(super) fn distance(a: P2, b: P2) -> f64 {
 
 /// The least-squares circle through `points` (Kåsa's algebraic fit), as centre and radius.
 #[allow(clippy::many_single_char_names)] // the textbook symbols
-pub(super) fn fit_circle(points: &[P2]) -> Option<(P2, f64)> {
+pub(crate) fn fit_circle(points: &[P2]) -> Option<(P2, f64)> {
     let n = points.len() as f64;
     let mean = [points.iter().map(|p| p[0]).sum::<f64>() / n, points.iter().map(|p| p[1]).sum::<f64>() / n];
     // In coordinates around the mean, solve for x² + y² + D x + E y + F = 0.

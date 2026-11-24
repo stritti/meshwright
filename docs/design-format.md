@@ -85,6 +85,17 @@ and Z on a tie), so the pocket of `combined-pocket.stl` is cut along X from 5 to
 `cut_1_len = 20` rebuilds to 36,400 mm³, as computed. revmesh numbers cuts by axis and start;
 mesh2cad in the order of its mesh regions, so with several cuts the numbers may differ.
 
+A round hole is a `cylinder` with `operation: "cut"`, also before the `move`: `radius:
+"hole_<n>_d / 2"`, `base` the hole's two coordinates in the part's frame (`hole_<n>_x -
+extrude_x_0`, or less a number where the axis has no outline) and, along its axis, `-1` with
+`height: "extrude_<a>_len + 2"` for a through hole (1 mm beyond each end), or 1 mm outside the
+face a blind hole opens on with `height: "hole_<n>_depth + 1"` and `axis` pointing into the
+part. A cylinder needs no face to start from, so a hole may enter a slanted side. On
+`plugin/revmesh/tests/combined-holes.stl` (built with SolidCraft cylinder cuts) the design
+rebuilds to 35,272.124 mm³ as SolidCraft measures the source, and `hole_3_d = 8`,
+`hole_2_depth = 5` to 34,675.221 mm³, as computed; mesh2cad writes the same 14 parameters and
+values for the file exported `fine`.
+
 ## Cut-outs
 
 The cut-outs of straight sides are one sketch, `CutoutsSketch`, of closed loops in world
