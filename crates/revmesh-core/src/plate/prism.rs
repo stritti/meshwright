@@ -426,6 +426,16 @@ fn rounded_rim(s: &Stepped, mine: &[Vec3], tol: f64) -> Option<(f64, f64)> {
     let round_the_axis =
         (super::geometry::sagitta(&s.mouth, s.head_r) / s.head_r).max(super::geometry::sagitta(&s.bore, s.bore_r) / s.bore_r);
     let slack = f * (1.0 - (step / 2.0).cos()) + head_r * round_the_axis;
+    // It meets the bore where the bore's corners nearest the face are, at its own depth (a
+    // flatter cone meets it higher up, though its corners may fit a round as wide): the
+    // shallowest of them lies as deep as the round is at its radius.
+    let bore_in = s.bore_r - super::geometry::sagitta(&s.bore, s.bore_r) - tol;
+    let round_at = |p: &Vec3| f - (f * f - (head_r - r(p)).powi(2)).max(0.0).sqrt();
+    let meets =
+        mine.iter().filter(|p| depth(p) > tol && r(p) >= bore_in && r(p) <= s.bore_r + tol).min_by(|a, b| depth(a).total_cmp(&depth(b)));
+    if meets.is_none_or(|p| (depth(p) - round_at(p)).abs() > slack + tol) {
+        return None;
+    }
     between.iter().all(|p| off(p) <= slack + tol).then_some((f, slack))
 }
 

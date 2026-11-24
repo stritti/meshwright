@@ -538,3 +538,20 @@ fn two_band_countersinks_are_no_rounds() {
     let (plate, _) = super::found(&rim_plate(&[(11.0, 8.0), (10.5, 7.5), (10.0, 7.0)], 32));
     assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Countersink { d: 22.0, angle: 90.0, bottom: false }));
 }
+
+/// A 130° countersink meshed in two bands meets the bore higher up than a round its corners
+/// fit would: it stays a countersink, however finely the bore is meshed.
+#[test]
+fn flat_two_band_countersinks_are_no_rounds() {
+    let profile = [(11.0, 8.0), (10.233_955_56, 7.642_787_61), (10.0, 7.533_692_34)];
+    for n in [12, 32] {
+        let (plate, _) = super::found(&rim_plate(&profile, n));
+        assert!(
+            !matches!(plate.holes.first().and_then(|h| h.head.as_ref()), Some(crate::recognize::HoleHead::Round { .. })),
+            "{n} segments: {:?}",
+            plate.holes.first().map(|h| &h.head)
+        );
+    }
+    let (plate, _) = super::found(&rim_plate(&profile, 12));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Countersink { d: 22.0, angle: 130.0, bottom: false }));
+}
