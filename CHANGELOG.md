@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.0-beta.4](https://github.com/stritti/revmesh/compare/v0.1.0-beta.3...v0.1.0-beta.4) (2026-11-24)
+
+
+### Features
+
+* check rebuilds against the source mesh (roadmap 4) ([#45](https://github.com/stritti/revmesh/issues/45)) ([968b92c](https://github.com/stritti/revmesh/commit/968b92ccbdc21d97c58dd838e15b22eacb8d4667))
+* **ci:** enforce a &gt;= 80% line-coverage gate on revmesh-core, documented in the agent skills ([#44](https://github.com/stritti/revmesh/issues/44)) ([181e9cd](https://github.com/stritti/revmesh/commit/181e9cd55528d1a036d7620faeaf5ddb88a3f6a0))
+* **plate:** recognise rounds at the foot of round bosses ([#51](https://github.com/stritti/revmesh/issues/51)) ([e8c7b36](https://github.com/stritti/revmesh/commit/e8c7b36aebd5a4a9260a5ec1caed56a1949328bf))
+* recognise boxes with all twelve edges rounded (edge_fillet_r) ([#47](https://github.com/stritti/revmesh/issues/47)) ([7b678e7](https://github.com/stritti/revmesh/commit/7b678e7ec17e9d9fd2acdce5665743ea55461bf8))
+* recognise extrusions along X and Y ([#42](https://github.com/stritti/revmesh/issues/42)) ([a169c0a](https://github.com/stritti/revmesh/commit/a169c0af1c5399f6578b0a8ddc9f1553061fae26))
+
+
+### Documentation
+
+* add agent skills for SolidCraft WebAssembly plugin development ([#41](https://github.com/stritti/revmesh/issues/41)) ([b2af198](https://github.com/stritti/revmesh/commit/b2af1985328930c3b33c6c60dba5f19ae82e4438))
+* list comparable mesh-to-CAD tools with links, licenses and matrix ([#50](https://github.com/stritti/revmesh/issues/50)) ([0c386c4](https://github.com/stritti/revmesh/commit/0c386c4d1a45524b775b50da9712abe811004a29))
+
 ## [0.1.0-beta.3](https://github.com/stritti/revmesh/compare/v0.1.0-beta.2...v0.1.0-beta.3) (2026-11-23)
 
 
