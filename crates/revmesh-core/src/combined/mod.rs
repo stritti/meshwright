@@ -4,16 +4,19 @@
 //! module). The first of them is a part whose every face is flat and parallel to at least one of
 //! the axes, and that is the intersection of its silhouettes along X, Y and Z, each extruded right
 //! across it: the three views of a drawing, as a plate seen from above cut by a ramp seen from
-//! the side. revmesh recognises that part; holes, cuts and unions of partial extrusions follow.
+//! the side. revmesh recognises that part, with openings through its outlines and straight
+//! blind cuts into it (see [`cuts`]); holes and unions of partial extrusions follow.
 //!
 //! The silhouette along an axis is the union of the facets facing along it, projected (see
 //! [`silhouette`]); an axis whose silhouette is the box's side adds nothing and is left out. The
 //! mesh lies inside the intersection by construction, and it is the intersection when every
 //! facet lies on the intersection's boundary (on a side of an outline's extrusion, or on the
-//! bounding box) and the volumes agree: no face lies inside, so nothing is missing.
+//! bounding box) and the volumes agree: no face lies inside, so nothing is missing. The facets
+//! that do lie inside must be the floors and walls of cuts, which then count as boundary too.
 
 #![allow(clippy::many_single_char_names)] // points a, b, c, p, q, as in the geometry
 
+mod cuts;
 mod silhouette;
 #[cfg(test)]
 mod tests;
@@ -110,10 +113,22 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
         }
         extrusions.push(Extrusion { axis, outline, cutouts });
     }
-    if extrusions.len() < 2 {
+    // What lies inside the outlines' intersection must be cuts into it.
+    let base = CombinedSpec { size, extrusions: extrusions.clone(), cuts: Vec::new() };
+    let inside: Vec<([Vec3; 3], Vec3)> = facets.iter().filter(|(t, n)| !on_boundary(&base, t, *n, tol)).copied().collect();
+    let cuts = cuts::find_cuts(&inside, size, tol)?;
+    if extrusions.len() < 2 && cuts.is_empty() {
         return Err("it is not a combination of extrusions: it is not bounded by outlines along two axes".into());
     }
-    let spec = CombinedSpec { size, extrusions };
+    if extrusions.is_empty() {
+        // A box with cuts into it: the box is the outline along Z.
+        extrusions.push(Extrusion {
+            axis: Axis::Z,
+            outline: vec![[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]],
+            cutouts: Vec::new(),
+        });
+    }
+    let spec = CombinedSpec { size, extrusions, cuts };
     if !facets.iter().all(|(t, n)| on_boundary(&spec, t, *n, tol)) {
         return Err(INSIDE.into());
     }
@@ -123,7 +138,8 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
     // it, within the 1% every recognised part's volume keeps.
     if (found - measured).abs() > tol * area || (found - measured).abs() > crate::plate::MAX_VOLUME_ERROR * measured.abs() {
         return Err(format!(
-            "it is not a combination of extrusions: the outlines' intersection holds {found:.1} mm³, the mesh {measured:.1} mm³"
+            "it is not a combination of extrusions: the outlines' intersection and its cuts hold {found:.1} mm³, the mesh \
+             {measured:.1} mm³"
         ));
     }
     Ok((spec, bounds.min.map(snap_mm)))
@@ -140,6 +156,7 @@ fn on_boundary(spec: &CombinedSpec, t: &[Vec3; 3], n: Vec3, tol: f64) -> bool {
         (n[i] <= -1.0 + PARALLEL && flush(0.0)) || (n[i] >= 1.0 - PARALLEL && flush(spec.size[i]))
     });
     on_box
+        || spec.cuts.iter().any(|c| cuts::on_cut(c, &points, n, tol))
         || spec.extrusions.iter().any(|e| {
             let m = e.axis.rotate(n);
             if m[2].abs() > PARALLEL {

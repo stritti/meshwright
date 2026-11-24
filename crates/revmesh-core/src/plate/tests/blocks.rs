@@ -84,6 +84,12 @@ fn pockets_need_flat_floors_and_rectangles() {
         let (p, q) = (triangle[(i + 1) % 3], triangle[i]);
         t.extend([[at(p, 3.0), at(q, 3.0), at(q, 6.0)], [at(p, 3.0), at(q, 6.0), at(p, 6.0)]]);
     }
-    let why = reason(&Mesh::new(t));
+    // No plate's pocket; a box with a triangular cut into it, a combined extrusion.
+    let sunk = Mesh::new(t);
+    let why = crate::plate::recognize_plate(&sunk).expect_err("no plate");
     assert!(why.contains("pockets other than rectangles"), "{why}");
+    let found = crate::recognize::recognize(&sunk);
+    let crate::recognize::Recognition::Combined { spec, .. } = found else { panic!("not combined: {found:?}") };
+    assert_eq!(spec.cuts.len(), 1);
+    assert!((spec.volume() - (60.0 * 40.0 * 6.0 - 150.0 * 3.0)).abs() < 1e-9, "{}", spec.volume());
 }

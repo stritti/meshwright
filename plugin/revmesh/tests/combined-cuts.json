@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "combined-cuts.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 9, "loss_report": {"summary": "A 60 x 40 x 30 mm part of outlines extruded along X and Z with 2 pockets"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 35800}},
+    "tolerance": 1e-6
+  }
+}

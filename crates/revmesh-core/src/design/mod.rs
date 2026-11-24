@@ -350,19 +350,29 @@ pub struct Extent {
     direction: &'static str,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     through_all: bool,
+    /// Where it starts along the sketch normal, if not on the sketch plane.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_offset: Option<String>,
 }
 
 impl Extent {
     /// `distance` along the sketch normal.
     #[must_use]
     pub fn positive(distance: impl Into<String>) -> Self {
-        Self { distance: distance.into(), convention: "total_distance", direction: "positive", through_all: false }
+        Self { distance: distance.into(), convention: "total_distance", direction: "positive", through_all: false, start_offset: None }
+    }
+
+    /// The same extent, starting `offset` along the sketch normal from the sketch plane.
+    #[must_use]
+    pub fn starting_at(mut self, offset: impl Into<String>) -> Self {
+        self.start_offset = Some(offset.into());
+        self
     }
 
     /// Through everything, both ways from the sketch plane.
     #[must_use]
     pub fn through_all() -> Self {
-        Self { distance: "0".into(), convention: "total_distance", direction: "symmetric", through_all: true }
+        Self { distance: "0".into(), convention: "total_distance", direction: "symmetric", through_all: true, start_offset: None }
     }
 }
 

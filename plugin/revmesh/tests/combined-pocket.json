@@ -2,8 +2,8 @@
   "entry": "stl",
   "file": "combined-pocket.stl",
   "expect": {
-    "reply": {"bodies": 1, "features": 1},
+    "reply": {"bodies": 1, "features": 7, "loss_report": {"summary": "A 60 x 40 x 30 mm part of outlines extruded along X and Z with 1 pocket"}},
     "model": {"body_count": 1, "total": {"volume_mm3": 36700}},
-    "tolerance": 1e-4
+    "tolerance": 1e-6
   }
 }

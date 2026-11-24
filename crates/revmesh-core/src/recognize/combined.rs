@@ -33,14 +33,33 @@ impl Extrusion {
     }
 }
 
-/// The intersection of two or three outlines, each extruded along its own axis across the
-/// part's bounding box; an axis whose outline would be the box's side has none.
+/// A straight blind cut: `outline` extruded along `axis` from `from` to `to` (along the axis, the
+/// part's bounding box's lowest corner at the origin), taken out of the part. An end at the box's
+/// face (0, or the box's size) is where it opens.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cut {
+    /// The axis it is extruded along.
+    pub axis: Axis,
+    /// Its corners, counter-clockwise, in the axis's profile coordinates, as an
+    /// [`Extrusion`]'s.
+    pub outline: Vec<[f64; 2]>,
+    /// Where it starts along the axis.
+    pub from: f64,
+    /// Where it ends along the axis.
+    pub to: f64,
+}
+
+/// The intersection of two or three outlines (or one, with cuts), each extruded along its own
+/// axis across the part's bounding box, less straight blind cuts; an axis whose outline would be
+/// the box's side has none.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CombinedSpec {
     /// The bounding box's size along X, Y and Z.
     pub size: [f64; 3],
     /// The outlines, at most one per axis, in the order Z, X, Y.
     pub extrusions: Vec<Extrusion>,
+    /// The cuts, none overlapping another.
+    pub cuts: Vec<Cut>,
 }
 
 impl CombinedSpec {
@@ -53,11 +72,30 @@ impl CombinedSpec {
     /// The volume of the part, in mm³: what SolidCraft measures once it has rebuilt the design.
     #[must_use]
     pub fn volume(&self) -> f64 {
-        let rings = |axis: Axis| self.extrusions.iter().find(|e| e.axis == axis).map(Extrusion::rings);
-        // Along Y the profile's second coordinate is −Z; the volume takes the outline in (x, z).
-        let front: Option<Vec<Vec<[f64; 2]>>> =
-            rings(Axis::Y).map(|rs| rs.iter().map(|r| r.iter().map(|p| [p[0], -p[1]]).collect()).collect());
-        crate::combined::volume::intersection_volume(self.size, rings(Axis::Z).as_deref(), rings(Axis::X).as_deref(), front.as_deref())
+        let outlines = |cut: Option<&Cut>| {
+            let rings = |axis: Axis| match cut {
+                // Along the cut's axis its own outline (it lies within the part's there).
+                Some(c) if c.axis == axis => Some(vec![c.outline.clone()]),
+                _ => self.extrusions.iter().find(|e| e.axis == axis).map(Extrusion::rings),
+            };
+            // Along Y the profile's second coordinate is −Z; the volume takes the outline in (x, z).
+            let front: Option<Vec<Vec<[f64; 2]>>> =
+                rings(Axis::Y).map(|rs| rs.iter().map(|r| r.iter().map(|p| [p[0], -p[1]]).collect()).collect());
+            (rings(Axis::Z), rings(Axis::X), front)
+        };
+        let (z, x, y) = outlines(None);
+        let whole = crate::combined::volume::intersection_volume(self.size, z.as_deref(), x.as_deref(), y.as_deref());
+        let cuts: f64 = self
+            .cuts
+            .iter()
+            .map(|c| {
+                let (z, x, y) = outlines(Some(c));
+                let (mut lo, mut hi) = ([0.0; 3], self.size);
+                (lo[c.axis.index()], hi[c.axis.index()]) = (c.from, c.to);
+                crate::combined::volume::intersection_volume_in(lo, hi, z.as_deref(), x.as_deref(), y.as_deref())
+            })
+            .sum();
+        whole - cuts
     }
 
     /// One line describing the part, for the loss report.
@@ -75,11 +113,19 @@ impl CombinedSpec {
         let last = axes.pop().unwrap_or_default();
         let axes = if axes.is_empty() { last } else { locale.format("summary.list", &[("rest", &axes.join(", ")), ("last", &last)]) };
         let part = locale.format("summary.combined", &[("x", &x), ("y", &y), ("z", &z), ("axes", &axes)]);
-        match self.extrusions.iter().map(|e| e.cutouts.len()).sum::<usize>() {
-            0 => part,
-            1 => locale.format("summary.with", &[("plate", &part), ("parts", &locale.text("summary.cutout.one"))]),
-            n => locale.format("summary.with", &[("plate", &part), ("parts", &locale.format("summary.cutout.other", &[("n", &n)]))]),
-        }
+        let count = |n: usize, kind: &str| match n {
+            0 => None,
+            1 => Some(locale.text(&format!("summary.{kind}.one")).to_owned()),
+            n => Some(locale.format(&format!("summary.{kind}.other"), &[("n", &n)])),
+        };
+        let parts: Vec<String> = [count(self.extrusions.iter().map(|e| e.cutouts.len()).sum(), "cutout"), count(self.cuts.len(), "pocket")]
+            .into_iter()
+            .flatten()
+            .collect();
+        let Some((last, rest)) = parts.split_last() else { return part };
+        let parts =
+            if rest.is_empty() { last.clone() } else { locale.format("summary.list", &[("rest", &rest.join(", ")), ("last", last)]) };
+        locale.format("summary.with", &[("plate", &part), ("parts", &parts)])
     }
 
     /// The part as a parametric history, its bounding box's corner at the origin; see
@@ -134,13 +180,42 @@ impl CombinedSpec {
                 },
             );
         }
-        let translate = [Axis::X, Axis::Y, Axis::Z].map(|axis| {
+        // Where the part starts along each axis: the move's translation.
+        let origin = |axis: Axis| {
             if self.outline(axis).is_some() {
                 format!("extrude_{}_0", axis.letter().to_ascii_lowercase())
             } else {
                 fmt_number(snap_mm(at[axis.index()]))
             }
-        });
+        };
+        // The cuts before the move, in the part's own frame: each starts at its floor (or at the
+        // box's face) along its plane's normal, `cut_<n>_0` in the file less where the part starts.
+        for (k, c) in self.cuts.iter().enumerate() {
+            let (n, i) = (k + 1, c.axis.index());
+            b.param(Param::user(format!("cut_{n}_len"), snap_mm(c.to - c.from)))
+                .param(Param::user(format!("cut_{n}_0"), snap_mm(at[i] + c.from)));
+            let start = match origin(c.axis).as_str() {
+                "0" => format!("cut_{n}_0"),
+                o if o.starts_with('-') => format!("cut_{n}_0 + {}", &o[1..]),
+                o => format!("cut_{n}_0 - {o}"),
+            };
+            let sketch = b.feature(
+                format!("Cut{n}Sketch"),
+                vec![],
+                FeatureKind::Sketch { plane: Plane::Origin { name: c.axis.plane() }, sketch: polygon_sketch(&c.outline) },
+            );
+            b.feature(
+                format!("Cut{n}"),
+                vec![],
+                FeatureKind::Extrude {
+                    sketch,
+                    profiles: Profiles::All,
+                    extent: Extent::positive(format!("cut_{n}_len")).starting_at(start),
+                    operation: Operation::Cut,
+                },
+            );
+        }
+        let translate = [Axis::X, Axis::Y, Axis::Z].map(origin);
         b.feature("Move1", vec![], FeatureKind::Move { bodies: vec!["Body1".into()], translate });
         b.build()
     }
