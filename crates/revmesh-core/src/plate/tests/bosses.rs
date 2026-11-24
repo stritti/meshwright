@@ -232,3 +232,36 @@ fn rounded_boss_tops_with_corners_near_the_rim() {
     let (plate, _) = found(&mesh);
     assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
 }
+
+/// A round of 60 bands on an Ø10 boss: its first band rises less than the tolerance and lies in
+/// the top face, so the footprint is smaller than the round's; the round's radius comes from its
+/// corners. A boss whose cylinder is turned 45° above its round is no boss.
+#[test]
+fn finely_banded_rounds_and_twisted_walls() {
+    let (r, f) = (5.0, 2.0);
+    let mut rings: Vec<(f64, f64)> = (0..=60).map(|k| f64::from(k) * PI / 120.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+    rings.push((r, 8.0));
+    let (plate, _) = found(&layered_boss(&rings, 48));
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
+    let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+    rings.push((r, 8.0));
+    let mesh = layered_boss(&rings, 48);
+    // Turn the top ring (and the top) by 45° about the boss's axis.
+    let (sin, cos) = (PI / 4.0).sin_cos();
+    let turned = Mesh::new(
+        mesh.triangles
+            .iter()
+            .map(|t| {
+                t.map(|p| {
+                    if p[2] > 14.0 - 1e-9 {
+                        let (x, y) = (p[0] - 20.0, p[1] - 20.0);
+                        [20.0 + x * cos - y * sin, 20.0 + x * sin + y * cos, p[2]]
+                    } else {
+                        p
+                    }
+                })
+            })
+            .collect(),
+    );
+    reason(&turned);
+}
