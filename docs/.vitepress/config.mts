@@ -17,6 +17,7 @@ export default defineConfig({
     logo: '/logo.svg',
     nav: [
       { text: 'Guide', link: '/guide/install' },
+      { text: 'Examples', link: '/guide/examples' },
       { text: 'Development', link: '/architecture' },
       { text: 'Releases', link: `${repo}/releases` },
     ],
@@ -27,6 +28,7 @@ export default defineConfig({
           { text: 'Install', link: '/guide/install' },
           { text: 'Use', link: '/guide/use' },
           { text: 'What auto recognises', link: '/guide/recognition' },
+          { text: 'Examples', link: '/guide/examples' },
           { text: 'Roadmap', link: '/guide/roadmap' },
           { text: 'Origin and license', link: '/guide/about' },
           { text: 'Comparable tools', link: '/guide/comparison' },
