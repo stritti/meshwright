@@ -17,17 +17,37 @@ type P2 = [f64; 2];
 /// of rings (the boundary counter-clockwise, openings clockwise; along X and Y the winding does
 /// not matter); `None` for an axis whose outline is the box's side.
 pub(crate) fn intersection_volume(size: [f64; 3], z: Option<&[Vec<P2>]>, x: Option<&[Vec<P2>]>, y: Option<&[Vec<P2>]>) -> f64 {
-    let rect = |w: f64, h: f64| vec![vec![[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]]];
-    let pz = z.map_or_else(|| rect(size[0], size[1]), <[Vec<P2>]>::to_vec);
-    let px = x.map_or_else(|| rect(size[1], size[2]), <[Vec<P2>]>::to_vec);
-    let py = y.map_or_else(|| rect(size[0], size[2]), <[Vec<P2>]>::to_vec);
+    intersection_volume_in([0.0; 3], size, z, x, y)
+}
+
+/// [`intersection_volume`] within the box from `lo` to `hi` only: each outline is clipped to the
+/// box's side across its axis (and an axis without one is that side).
+pub(crate) fn intersection_volume_in(
+    lo: [f64; 3],
+    hi: [f64; 3],
+    z: Option<&[Vec<P2>]>,
+    x: Option<&[Vec<P2>]>,
+    y: Option<&[Vec<P2>]>,
+) -> f64 {
+    if (0..3).any(|i| hi[i] <= lo[i]) {
+        return 0.0;
+    }
+    // The outline across axes (u, v) clipped to the box's side there.
+    let side = |rings: Option<&[Vec<P2>]>, u: usize, v: usize| -> Vec<Vec<P2>> {
+        let r = [lo[u], hi[u], lo[v], hi[v]];
+        match rings {
+            None => vec![vec![[r[0], r[2]], [r[1], r[2]], [r[1], r[3]], [r[0], r[3]]]],
+            Some(rings) => rings.iter().map(|ring| clip_ring(ring, r)).filter(|ring| ring.len() >= 3).collect(),
+        }
+    };
+    let (pz, px, py) = (side(z, 0, 1), side(x, 1, 2), side(y, 0, 2));
     let corners = |rings: &[Vec<P2>]| rings.iter().flatten().copied().collect::<Vec<P2>>();
     let sides =
         |rings: &[Vec<P2>]| rings.iter().flat_map(|r| (0..r.len()).map(move |i| (r[i], r[(i + 1) % r.len()]))).collect::<Vec<(P2, P2)>>();
     let (z_corners, z_sides) = (corners(&pz), sides(&pz));
     // The heights where an outline along X or Y has a corner.
     let mut levels: Vec<f64> =
-        corners(&px).iter().chain(&corners(&py)).map(|p| p[1]).chain([0.0, size[2]]).filter(|h| (0.0..=size[2]).contains(h)).collect();
+        corners(&px).iter().chain(&corners(&py)).map(|p| p[1]).chain([lo[2], hi[2]]).filter(|h| (lo[2]..=hi[2]).contains(h)).collect();
     sort_dedup(&mut levels);
     let mut total = 0.0;
     for w in levels.windows(2) {
@@ -127,9 +147,18 @@ fn slice_area(pz: &[Vec<P2>], px: &[Vec<P2>], py: &[Vec<P2>], z: f64) -> f64 {
 }
 
 /// The signed area of the ring inside the rectangle `[x0, x1, y0, y1]`, positive for a
-/// counter-clockwise ring (Sutherland–Hodgman: the rectangle is convex, so the area is right for
-/// any simple polygon).
+/// counter-clockwise ring.
 fn clipped_area(poly: &[P2], r: [f64; 4]) -> f64 {
+    let ring = clip_ring(poly, r);
+    let n = ring.len();
+    (0..n).map(|i| ring[i][0] * ring[(i + 1) % n][1] - ring[(i + 1) % n][0] * ring[i][1]).sum::<f64>() / 2.0
+}
+
+/// The ring clipped to the rectangle `[x0, x1, y0, y1]`, its winding kept (Sutherland–Hodgman:
+/// the rectangle is convex, so for any simple ring the area is right, and a line crosses the
+/// clipped ring's sides as often as the region's boundary, plus pairs where it runs along the
+/// rectangle's side).
+fn clip_ring(poly: &[P2], r: [f64; 4]) -> Vec<P2> {
     let mut ring = poly.to_vec();
     // Each side as (axis, bound, keep below).
     for (axis, bound, below) in [(0, r[0], false), (0, r[1], true), (1, r[2], false), (1, r[3], true)] {
@@ -148,11 +177,10 @@ fn clipped_area(poly: &[P2], r: [f64; 4]) -> f64 {
         }
         ring = out;
         if ring.is_empty() {
-            return 0.0;
+            break;
         }
     }
-    let n = ring.len();
-    (0..n).map(|i| ring[i][0] * ring[(i + 1) % n][1] - ring[(i + 1) % n][0] * ring[i][1]).sum::<f64>() / 2.0
+    ring
 }
 
 #[cfg(test)]
@@ -200,6 +228,27 @@ mod tests {
         plan.push(vec![[2.0, 2.0], [2.0, 4.0], [4.0, 4.0], [4.0, 2.0]]);
         let v = intersection_volume([60.0, 40.0, 30.0], Some(&plan), Some(&one(&RAMP)), None);
         assert!((v - (37_000.0 - 4.0 * 30.0)).abs() < 1e-6, "{v}");
+    }
+
+    /// Within a part of the box: the fixture's plate under its ramp above Z = 20 holds
+    /// 20 x 40 x (the ramp's area above 20, (40 - 15) x 10 / 2 ... ) and so on; checked against the
+    /// whole minus the part below.
+    #[test]
+    fn within_a_part_of_the_box() {
+        let size = [60.0, 40.0, 30.0];
+        let (pz, px) = (one(&L), one(&RAMP));
+        let whole = intersection_volume(size, Some(&pz), Some(&px), None);
+        let below = intersection_volume_in([0.0; 3], [60.0, 40.0, 20.0], Some(&pz), Some(&px), None);
+        let above = intersection_volume_in([0.0, 0.0, 20.0], size, Some(&pz), Some(&px), None);
+        assert!((below + above - whole).abs() < 1e-6, "{below} + {above} vs {whole}");
+        // Below 20 the ramp is no limit where y <= 27.5: the L's area times 20, less the
+        // triangle above the ramp's slope over y in [27.5, 40] (12.5 x 10 / 2) times the L's
+        // width there (20).
+        assert!((below - (1400.0 * 20.0 - 62.5 * 20.0)).abs() < 1e-6, "{below}");
+        // A box in the corner: [5, 15] x [5, 11] x [25, 30] lies wholly inside.
+        let pocket = intersection_volume_in([5.0, 5.0, 25.0], [15.0, 11.0, 30.0], Some(&pz), Some(&px), None);
+        assert!((pocket - 300.0).abs() < 1e-9, "{pocket}");
+        assert!(intersection_volume_in([5.0, 5.0, 25.0], [5.0, 11.0, 30.0], Some(&pz), Some(&px), None).abs() < 1e-12);
     }
 
     /// Two triangles crossing each other: a corner of the slice's rectangle passes through the

@@ -68,15 +68,94 @@ fn keeps_where_the_part_is() {
 fn a_thin_part_keeps_its_volume() {
     let thin = Mesh::new(combined().triangles.iter().map(|t| t.map(|p| [p[0], p[1], p[2] * 0.0104 / 30.0])).collect());
     let why = recognize_combined(&thin).expect_err("refused");
-    assert!(why.contains("the outlines' intersection holds"), "{why}");
+    assert!(why.contains("the outlines' intersection and its cuts hold"), "{why}");
 }
 
-/// A pocket in the top leaves the silhouettes as they were, but its faces lie inside them.
+/// A 10 x 6 x 5 pocket in the top leaves the silhouettes as they were. It is a cut along each
+/// axis (closed at both ends along X and Y, open through the top along Z); as mesh2cad, the
+/// longest wins: along X from 5 to 15, its outline the pocket's side in (y, z) up to the top.
 #[test]
-fn a_pocket_is_no_combination() {
+fn recognises_a_pocket_as_a_cut() {
     let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-pocket.stl"));
-    assert_eq!(recognize_combined(&mesh), Err(super::INSIDE.into()));
-    assert!(matches!(recognize(&mesh), Recognition::Unrecognized { .. }));
+    let (spec, _) = recognize_combined(&mesh).expect("combined");
+    let [cut] = spec.cuts.as_slice() else { panic!("{:?}", spec.cuts) };
+    assert_eq!((cut.axis, cut.from, cut.to), (Axis::X, 5.0, 15.0));
+    assert_eq!(from_lowest(&cut.outline), [[5.0, 25.0], [11.0, 25.0], [11.0, 30.0], [5.0, 30.0]]);
+    assert!((spec.volume() - 36_700.0).abs() < 1e-6, "{}", spec.volume());
+    assert_eq!(spec.describe(), "A 60 x 40 x 30 mm part of outlines extruded along X and Z with 1 pocket");
+    // Its sketch on YZ, cut from its start: cut_1_0 in the file, less where the part starts.
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [2.0, 0.0, 0.0]).to_json()).expect("json");
+    let cut = &json["features"][5];
+    assert_eq!((cut["type"].as_str(), cut["operation"].as_str()), (Some("extrude"), Some("cut")));
+    assert_eq!(json["features"][4]["plane"]["name"], "YZ");
+    assert_eq!(cut["extent"]["distance"], "cut_1_len");
+    assert_eq!(cut["extent"]["start_offset"], "cut_1_0 - extrude_x_0");
+    let value = |name: &str| json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].clone());
+    assert_eq!(value("cut_1_0"), Some("7 mm".into()));
+    assert_eq!(value("cut_1_len"), Some("10 mm".into()));
+}
+
+/// A cut along an axis without an outline starts at a number: where the part starts along it.
+#[test]
+fn a_cut_along_a_plain_axis_starts_at_a_number() {
+    let block = crate::recognize::tests::block(20.0, 10.0, 10.0, [0.0; 3]);
+    let base = CombinedSpec {
+        size: [20.0, 10.0, 10.0],
+        extrusions: vec![crate::recognize::Extrusion {
+            axis: Axis::Z,
+            outline: vec![[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [0.0, 10.0]],
+            cutouts: vec![],
+        }],
+        cuts: vec![crate::recognize::Cut {
+            axis: Axis::Y,
+            outline: vec![[2.0, -10.0], [6.0, -10.0], [6.0, -6.0], [2.0, -6.0]],
+            from: 0.0,
+            to: 3.0,
+        }],
+    };
+    assert!((base.volume() - (block.volume() - 4.0 * 4.0 * 3.0)).abs() < 1e-9, "{}", base.volume());
+    for (y, start) in [(0.0, "cut_1_0"), (-4.5, "cut_1_0 + 4.5"), (7.0, "cut_1_0 - 7")] {
+        let json: serde_json::Value = serde_json::from_str(&base.to_design_at("", [0.0, y, 0.0]).to_json()).expect("json");
+        assert_eq!(json["features"][3]["extent"]["start_offset"], start);
+    }
+}
+
+/// SolidCraft's plate under a ramp with a box cut into its end along X and a triangular notch cut
+/// into its front along Y (opening towards −Y: the cut runs from the face to its floor).
+#[test]
+fn recognises_cuts_along_x_and_y() {
+    let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-cuts.stl"));
+    let (spec, _) = recognize_combined(&mesh).expect("combined");
+    let spans: Vec<(Axis, f64, f64, usize)> = spec.cuts.iter().map(|c| (c.axis, c.from, c.to, c.outline.len())).collect();
+    assert_eq!(spans, [(Axis::X, 45.0, 60.0, 4), (Axis::Y, 0.0, 8.0, 3)]);
+    assert!((spec.volume() - 35_800.0).abs() < 1e-6, "{}", spec.volume());
+}
+
+/// A pocket whose floor slopes along X is a cut along Y (its floor is parallel to Y), its outline
+/// following the slope; one whose floor is warped has faces tilted to every axis.
+#[test]
+fn sloped_and_warped_pocket_floors() {
+    let pocket = || fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-pocket.stl"));
+    let mut sloped = pocket();
+    for p in sloped.triangles.iter_mut().flatten() {
+        if (p[2] - 25.0).abs() < 1e-4 && p[0] > 14.0 {
+            p[2] -= 0.5;
+        }
+    }
+    let (spec, _) = recognize_combined(&sloped).expect("combined");
+    let [cut] = spec.cuts.as_slice() else { panic!("{:?}", spec.cuts) };
+    assert_eq!((cut.axis, cut.from, cut.to), (Axis::Y, 5.0, 11.0));
+    assert!((spec.volume() - sloped.volume()).abs() < 1e-3, "{} vs {}", spec.volume(), sloped.volume());
+    let mut warped = pocket();
+    let mut moved = false;
+    for p in warped.triangles.iter_mut().flatten() {
+        if (p[2] - 25.0).abs() < 1e-4 && p[0] > 14.0 && p[1] > 10.0 {
+            p[2] -= 0.5;
+            moved = true;
+        }
+    }
+    assert!(moved);
+    assert!(recognize_combined(&warped).is_err());
 }
 
 /// A box is bounded by its sides only, and a single extrusion is a prism (found before).
@@ -152,6 +231,7 @@ fn volume_of_a_spec() {
     let spec = CombinedSpec {
         size: [60.0, 40.0, 30.0],
         extrusions: vec![crate::recognize::Extrusion { axis: Axis::X, outline: RAMP.to_vec(), cutouts: vec![] }],
+        cuts: vec![],
     };
     assert!((spec.volume() - 950.0 * 60.0).abs() < 1e-6);
 }

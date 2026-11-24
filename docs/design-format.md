@@ -74,6 +74,17 @@ the profile whose outer loop is the outline, the loops inside it its holes. With
 "all"}` SolidCraft extrudes every region, the openings included, and they come back filled
 (`plugin/revmesh/tests/combined-windows.stl` rebuilt to 37,000 instead of 35,410 mm³).
 
+A straight blind cut comes after the intersections and before the `move`, in the part's own
+frame: `Cut<n>Sketch` on its axis's origin plane, and `Cut<n>`, an extrusion with `operation:
+"cut"` and `extent: {distance: "cut_<n>_len", direction: "positive", start_offset: "cut_<n>_0 -
+extrude_<a>_0"}`: `start_offset` (as SolidCraft saves it) moves the start along the plane's
+normal, and `cut_<n>_0` is where the cut starts in the file, so the move's translation along the
+axis is taken off again (a number where the axis has no outline). A rectangular pocket is a cut
+along each axis it is closed or open along; as mesh2cad, the longest wins (the first of X, Y
+and Z on a tie), so the pocket of `combined-pocket.stl` is cut along X from 5 to 15, and
+`cut_1_len = 20` rebuilds to 36,400 mm³, as computed. revmesh numbers cuts by axis and start;
+mesh2cad in the order of its mesh regions, so with several cuts the numbers may differ.
+
 ## Cut-outs
 
 The cut-outs of straight sides are one sketch, `CutoutsSketch`, of closed loops in world
