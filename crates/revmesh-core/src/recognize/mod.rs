@@ -20,7 +20,7 @@ mod tests;
 mod to_design;
 
 pub use axis::Axis;
-pub use spec::{Blind, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+pub use spec::{Blind, BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::mesh::{Mesh, Vec3};
 

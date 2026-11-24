@@ -49,12 +49,22 @@ pub(crate) use outline::{corner_loss, edge_fillet_removed, fillet_loss};
 
 use std::f64::consts::PI;
 
-use bosses::strip_bosses;
+use bosses::{Shape, strip_bosses};
 use holes::Footprint;
 use prism::recognize_prism;
 
 use crate::mesh::{Mesh, snap_mm};
-use crate::recognize::{BossSpec, PadSpec, Recognition};
+use crate::recognize::{BossChamfer, BossSpec, PadSpec, Recognition};
+
+/// The draft of a boss `h` high (as written) narrowing from radius `foot` (as written) to the
+/// measured `top`, in degrees as a parameter: a whole degree, else a hundredth of one, else the
+/// angle as it is, the first whose top radius as SolidCraft computes it (`foot - h * tan(angle)`)
+/// lies within a micrometre of `top` and is positive. `None`: no angle does.
+fn draft_angle(foot: f64, top: f64, h: f64) -> Option<f64> {
+    let degrees = (foot - top).atan2(h).to_degrees();
+    let top_at = |d: f64| foot - h * d.to_radians().tan();
+    [degrees.round(), (degrees * 100.0).round() / 100.0, degrees].into_iter().find(|d| (top_at(*d) - top).abs() <= 1e-3 && top_at(*d) > 0.0)
+}
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
 pub const MAX_VOLUME_ERROR: f64 = 0.01;
@@ -164,10 +174,21 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         let h = snap_mm(b.top - top);
         match b.foot {
             Footprint::Round { r, .. } => {
-                // A round foot widens the footprint by its radius beyond the cylinder.
-                let fillet = (b.fillet > 0.0).then(|| snap_mm(b.fillet));
-                let d = if b.fillet > 0.0 { 2.0 * b.wall_r } else { 2.0 * r };
-                bosses.push(BossSpec { x, y, d: snap_mm(d), h, fillet });
+                let mut boss = BossSpec { x, y, d: snap_mm(2.0 * r), h, fillet: None, draft_deg: None, chamfer: None };
+                match b.shape {
+                    Shape::Straight => {}
+                    // A round foot widens the footprint by its radius beyond the cylinder.
+                    Shape::Fillet => (boss.d, boss.fillet) = (snap_mm(2.0 * b.wall_r), Some(snap_mm(b.fillet))),
+                    // Of the sizes as written: the cone SolidCraft builds from them.
+                    Shape::Draft => {
+                        boss.draft_deg = Some(
+                            draft_angle(boss.d / 2.0, b.wall_r, boss.h)
+                                .ok_or("a drafted boss's top would not lie where it is, or not at all (it is kept as a mesh)")?,
+                        );
+                    }
+                    Shape::Chamfer { w, h: down } => boss.chamfer = Some(BossChamfer { w: snap_mm(w), h: snap_mm(down) }),
+                }
+                bosses.push(boss);
             }
             Footprint::Rect { lo, hi } => pads.push(PadSpec { x, y, w: snap_mm(hi[0] - lo[0]), l: snap_mm(hi[1] - lo[1]), h }),
         }
@@ -190,4 +211,21 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         return Err(format!("the rebuilt plate would differ from the mesh by {:.1}% in volume", error.abs() * 100.0));
     }
     Ok(recognised)
+}
+
+#[cfg(test)]
+mod draft_tests {
+    /// A short, steep draft keeps the precision that keeps its top where it is: a whole degree
+    /// would move a 0.1 mm boss's top radius from 1 mm to below zero.
+    #[test]
+    fn steep_drafts_keep_their_top() {
+        let angle = super::draft_angle(5.0, 1.0, 0.1).expect("an angle");
+        let top = 5.0 - 0.1 * angle.to_radians().tan();
+        assert!((top - 1.0).abs() <= 1e-3, "{angle} gives {top}");
+        assert_eq!(super::draft_angle(6.0, 6.0 - 8.0 * 5.0_f64.to_radians().tan(), 8.0), Some(5.0));
+        // Measured 0.1006 high but written 0.101: the angle is worked out for the written height,
+        // so the top SolidCraft builds stays where it was, above zero.
+        let angle = super::draft_angle(50.0, 0.1, 0.101).expect("an angle");
+        assert!(50.0 - 0.101 * angle.to_radians().tan() > 0.0);
+    }
 }

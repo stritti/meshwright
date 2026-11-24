@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::axis::Axis;
-use super::spec::{BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions, polygon_sketch,
@@ -282,6 +282,16 @@ fn boss_params(b: &mut DesignBuilder, bosses: &[BossSpec], at: Vec3, axis: Axis)
             b.param(Param::user(format!("{p}_fillet"), f));
         }
         pos_params(b, &p, axis, at, [s.x, s.y]);
+        if let Some(draft) = s.draft_deg {
+            b.param(Param::angle(format!("{p}_draft_deg"), draft));
+        } else if let Some(BossChamfer { w, h }) = s.chamfer {
+            // A 45° chamfer is one parameter, as mesh2cad writes it.
+            if (w - h).abs() < 1e-9 {
+                b.param(Param::user(format!("{p}_chamfer"), w));
+            } else {
+                b.param(Param::user(format!("{p}_chamfer_h"), h)).param(Param::user(format!("{p}_chamfer_w"), w));
+            }
+        }
     }
 }
 
@@ -292,17 +302,43 @@ fn boss_params(b: &mut DesignBuilder, bosses: &[BossSpec], at: Vec3, axis: Axis)
 fn boss_features(b: &mut DesignBuilder, bosses: &[BossSpec], at: Vec3, z: f64, axis: Axis, top: &str, extrude: u32) {
     for (i, s) in bosses.iter().enumerate() {
         let p = format!("boss_{}", i + 1);
-        let cylinder = b.feature(
-            format!("Boss{}", i + 1),
-            vec![],
+        let kind = if s.draft_deg.is_some() {
+            FeatureKind::Cone {
+                base: world_exprs(&p, axis, top),
+                axis: axis.dir(),
+                radius: format!("{p}_d / 2"),
+                top_radius: format!("{p}_d / 2 - {p}_h * tan({p}_draft_deg)"),
+                height: format!("{p}_h"),
+                operation: Operation::Join,
+            }
+        } else {
             FeatureKind::Cylinder {
                 base: world_exprs(&p, axis, top),
                 axis: axis.dir(),
                 radius: format!("{p}_d / 2"),
                 height: format!("{p}_h"),
                 operation: Operation::Join,
-            },
-        );
+            }
+        };
+        let cylinder = b.feature(format!("Boss{}", i + 1), vec![], kind);
+        if let Some(BossChamfer { w, h }) = s.chamfer {
+            // The top face faces up most, so the first distance is along it (in from the side).
+            let (distance, distance2) = if (w - h).abs() < 1e-9 {
+                (format!("{p}_chamfer"), None)
+            } else {
+                (format!("{p}_chamfer_w"), Some(format!("{p}_chamfer_h")))
+            };
+            b.feature(
+                format!("Boss{}Chamfer", i + 1),
+                vec![],
+                FeatureKind::Chamfer {
+                    edge_names: vec![format!("F{cylinder}:side|F{cylinder}:top")],
+                    edges: vec![axis.world(at, s.x + s.d / 2.0, s.y, z + s.h)],
+                    distance,
+                    distance2,
+                },
+            );
+        }
         if s.fillet.is_some() {
             b.feature(
                 format!("Boss{}Fillet", i + 1),

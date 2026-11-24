@@ -198,6 +198,35 @@ pub enum FeatureKind {
         /// What it does to existing bodies.
         operation: Operation,
     },
+    /// A cone primitive (a frustum): `base` is the centre of its bottom circle of `radius`, its
+    /// top circle of `top_radius` lies `height` along `axis`.
+    Cone {
+        /// The bottom circle's centre.
+        base: [String; 3],
+        /// The direction from the bottom to the top.
+        axis: [f64; 3],
+        /// The bottom radius expression.
+        radius: String,
+        /// The top radius expression.
+        top_radius: String,
+        /// The height expression.
+        height: String,
+        /// What it does to existing bodies.
+        operation: Operation,
+    },
+    /// A chamfer of edges: `distance` along the first face (the one facing up most), and
+    /// `distance2` along the second when the two differ.
+    Chamfer {
+        /// Topological names of the edges, as for a fillet.
+        edge_names: Vec<String>,
+        /// One point on each edge.
+        edges: Vec<[f64; 3]>,
+        /// The distance along the first face (an expression).
+        distance: String,
+        /// The distance along the second face, if it differs.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        distance2: Option<String>,
+    },
     /// A box primitive from its lowest `corner` (three expressions), `length` along X, `width`
     /// along Y and `height` along Z.
     Box {
