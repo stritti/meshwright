@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-pub(super) type P2 = [f64; 2];
+pub(crate) type P2 = [f64; 2];
 
 /// A point by its coordinates' bits, and a directed edge by its ends'.
 type Key = (u64, u64);
@@ -35,13 +35,13 @@ fn dist(a: P2, b: P2) -> f64 {
 }
 
 /// Twice the signed area of a loop: positive counter-clockwise.
-pub(super) fn area2(ring: &[P2]) -> f64 {
+pub(crate) fn area2(ring: &[P2]) -> f64 {
     let n = ring.len();
     (0..n).map(|i| cross(ring[i], ring[(i + 1) % n])).sum()
 }
 
 /// How far `p` lies from the segment `a`–`b`.
-pub(super) fn segment_distance(p: P2, a: P2, b: P2) -> f64 {
+pub(crate) fn segment_distance(p: P2, a: P2, b: P2) -> f64 {
     let d = sub(b, a);
     let len2 = dot(d, d);
     let t = if len2 > 0.0 { (dot(sub(p, a), d) / len2).clamp(0.0, 1.0) } else { 0.0 };
@@ -180,7 +180,7 @@ fn split(edges: &[(P2, P2)], eps: f64) -> Vec<(P2, P2)> {
 }
 
 /// The directed pieces joined end to start into closed loops.
-fn chain(mut pieces: Vec<(P2, P2)>, eps: f64) -> Result<Vec<Vec<P2>>, String> {
+pub(crate) fn chain(mut pieces: Vec<(P2, P2)>, eps: f64) -> Result<Vec<Vec<P2>>, String> {
     let mut rings = Vec::new();
     while let Some((start, mut end)) = pieces.pop() {
         let mut ring = vec![start];
@@ -199,7 +199,7 @@ fn chain(mut pieces: Vec<(P2, P2)>, eps: f64) -> Result<Vec<Vec<P2>>, String> {
 
 /// The loop without the corners that lie within `eps` of the line through their neighbours, on
 /// it between them.
-fn drop_collinear(mut ring: Vec<P2>, eps: f64) -> Vec<P2> {
+pub(crate) fn drop_collinear(mut ring: Vec<P2>, eps: f64) -> Vec<P2> {
     let mut i = 0;
     while ring.len() > 3 && i < ring.len() {
         let n = ring.len();

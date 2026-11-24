@@ -96,6 +96,18 @@ rebuilds to 35,272.124 mm³ as SolidCraft measures the source, and `hole_3_d = 8
 `hole_2_depth = 5` to 34,675.221 mm³, as computed; mesh2cad writes the same 14 parameters and
 values for the file exported `fine`.
 
+## Stacked extrusions
+
+A stack of outlines along one axis is one `Sketch<k>` and one `Extrude<k>` per band: the first
+`operation: "new_body"`, the others `operation: "join"` with `extent.start_offset:
+"extrude_<a><k>_0 - extrude_<a>1_0"`, then a `move` whose translation along the axis is
+`extrude_<a>1_0`. The bands' starts after the first are user parameters with expressions
+(`extrude_z2_0 = extrude_z1_0 + extrude_z1_len`), so a band's height moves the bands above it.
+SolidCraft fuses bands that meet face to face into one body (`solidcraft-cli 0.48.1`); mesh2cad
+overlaps them by 0.02 mm for OpenCascade's fuse, which SolidCraft does not need.
+`plugin/revmesh/tests/stack.stl` (a base, an L and a diamond) rebuilds to 34,296 mm³ along Z and,
+turned, along Y; `extrude_z1_len = 15` rebuilds to 46,296 mm³, the bands above lifted by 5 mm.
+
 ## Cut-outs
 
 The cut-outs of straight sides are one sketch, `CutoutsSketch`, of closed loops in world
