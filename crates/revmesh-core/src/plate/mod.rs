@@ -192,6 +192,8 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
                 bosses.push(boss);
             }
             Footprint::Rect { lo, hi } => pads.push(PadSpec { x, y, w: snap_mm(hi[0] - lo[0]), l: snap_mm(hi[1] - lo[1]), h }),
+            // Only round bosses and rectangular pads stand above the top face.
+            Footprint::Polygon { .. } => unreachable!("a polygon footprint above the top face is no boss"),
         }
     }
     bosses.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));

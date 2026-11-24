@@ -189,6 +189,7 @@ mod tests {
             bosses: vec![],
             pads: vec![],
             pockets: vec![],
+            outline_pockets: Vec::new(),
             cutouts: vec![],
             outline_fillet_r: None,
         };
@@ -351,6 +352,7 @@ mod tests {
             cutouts: vec![],
             pads: vec![],
             pockets: vec![],
+            outline_pockets: Vec::new(),
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: None,

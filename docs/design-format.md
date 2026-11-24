@@ -187,8 +187,13 @@ chamfer (`distance: 1.5 mm, distance2: 0.5 mm`) comes back as `boss_1_chamfer_w 
 ## Pads and pockets
 
 A pad is a `box` joined to the plate, its corner at `[pad_<n>_x - pad_<n>_w / 2, pad_<n>_y -
-pad_<n>_l / 2, base_z0 + base_t]`; a pocket a `box` cut out of it, from `base_z0 + base_t -
-pocket_<n>_depth` up for a pocket in the top face, or from `base_z0` for one in the bottom face.
+pad_<n>_l / 2, base_z0 + base_t]`; a rectangular pocket a `box` cut out of it, from
+`base_z0 + base_t - pocket_<n>_depth` up for a pocket in the top face, or from `base_z0` for
+one in the bottom face. A pocket of any other outline of straight sides is instead a `sketch`
+(the mouth's outline on the origin plane, every side a `Length` constraint driven by the model
+parameter behind `pocket_<n>_<i>_len`, numbered after the rectangular pockets) and an `extrude`
+cut of `pocket_<n>_depth`, starting at `base_z0 + base_t - pocket_<n>_depth` for a top pocket
+or at `base_z0` for a bottom one.
 `pockets.stl` (exported by SolidCraft: a 70 x 40 x 6 plate with a 16 x 12 x 4 pad, a 20 x 14 x 3
 pocket in the top face, a 12 x 8 x 2 one in the bottom face and an Ø4 hole) imports to
 16,460.602 mm³, the volume SolidCraft measured for the part it exported. With `pad_1_w = 20`,

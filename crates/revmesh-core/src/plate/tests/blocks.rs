@@ -1,9 +1,9 @@
 use crate::mesh::Mesh;
 use crate::plate::P2;
-use crate::recognize::{PadSpec, PocketSpec};
+use crate::recognize::{OutlinePocketSpec, PadSpec, PocketSpec};
 use crate::synth;
 
-use super::{found, reason};
+use super::{found, found_profile, reason};
 
 /// A 70 x 40 x 6 plate exported from SolidCraft 0.48 with a 16 x 12 x 4 pad on its top face, a
 /// 20 x 14 x 3 pocket in the top face, a 12 x 8 x 2 one in the bottom face and an Ø4 hole.
@@ -52,9 +52,10 @@ fn pockets_facing_each_other() {
     assert!((plate.volume() - mesh.volume()).abs() < 1e-6);
 }
 
-/// A pocket's floor turned off level, and a triangle sunk into the top face, are no pockets.
+/// A pocket's floor turned off level is no pocket; a triangle sunk into the top face is one
+/// of an arbitrary outline (roadmap 5.3).
 #[test]
-fn pockets_need_flat_floors_and_rectangles() {
+fn pockets_need_flat_floors() {
     let mut mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/pockets.stl")).expect("parses");
     for t in &mut mesh.triangles {
         for p in t.iter_mut() {
@@ -84,12 +85,63 @@ fn pockets_need_flat_floors_and_rectangles() {
         let (p, q) = (triangle[(i + 1) % 3], triangle[i]);
         t.extend([[at(p, 3.0), at(q, 3.0), at(q, 6.0)], [at(p, 3.0), at(q, 6.0), at(p, 6.0)]]);
     }
-    // No plate's pocket; a box with a triangular cut into it, a combined extrusion.
+    // A triangle sunk into the top face: a pocket of any outline of straight sides.
     let sunk = Mesh::new(t);
-    let why = crate::plate::recognize_plate(&sunk).expect_err("no plate");
-    assert!(why.contains("pockets other than rectangles"), "{why}");
-    let found = crate::recognize::recognize(&sunk);
-    let crate::recognize::Recognition::Combined { spec, .. } = found else { panic!("not combined: {found:?}") };
-    assert_eq!(spec.cuts.len(), 1);
-    assert!((spec.volume() - (60.0 * 40.0 * 6.0 - 150.0 * 3.0)).abs() < 1e-9, "{}", spec.volume());
+    let (profile, _) = found_profile(&sunk);
+    assert_eq!(profile.pockets, []);
+    assert_eq!(profile.outline_pockets, [OutlinePocketSpec { corners: triangle.clone(), depth: 3.0, bottom: false }]);
+    assert!((profile.volume() - (60.0 * 40.0 * 6.0 - 150.0 * 3.0)).abs() < 1e-9, "{}", profile.volume());
+}
+
+/// Roadmap 5.3: a pocket whose mouth is any polygon of straight sides, not just an
+/// axis-aligned rectangle — here a triangle in the top face and a hexagon in the bottom face
+/// of one plate.
+#[test]
+fn recognises_pockets_of_any_straight_sided_outline() {
+    let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+    let tri = vec![[15.0, 10.0], [35.0, 10.0], [25.0, 25.0]];
+    let hex = vec![[40.0, 22.0], [52.0, 22.0], [55.0, 30.0], [52.0, 38.0], [40.0, 38.0], [37.0, 30.0]];
+    let at = |p: P2, z: f64| [p[0], p[1], z];
+    let mut t = Vec::new();
+    // The top face has the triangle as a hole, the bottom face the hexagon.
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&tri)) {
+        t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+    }
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&hex)) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (outline[i], outline[(i + 1) % 4]);
+        t.extend([[at(a, 0.0), at(b, 0.0), at(b, 6.0)], [at(a, 0.0), at(b, 6.0), at(a, 6.0)]]);
+    }
+    // The triangle's floor at Z = 3 faces up, the hexagon's at Z = 2 faces down; each pocket's
+    // walls run between its mouth and its floor.
+    for [a, b, c] in synth::triangulate(&tri, &[]) {
+        t.push([at(a, 3.0), at(b, 3.0), at(c, 3.0)]);
+    }
+    for [a, b, c] in synth::triangulate(&hex, &[]) {
+        t.push([at(a, 2.0), at(c, 2.0), at(b, 2.0)]);
+    }
+    let walls = |ring: &[P2], from: f64, to: f64| {
+        let mut w = Vec::new();
+        for i in 0..ring.len() {
+            let (p, q) = (ring[(i + 1) % ring.len()], ring[i]);
+            w.extend([[at(p, from), at(q, from), at(q, to)], [at(p, from), at(q, to), at(p, to)]]);
+        }
+        w
+    };
+    t.extend(walls(&tri, 3.0, 6.0));
+    t.extend(walls(&hex, 0.0, 2.0));
+    let mesh = Mesh::new(t);
+    assert!(mesh.volume() > 0.0);
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile.pockets, []);
+    assert_eq!(
+        profile.outline_pockets,
+        [
+            OutlinePocketSpec { corners: tri.clone(), depth: 3.0, bottom: false },
+            OutlinePocketSpec { corners: hex.clone(), depth: 2.0, bottom: true },
+        ]
+    );
+    assert!((profile.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", profile.volume(), mesh.volume());
 }

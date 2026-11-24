@@ -1,4 +1,4 @@
-use super::spec::{BossSpec, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+use super::spec::{BossSpec, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 use super::{Axis, Recognition, recognize};
 
 use crate::design::{Design, dimensioned_sides, fmt_number};
@@ -181,6 +181,7 @@ fn cut_outs_are_cut_after_the_fillet() {
         slots: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![vec![[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]]],
         outline_fillet_r: Some(5.0),
@@ -203,6 +204,7 @@ fn outline_and_cutout_sides_are_dimensioned() {
         slots: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
         outline_fillet_r: None,
@@ -263,6 +265,7 @@ fn orthogonal_outline_skips_the_dependent_sides() {
         slots: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![],
         outline_fillet_r: None,
@@ -301,6 +304,7 @@ fn thin_triangle_keeps_slanted_length_precision() {
         slots: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![],
         outline_fillet_r: None,
@@ -310,6 +314,46 @@ fn thin_triangle_keeps_slanted_length_precision() {
     let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"));
     assert_eq!(expr("outline_1_len"), Some("100 mm"));
     assert_eq!(expr("outline_2_len"), Some("50.0001 mm"), "the slanted side keeps 0.1 µm precision");
+}
+
+/// Roadmap 5.3: a pocket of any outline of straight sides (not just a rectangle) gets its own
+/// sketch — every side a `Length` driven by `pocket_<n>_<i>_len` — and a cut from its face down
+/// by `pocket_<n>_depth`, numbered after the rectangular pockets.
+#[test]
+fn outline_pockets_get_their_own_sketch_and_cut() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 6.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![PocketSpec { x: 10.0, y: 10.0, w: 8.0, l: 8.0, depth: 2.0, bottom: false }],
+        outline_pockets: vec![OutlinePocketSpec { corners: vec![[30.0, 10.0], [50.0, 10.0], [40.0, 25.0]], depth: 3.0, bottom: false }],
+        bosses: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"));
+    assert_eq!(expr("pocket_1_w"), Some("8 mm"), "the rectangular pocket is pocket_1");
+    assert_eq!(expr("pocket_2_depth"), Some("3 mm"));
+    // No parallel sides in a triangle: all three drive.
+    assert_eq!(expr("pocket_2_1_len"), Some("20 mm"));
+    assert_eq!(expr("pocket_2_2_len"), Some("18.0278 mm"));
+    assert_eq!(expr("pocket_2_3_len"), Some("18.0278 mm"));
+    let features = json["features"].as_array().expect("features");
+    let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
+    assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Pocket1", "Pocket2Sketch", "Pocket2"]);
+    let sketch = &features[4]["sketch"];
+    let constraints = sketch["constraints"].as_array().expect("constraints");
+    let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    assert_eq!(lengths, [0, 1, 2], "one Length per side of the triangular mouth");
+    let cut = &features[5];
+    assert_eq!(cut["type"].as_str(), Some("extrude"));
+    assert_eq!(cut["operation"].as_str(), Some("cut"));
+    assert_eq!(cut["extent"]["distance"].as_str(), Some("pocket_2_depth"));
+    assert_eq!(cut["extent"]["start_offset"].as_str(), Some("extrude_0 + extrude_len - pocket_2_depth"), "cut from the top face down");
 }
 
 /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face
@@ -400,6 +444,7 @@ fn describes_profiles() {
         cutouts: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(2.0),
@@ -424,6 +469,7 @@ fn profile_volume_counts_inside_and_outside_corners() {
         cutouts: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(2.0),
@@ -444,6 +490,7 @@ fn profile_fillet_comes_before_the_holes() {
         cutouts: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(5.0),
@@ -528,6 +575,7 @@ fn y_extruded_profile_uses_the_xz_plane() {
         cutouts: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(2.0),
@@ -652,6 +700,7 @@ fn y_extrusion_negates_the_second_profile_coordinate_in_expressions() {
         cutouts: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![SlotSpec { x: 10.0, y: 8.0, len: 16.0, w: 5.0, angle: 30.0 }],
         outline_fillet_r: None,

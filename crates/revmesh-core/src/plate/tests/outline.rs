@@ -58,6 +58,7 @@ fn recognises_slanted_sides() {
         cutouts: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(3.0),
@@ -81,6 +82,7 @@ fn chamfered_corners_make_an_eight_sided_outline() {
             cutouts: vec![],
             pads: vec![],
             pockets: vec![],
+            outline_pockets: Vec::new(),
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: None

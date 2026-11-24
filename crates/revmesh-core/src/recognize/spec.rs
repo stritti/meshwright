@@ -64,6 +64,18 @@ pub struct PocketSpec {
     pub bottom: bool,
 }
 
+/// A blind pocket whose mouth is any polygon of straight sides (not just an axis-aligned
+/// rectangle), cut from the top or the bottom face down to a flat floor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutlinePocketSpec {
+    /// The mouth's corners, counter-clockwise from the lowest, the leftmost of those.
+    pub corners: Vec<[f64; 2]>,
+    /// Depth from the face.
+    pub depth: f64,
+    /// Whether it opens on the bottom face (else on the top).
+    pub bottom: bool,
+}
+
 /// A round boss standing on the top face: a cylinder `d` wide and `h` high about `(x, y)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BossSpec {
@@ -234,6 +246,7 @@ impl PlateSpec {
             bosses: self.bosses,
             pads: self.pads,
             pockets: self.pockets,
+            outline_pockets: Vec::new(),
             cutouts: self.cutouts,
             outline_fillet_r: self.outline_fillet_r,
             // A box rounded all over is a Z plate (mesh2cad's box vocabulary is a Z
@@ -295,6 +308,8 @@ pub struct ProfileSpec {
     pub pads: Vec<PadSpec>,
     /// Rectangular blind pockets in the top or the bottom face.
     pub pockets: Vec<PocketSpec>,
+    /// Blind pockets of any outline of straight sides in the top or the bottom face.
+    pub outline_pockets: Vec<OutlinePocketSpec>,
     /// Openings of straight sides through the plate, each its corners counter-clockwise.
     pub cutouts: Vec<Vec<[f64; 2]>>,
     /// The radius of every vertical corner edge, inside and outside corners alike, if they are
@@ -317,7 +332,14 @@ impl ProfileSpec {
             locale,
             [size[0], size[1], self.z],
             Some(self.corners.len()),
-            [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
+            [
+                self.holes.len(),
+                self.slots.len(),
+                self.bosses.len(),
+                self.cutouts.len(),
+                self.pads.len(),
+                self.pockets.len() + self.outline_pockets.len(),
+            ],
             self.outline_fillet_r,
             None,
         )
@@ -351,7 +373,8 @@ impl ProfileSpec {
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
         let bosses: f64 = self.bosses.iter().map(BossSpec::volume).sum();
         let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area(c)).sum();
-        (area - slots - cutouts) * self.z - holes + bosses + blocks(&self.pads, &self.pockets)
+        let outline_pockets: f64 = self.outline_pockets.iter().map(|p| polygon_area(&p.corners) * p.depth).sum();
+        (area - slots - cutouts) * self.z - holes - outline_pockets + bosses + blocks(&self.pads, &self.pockets)
     }
 }
 

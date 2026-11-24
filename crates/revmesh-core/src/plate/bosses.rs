@@ -199,8 +199,8 @@ fn top_covers(b: &FoundBoss, top: &[[P2; 3]], tol: f64) -> bool {
 /// corners: one `a` out from the cylinder and `h` up lies on a quarter circle of radius
 /// `a + h + sqrt(2ah)`. (The footprint itself may be smaller than the round's: its first, nearly
 /// flat facets may lie within the tolerance of the top face.)
-fn round_foot(upper: &[&crate::mesh::Triangle], foot: Footprint, top: f64, top_z: f64, tol: f64) -> (f64, f64) {
-    let Footprint::Round { centre, r } = foot else { return (0.0, 0.0) };
+fn round_foot(upper: &[&crate::mesh::Triangle], foot: &Footprint, top: f64, top_z: f64, tol: f64) -> (f64, f64) {
+    let Footprint::Round { centre, r } = *foot else { return (0.0, 0.0) };
     let flat = |p: &Vec3| [p[0], p[1]];
     let on = |p: &Vec3| foot.contains(flat(p), tol);
     let lid: Vec<[P2; 3]> = upper
@@ -271,7 +271,7 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
             // Its walls follow the loop's chords as meshed, before any exporter split them.
             // A round foot: the top's rim lies closer to the axis than the footprint, by the
             // round's radius.
-            let (fillet, wall_r) = round_foot(&upper, foot, top, top_z, tol);
+            let (fillet, wall_r) = round_foot(&upper, &foot, top, top_z, tol);
             let shape = Shape::Straight;
             bosses.push(FoundBoss { foot, top, fillet, wall_r, footprint: ring.clone(), ring: drop_collinear(ring, tol), shape });
         }
