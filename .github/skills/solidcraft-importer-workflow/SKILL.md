@@ -73,7 +73,7 @@ impl Guest for Importer {
 ## 3. Write a valid SolidCraft design
 
 The document format is internal; `docs/design-format.md` records the subset revmesh writes
-(verified against 0.47.0, re-check every SolidCraft release): `"format": "solidcraft/63"`,
+(verified against 0.48.1, re-check every SolidCraft release): `"format": "solidcraft/63"`,
 `params` (`expr`, `unit`, `model: false` for user parameters), `features` (`sketch`, `extrude`,
 `hole` simple/counterbore/countersink, `fillet`, `box`, `cylinder`, `move`, `pattern`
 rectangular/circular, `mesh_import`), `next_id`, `reserved_body_names`.

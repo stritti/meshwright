@@ -433,7 +433,7 @@ fn y_extruded_profile_uses_the_xz_plane() {
     assert_eq!(fillet["edge_names"][0], "F2:side:l1|F2:side:l6");
 }
 
-/// The design the spike opened in SolidCraft 0.47: a plate with a centred hole and rounded
+/// The design the spike opened in SolidCraft 0.48: a plate with a centred hole and rounded
 /// corners. The golden file was opened in SolidCraft and rebuilt without errors or warnings
 /// after changing `base_x` and `hole_1_d`.
 #[test]
