@@ -419,3 +419,139 @@ fn split_hole_rims_stay_round() {
     assert_eq!(split, 2);
     assert_eq!(found(&mesh).0, expected);
 }
+
+/// A 70 x 40 x 8 plate exported from SolidCraft 0.48 with an Ø8 hole whose top rim is rounded
+/// with 1.5 mm and an Ø6 hole whose bottom rim is rounded with 1 mm.
+#[test]
+fn recognises_rounded_hole_rims() {
+    let mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/hole-rims.stl")).expect("parses");
+    let (plate, _) = super::found(&mesh);
+    let heads: Vec<(f64, Option<crate::recognize::HoleHead>)> = plate.holes.iter().map(|h| (h.d, h.head)).collect();
+    assert_eq!(
+        heads,
+        [
+            (8.0, Some(crate::recognize::HoleHead::Round { r: 1.5, bottom: false })),
+            (6.0, Some(crate::recognize::HoleHead::Round { r: 1.0, bottom: true })),
+        ]
+    );
+    // SolidCraft measured 21,754.183 mm³ for the part it exported.
+    assert!((plate.volume() - 21_754.183).abs() < 0.001, "{}", plate.volume());
+}
+
+/// A rounded rim whose corners between the face and the bore are pushed out 0.05 mm lies on
+/// neither a quarter circle nor a cone.
+#[test]
+fn a_bulging_hole_rim_is_refused() {
+    let mut mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/hole-rims.stl")).expect("parses");
+    for t in &mut mesh.triangles {
+        for p in t.iter_mut() {
+            let (dx, dy) = (p[0] - 20.0, p[1] - 20.0);
+            let rho = dx.hypot(dy);
+            if p[2] > 6.6 && p[2] < 7.9 && rho > 4.05 && rho < 5.45 {
+                p[0] = 20.0 + dx * (rho + 0.05) / rho;
+                p[1] = 20.0 + dy * (rho + 0.05) / rho;
+            }
+        }
+    }
+    super::reason(&mesh);
+}
+
+/// A closed 60 x 60 x 8 plate with an Ø20 bore at (30, 30) whose top rim is rounded with
+/// `f`, the bore `n` facets round and the round `bands` facets along.
+fn rounded_rim_plate(f: f64, n: usize, bands: u32) -> crate::mesh::Mesh {
+    use std::f64::consts::PI;
+    let profile: Vec<(f64, f64)> =
+        (0..=bands).map(|k| f64::from(k) * PI / f64::from(2 * bands)).map(|a| (10.0 + f - f * a.sin(), 8.0 - f + f * a.cos())).collect();
+    rim_plate(&profile, n)
+}
+
+/// A closed 60 x 60 x 8 plate with an Ø20 bore at (30, 30) whose top rim follows `profile`
+/// ((radius, height) from the face down to the bore), the bore `n` facets round.
+fn rim_plate(profile: &[(f64, f64)], n: usize) -> crate::mesh::Mesh {
+    use std::f64::consts::PI;
+    let (z, r) = (8.0, 10.0);
+    let ring = |rho: f64| -> Vec<[f64; 2]> {
+        (0..n).map(|i| 2.0 * PI * i as f64 / n as f64).map(|a| [30.0 + rho * a.cos(), 30.0 + rho * a.sin()]).collect()
+    };
+    let f = profile[0].0 - r;
+    let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 60.0], [0.0, 60.0]];
+    let at = |p: [f64; 2], h: f64| [p[0], p[1], h];
+    let mut t = Vec::new();
+    let mouth = ring(r + f);
+    for [a, b, c] in crate::synth::triangulate(&outline, std::slice::from_ref(&mouth)) {
+        t.push([at(a, z), at(b, z), at(c, z)]);
+    }
+    let bore = ring(r);
+    for [a, b, c] in crate::synth::triangulate(&outline, std::slice::from_ref(&bore)) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (outline[i], outline[(i + 1) % 4]);
+        t.extend([[at(a, 0.0), at(b, 0.0), at(b, z)], [at(a, 0.0), at(b, z), at(a, z)]]);
+    }
+    // The hole's wall from the bottom up the bore and over the round to the face, each band
+    // between two rings (seen from inside the hole they run clockwise).
+    let mut levels = vec![(r, 0.0)];
+    levels.extend(profile.iter().rev().copied());
+    for w in levels.windows(2) {
+        let ((r0, z0), (r1, z1)) = (w[0], w[1]);
+        let (lo, hi) = (ring(r0), ring(r1));
+        for i in 0..n {
+            let j = (i + 1) % n;
+            t.extend([[at(lo[j], z0), at(lo[i], z0), at(hi[i], z1)], [at(lo[j], z0), at(hi[i], z1), at(hi[j], z1)]]);
+        }
+    }
+    crate::mesh::Mesh::new(t)
+}
+
+/// A rounded rim of only 16 facets round the hole and eight along the round: its facets' middles
+/// lie inside the bore's circle by the loop's sagitta.
+#[test]
+fn coarse_rounded_hole_rims() {
+    let (plate, _) = super::found(&rounded_rim_plate(1.0, 16, 8));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.0, bottom: false }));
+}
+
+/// A rounded rim of 64 bands along the round, its last rings within the tolerance of the bore;
+/// and a facet of the fixture's round split into three at its centroid.
+#[test]
+fn fine_and_split_rounded_hole_rims() {
+    let (plate, _) = super::found(&rounded_rim_plate(1.0, 128, 64));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.0, bottom: false }));
+    let mut mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/hole-rims.stl")).expect("parses");
+    // A facet of the top rim's round, its corners between the face (Z = 8) and the bore.
+    let k = mesh
+        .triangles
+        .iter()
+        .position(|t| t.iter().all(|p| p[2] > 6.5 - 1e-6 && p[2] < 8.0 - 1e-6 && (p[0] - 20.0).hypot(p[1] - 20.0) > 4.0 + 1e-3))
+        .expect("a facet of the round");
+    let [a, b, c] = mesh.triangles.swap_remove(k);
+    let m = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0];
+    mesh.triangles.extend([[a, b, m], [b, c, m], [c, a, m]]);
+    let (plate, _) = super::found(&mesh);
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.5, bottom: false }));
+}
+
+/// A 90° countersink meshed in two bands is a countersink, not a wider round.
+#[test]
+fn two_band_countersinks_are_no_rounds() {
+    let (plate, _) = super::found(&rim_plate(&[(11.0, 8.0), (10.5, 7.5), (10.0, 7.0)], 32));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Countersink { d: 22.0, angle: 90.0, bottom: false }));
+}
+
+/// A 130° countersink meshed in two bands meets the bore higher up than a round its corners
+/// fit would: it stays a countersink, however finely the bore is meshed.
+#[test]
+fn flat_two_band_countersinks_are_no_rounds() {
+    let profile = [(11.0, 8.0), (10.233_955_56, 7.642_787_61), (10.0, 7.533_692_34)];
+    for n in [12, 32] {
+        let (plate, _) = super::found(&rim_plate(&profile, n));
+        assert!(
+            !matches!(plate.holes.first().and_then(|h| h.head.as_ref()), Some(crate::recognize::HoleHead::Round { .. })),
+            "{n} segments: {:?}",
+            plate.holes.first().map(|h| &h.head)
+        );
+    }
+    let (plate, _) = super::found(&rim_plate(&profile, 12));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Countersink { d: 22.0, angle: 130.0, bottom: false }));
+}

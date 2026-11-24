@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "hole-rims.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 7, "loss_report": {"summary": "A 70 x 40 x 8 mm plate with 2 holes"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 21754.183185}},
+    "tolerance": 1e-4
+  }
+}

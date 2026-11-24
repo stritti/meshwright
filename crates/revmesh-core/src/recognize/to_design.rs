@@ -103,7 +103,7 @@ impl PlateSpec {
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "edge_fillet_r".into() });
         }
         cutout_features(&mut b, &self.cutouts, at, axis);
-        hole_features(&mut b, &self.holes, at, axis, "base_z0 + base_t", "base_z0", self.z);
+        hole_features(&mut b, &self.holes, at, axis, "base_z0 + base_t", "base_z0", self.z, extrude);
         slot_features(&mut b, &self.slots, at, axis);
         boss_features(&mut b, &self.bosses, at, self.z, axis, "base_z0 + base_t", extrude);
         block_features(&mut b, &self.pads, &self.pockets, axis, "base_z0 + base_t", "base_z0");
@@ -190,7 +190,7 @@ impl ProfileSpec {
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
         }
         cutout_features(&mut b, &self.cutouts, at, axis);
-        hole_features(&mut b, &self.holes, at, axis, top, "extrude_0", self.z);
+        hole_features(&mut b, &self.holes, at, axis, top, "extrude_0", self.z, extrude);
         slot_features(&mut b, &self.slots, at, axis);
         boss_features(&mut b, &self.bosses, at, self.z, axis, top, extrude);
         block_features(&mut b, &self.pads, &self.pockets, axis, top, "extrude_0");
@@ -472,6 +472,10 @@ fn hole_params(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, axis: Axis) 
                     Some(HoleHead::Countersink { d, angle, .. }) => {
                         b.param(Param::user(format!("{p}_csk_d"), d)).param(Param::angle(format!("{p}_csk_angle"), angle));
                     }
+                    // mesh2cad's names: the top rim's `_rim_r`, the bottom's `_bot_rim_r`.
+                    Some(HoleHead::Round { r, bottom }) => {
+                        b.param(Param::user(format!("{p}_{}rim_r", if bottom { "bot_" } else { "" }), r));
+                    }
                 }
             }
             HoleGroup::Row { n, pitch, d, x, y, .. } => {
@@ -508,20 +512,23 @@ struct HoleCtx<'a> {
     bottom: &'a str,
     z: f64,
     down: Vec3,
+    /// The extrusion whose faces (`top`, `start`) the holes open on.
+    extrude: u32,
 }
 
 /// A through hole per hole, or per pattern a hole and a pattern feature that repeats it, drilled
 /// from the face at depth `z` along the axis (the `top` expression); a hole with a counterbore or
 /// countersink on the other face (at depth 0, the `bottom` expression) is drilled from there
 /// along the axis.
-fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, axis: Axis, top: &str, bottom: &str, z: f64) {
+#[allow(clippy::too_many_arguments)] // the part's frame, its faces and the extrusion they belong to
+fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, axis: Axis, top: &str, bottom: &str, z: f64, extrude: u32) {
     // Drilled from the +axis face: against the axis. (Built component-wise, so no -0.0.)
     let down = {
         let mut d = [0.0; 3];
         d[axis.index()] = -1.0;
         d
     };
-    let ctx = HoleCtx { at, axis, top, bottom, z, down };
+    let ctx = HoleCtx { at, axis, top, bottom, z, down, extrude };
     let mut counts = [0, 0, 0, 0]; // singles, rows, grids, circles
     for (p, group) in hole_groups(holes) {
         match group {
@@ -546,9 +553,11 @@ fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: u
         Some(HoleHead::Countersink { bottom, .. }) => {
             (HoleKind::Countersink { cs_diameter: format!("{p}_csk_d"), cs_angle: format!("{p}_csk_angle") }, bottom)
         }
+        // A rounded rim: a plain hole, and a fillet of its edge on that face below.
+        Some(HoleHead::Round { .. }) => (HoleKind::Simple, false),
     };
     let (face_w, face, direction) = if from_bottom { (0.0, ctx.bottom, ctx.axis.dir()) } else { (ctx.z, ctx.top, ctx.down) };
-    b.feature(
+    let hole = b.feature(
         format!("Hole{n}"),
         vec![],
         FeatureKind::Hole {
@@ -560,6 +569,19 @@ fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: u
             hole: kind,
         },
     );
+    if let Some(HoleHead::Round { bottom, .. }) = h.head {
+        // The edge between the face and the hole's bore, as SolidCraft names it.
+        let (face, w, radius) = if bottom { ("start", 0.0, format!("{p}_bot_rim_r")) } else { ("top", ctx.z, format!("{p}_rim_r")) };
+        b.feature(
+            format!("Hole{n}Rim"),
+            vec![],
+            FeatureKind::Fillet {
+                edge_names: vec![format!("F{}:{face}|F{hole}:bore:side:0", ctx.extrude)],
+                edges: vec![ctx.axis.world(ctx.at, h.x + h.d / 2.0, h.y, w)],
+                radius,
+            },
+        );
+    }
 }
 
 /// A pattern's seed hole: drilled from the +axis face at depth `z`.

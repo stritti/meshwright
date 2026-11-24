@@ -96,6 +96,20 @@ volume SolidCraft measured for the part it exported (the round adds `2π (f² (r
 `base_t = 8` it rebuilt without errors to 23,536.520 mm³, as computed, and exported again it is
 recognised with those values.
 
+## Rounded hole rims
+
+A through hole whose rim is rounded is a plain `hole` followed by a `fillet` of the edge between
+the face and its bore: `edge_names: ["F<extrude>:top|F<hole>:bore:side:0"]` on the top face,
+`"F<extrude>:start|F<hole>:bore:side:0"` on the bottom face, radius `hole_<n>_rim_r` or
+`hole_<n>_bot_rim_r` as mesh2cad names them. In the mesh the mouth is wider than the bore by the
+round's radius and exactly as deep, like a 90° countersink; it is a round when its corners between
+the face and the bore lie on the quarter circle (a round in one step stays the countersink it looks
+like). `hole-rims.stl` (exported by SolidCraft 0.48: a 70 x 40 x 8 plate with an Ø8 hole rounded
+1.5 mm at its top rim and an Ø6 hole rounded 1 mm at its bottom rim) imports to 21,754.183 mm³,
+the volume SolidCraft measured for the part it exported; with `hole_1_rim_r = 2`, `hole_1_d = 9`,
+`hole_2_bot_rim_r = 1.5`, `hole_2_x = 52` and `base_t = 10` it rebuilt without errors to
+27,044.286 mm³, as computed, and exported again it is recognised with those values.
+
 ## Drafted and chamfered bosses
 
 A drafted boss is a `cone` (`base`, `axis`, `radius`, `top_radius`, `height`, `operation:

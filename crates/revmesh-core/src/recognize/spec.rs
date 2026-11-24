@@ -184,6 +184,13 @@ pub enum HoleHead {
         /// Whether it opens on the bottom face (else on the top).
         bottom: bool,
     },
+    /// A round of radius `r` where the bore meets the face: the mouth is `2 r` wider.
+    Round {
+        /// The round's radius.
+        r: f64,
+        /// Whether it is on the bottom face's rim (else on the top's).
+        bottom: bool,
+    },
 }
 
 impl HoleSpec {
@@ -195,6 +202,13 @@ impl HoleSpec {
         match self.head {
             None => bore,
             Some(HoleHead::Counterbore { d, depth, .. }) => bore + (area(d) - area(self.d)) * depth,
+            // The round takes off the corner between the bore and the face: the square of side
+            // `r` beside the bore less the quarter disk, swept about the axis (Pappus).
+            Some(HoleHead::Round { r, .. }) => {
+                use std::f64::consts::PI;
+                let b = self.d / 2.0;
+                bore + 2.0 * PI * (r * r * (b + r / 2.0) - PI * r * r / 4.0 * (b + r) + r.powi(3) / 3.0)
+            }
             Some(HoleHead::Countersink { d, angle, .. }) => {
                 // The frustum from the face down to where the cone meets the bore, less the bore
                 // it overlaps.
