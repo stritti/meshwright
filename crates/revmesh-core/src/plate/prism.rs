@@ -402,7 +402,7 @@ pub(super) fn stepped_hole(
     let (head_r, bore_r) = if on_top { (top_r, bottom_r) } else { (bottom_r, top_r) };
     let (face_z, inward) = if on_top { (height, -1.0) } else { (0.0, 1.0) };
     let (mouth, bore) = if on_top { (loops.0.to_vec(), loops.1.to_vec()) } else { (loops.1.to_vec(), loops.0.to_vec()) };
-    let mut s = Stepped { centre, bore_r, head_r, bore, mouth, face_z, inward, depth: 0.0, counterbore: false };
+    let mut s = Stepped { centre, bore_r, head_r, bore, mouth, face_z, inward, depth: 0.0, counterbore: false, rounded: false };
     // Its corners between the faces tell the kind: a counterbore has some on its wide wall,
     // down to its floor; a countersink's cone meets the bore at the bore's corners nearest
     // the face.
@@ -424,6 +424,17 @@ pub(super) fn stepped_hole(
     }
     if s.depth <= tol || s.depth >= height - tol {
         return Err("a hole's counterbore or countersink is as deep as the plate (stepped holes are not recognised yet)".into());
+    }
+    // A mouth as deep as it is wide may be a round of the rim: its corners between the face and
+    // the bore lie on a quarter circle, not on the cone (a round in one step is a 90°
+    // countersink, which looks the same).
+    if !s.counterbore && (s.depth - (head_r - bore_r)).abs() <= tol {
+        let f = head_r - bore_r;
+        let between: Vec<&Vec3> = mine.iter().filter(|p| depth(p) > tol && depth(p) < s.depth - tol && r(p) > bore_r + tol).collect();
+        let on_round = |p: &&Vec3| ((r(p) - head_r).hypot(depth(p) - f) - f).abs() <= tol;
+        if !between.is_empty() && between.iter().all(on_round) {
+            s.rounded = true;
+        }
     }
     let spec = HoleSpec { x: snap_mm(centre[0]), y: snap_mm(centre[1]), d: snap_mm(2.0 * bore_r), head: Some(s.head()), blind: None };
     Ok((spec, s))

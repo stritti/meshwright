@@ -80,6 +80,8 @@ pub(super) struct Stepped {
     /// the bore.
     pub(super) depth: f64,
     pub(super) counterbore: bool,
+    /// A round of the rim (its radius `head_r - bore_r`, as deep), not a countersink's cone.
+    pub(super) rounded: bool,
 }
 
 /// What a blind hole, a pocket, a boss or a pad stands on, seen from above: a circle, or a
@@ -239,6 +241,16 @@ impl Stepped {
                 || ((depth - self.depth).abs() <= tol
                     && r >= self.bore_r - sagitta(&self.bore, self.bore_r) - tol
                     && r <= self.head_r + tol)
+        } else if self.rounded {
+            // On the quarter circle about (mouth radius, the round's depth), or off it by no more
+            // than a facet of the coarsest round allowed (50° along it, the loops' facets round
+            // the axis) lies.
+            let f = self.head_r - self.bore_r;
+            let off = ((r - self.head_r).hypot(depth - f) - f).abs();
+            let round_the_axis = (sagitta(&self.mouth, self.head_r) / self.head_r).max(sagitta(&self.bore, self.bore_r) / self.bore_r);
+            r >= self.bore_r - tol
+                && r <= self.head_r + tol
+                && off <= f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + r * round_the_axis + tol
         } else {
             // The cone's facets run between the mouth's and the bore's loops and come inside the
             // cone as their chords come inside the circles; a corner an exporter adds within a
@@ -276,6 +288,9 @@ impl Stepped {
 
     pub(super) fn head(&self) -> HoleHead {
         let bottom = self.inward > 0.0;
+        if self.rounded {
+            return HoleHead::Round { r: snap_mm(self.head_r - self.bore_r), bottom };
+        }
         let d = snap_mm(2.0 * self.head_r);
         if self.counterbore {
             HoleHead::Counterbore { d, depth: snap_mm(self.depth), bottom }

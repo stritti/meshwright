@@ -419,3 +419,39 @@ fn split_hole_rims_stay_round() {
     assert_eq!(split, 2);
     assert_eq!(found(&mesh).0, expected);
 }
+
+/// A 70 x 40 x 8 plate exported from SolidCraft 0.48 with an Ø8 hole whose top rim is rounded
+/// with 1.5 mm and an Ø6 hole whose bottom rim is rounded with 1 mm.
+#[test]
+fn recognises_rounded_hole_rims() {
+    let mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/hole-rims.stl")).expect("parses");
+    let (plate, _) = super::found(&mesh);
+    let heads: Vec<(f64, Option<crate::recognize::HoleHead>)> = plate.holes.iter().map(|h| (h.d, h.head)).collect();
+    assert_eq!(
+        heads,
+        [
+            (8.0, Some(crate::recognize::HoleHead::Round { r: 1.5, bottom: false })),
+            (6.0, Some(crate::recognize::HoleHead::Round { r: 1.0, bottom: true })),
+        ]
+    );
+    // SolidCraft measured 21,754.183 mm³ for the part it exported.
+    assert!((plate.volume() - 21_754.183).abs() < 0.001, "{}", plate.volume());
+}
+
+/// A rounded rim whose corners between the face and the bore are pushed out 0.05 mm lies on
+/// neither a quarter circle nor a cone.
+#[test]
+fn a_bulging_hole_rim_is_refused() {
+    let mut mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/hole-rims.stl")).expect("parses");
+    for t in &mut mesh.triangles {
+        for p in t.iter_mut() {
+            let (dx, dy) = (p[0] - 20.0, p[1] - 20.0);
+            let rho = dx.hypot(dy);
+            if p[2] > 6.6 && p[2] < 7.9 && rho > 4.05 && rho < 5.45 {
+                p[0] = 20.0 + dx * (rho + 0.05) / rho;
+                p[1] = 20.0 + dy * (rho + 0.05) / rho;
+            }
+        }
+    }
+    super::reason(&mesh);
+}
