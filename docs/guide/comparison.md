@@ -188,3 +188,51 @@ If you already work in Fusion 360, SOLIDWORKS or Rhino, the mesh-to-B-rep conver
 are the pragmatic route to an editable solid, without a feature history. For 3D scan data
 with organic shapes, the commercial suites (Geomagic Design X, ZEISS REVERSE ENGINEERING,
 PolyWorks\|Modeler, …) remain the most complete, at enterprise prices.
+
+## Concepts from the list, mapped to mesh2cad and revmesh
+
+Which concepts are worth adopting is decided by the sandbox: it has no GPU, no Python and no
+network (see [Architecture](/architecture)), so the neural fitters and reconstructors (SPFN,
+CPFN, HPNet, ParSeNet, Point2CAD, CAD-Recode, and MeshWright's AI assistant) cannot run there.
+What is portable is their *output representation* and the classical, deterministic building
+blocks: sketch-extrude sequences, extrusion cylinders, parametric edges, fixed-seed RANSAC
+primitives, edge-based mesh segmentation and topology checks.
+
+| Concept | Comes from | mesh2cad | revmesh today | Improvement potential |
+|---|---|---|---|---|
+| Cross-sections become constrained sketches | Geomagic Auto-Sketch, PolyWorks Modeler, QUICKSURFACE, EXModel (Pro), Detessellate, ZEISS | no — the outline is a point list in the exported script | the outer outline only, as a sketch with horizontal/vertical constraints | slice the mesh at every face level and sketch each level's loops: arbitrary pockets and steps as sketch + extrude instead of boxes, combined extrusions (open [roadmap](/guide/roadmap) items) |
+| Sketch-extrude with constraints as the CAD representation | DeepCAD, Fusion 360 Gallery, ABC dataset | geometry as code in a CadQuery/OpenSCAD script, not dimensioned | SolidCraft sketches: points, line/arc curves, constraints (horizontal, vertical, coincident, tangent, equal, midpoint, length, diameter, distance_x/y, angle), with dimensions driven by model parameters | dimension every outline side (length or angle per side, distance_x/y per corner, each with its own parameter), so any outline re-dimensions like the rectangle does today |
+| Extrusion cylinders: 2D profile + axis + extent | Point2Cyl | one prism, tried along X, Y and Z | the same single prism along X, Y or Z | decompose a part into several extrusion cylinders, each its own sketch + extrude; closed-form fitting keeps it deterministic |
+| Parametric edges read from the mesh | PIE-Net (neural); classically, circle fits on rim loops | circles fitted from facet loops | circles fitted to hole and boss rims; outlines stay polylines | recognise curved sides, round outlines and D-shaped cut-outs as sketch arcs with a radius parameter — today they stay a mesh ([not recognised yet](/guide/recognition#not-recognised-yet)) |
+| Segmentation by sharp edges / dihedral angle | Sunil & Pande 2008, Muraleedharan & Muthuganapathy 2021, HPNet's explicit edges | face classification | `faces.rs` / `walls.rs` classify faces and walls; corners are checked against the walls | more feature classes from the same segmentation: chamfers, drafts, beads, blind and slanted slots |
+| Primitive detection including tori | Efficient RANSAC (Schnabel et al. 2007) | planes and cylinders | fixed-seed RANSAC; planes, cylinders; a boss foot's round is measured band by band (PR #51) | detect tori analytically, so rounds at hole rims and boss feet become measured surfaces instead of per-band fits |
+| Topology as a validity gate | ComplexGen (closed face loops, cylinder perpendicularity); mesh2cad refuses inexact parts | refuses what it cannot express | exact-or-nothing, volume within 1% | add ComplexGen-style checks — recognised faces close into loops, walls meet their face at 90° — to reject twisted or banded fakes before the volume gate |
+| Measure the features from the mesh, then build the history | MeshWright (meshwright.io) via an AI assistant; mesh2cad measures, then writes a script | measures, then writes the script | the same, fully deterministic | nothing to adopt from the AI variant — it needs network and an online licence check; measurement-first is already revmesh's approach |
+| Deviation against the mesh as a report | Geomagic Accuracy Analyser, PolyWorks, MeshWright verification; mesh2cad's Hausdorff/RMS | fidelity report next to the script | volume within 1% at import; Hausdorff in `cargo xtask check` | report the surface deviation per face in the import report, computed in the sandbox |
+
+### Towards reworkable sketches
+
+SolidCraft's sketches already are what DeepCAD and the Fusion 360 Gallery call a parametric
+sketch: points, line and arc curves, and constraints, where `length`, `diameter`, `distance_x`,
+`distance_y` and `angle` constraints are driven by model parameters (see
+[The SolidCraft design format](/design-format)). revmesh already writes such sketches where it
+has the dimensions: the plate rectangle (two length parameters) and the slot (tangent, equal,
+midpoint, length, diameter, angle — all parameter-driven). A general outline today is a polygon
+of free points with only horizontal/vertical constraints on its axis-aligned sides: its shape
+lives in the points, and the parameters cover only thickness and position.
+
+The potential, in the order the roadmap can take it:
+
+1. **Dimension every outline side** — a length or angle constraint per side (or `distance_x`/`distance_y`
+   per corner), each with its own model parameter. The outline then re-dimensions in SolidCraft
+   the way `base_x` re-dimensions the rectangle today. mesh2cad cannot express this: its
+   `outline` is a bare point list.
+2. **Sketch arcs instead of only fillet features** — read curved sides, round outlines and
+   D-shaped cut-outs as arcs with a radius parameter (PIE-Net's parametric edges; revmesh already
+   fits circles to rims), so they become reworkable sketch curves instead of staying a mesh.
+3. **One sketch per face level** — slice the mesh where faces change height and sketch each
+   loop (the Auto-Sketch concept), giving arbitrary pockets, steps and combined extrusions as
+   sketch + extrude pairs (Point2Cyl's extrusion cylinders).
+4. **Keep the deterministic gates** — exact-or-nothing, volume within 1%, plus the topology
+   checks from ComplexGen. The neural reconstructors stay out of the sandbox; their
+   representation is the target, their compute is not.
