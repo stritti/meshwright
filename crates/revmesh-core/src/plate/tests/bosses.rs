@@ -265,3 +265,28 @@ fn finely_banded_rounds_and_twisted_walls() {
     );
     reason(&turned);
 }
+
+/// A round of six bands on a boss of 192 facets round (its edges along the round travel further
+/// out than one facet is wide), and the same round of 30 bands moved 10 m along X and rounded
+/// to single precision, as a binary STL stores it.
+#[test]
+fn rounded_feet_fine_round_and_far_away() {
+    let (r, f) = (5.0, 2.0);
+    let rings = |bands: u32| -> Vec<(f64, f64)> {
+        let mut rings: Vec<(f64, f64)> =
+            (0..=bands).map(|k| f64::from(k) * PI / f64::from(2 * bands)).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+        rings.push((r, 8.0));
+        rings
+    };
+    let expected = [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }];
+    assert_eq!(found(&layered_boss(&rings(6), 192)).0.bosses, expected);
+    let mesh = layered_boss(&rings(30), 48);
+    #[allow(clippy::cast_possible_truncation)] // single precision, as a binary STL stores it
+    let far = Mesh::new(
+        mesh.triangles
+            .iter()
+            .map(|t| t.map(|p| [f64::from((p[0] + 10_000.0) as f32), f64::from(p[1] as f32), f64::from(p[2] as f32)]))
+            .collect(),
+    );
+    assert_eq!(found(&far).0.bosses, expected);
+}

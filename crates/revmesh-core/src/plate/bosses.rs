@@ -76,9 +76,12 @@ pub(super) fn level(t: &crate::mesh::Triangle, tol: f64) -> Option<f64> {
 fn filleted_boss_holds(b: &FoundBoss, t: &crate::mesh::Triangle, top_z: f64, tol: f64) -> bool {
     let Footprint::Round { centre, r: foot } = b.foot else { return false };
     let (f, r) = (b.fillet, b.wall_r);
-    // An edge round the axis on the wall or the round spans no more than two of the footprint's
-    // facets: a longer one cuts through the wall (the top's may cross it).
-    let longest = super::geometry::segments(&b.ring).map(|(p, q)| super::geometry::distance(p, q)).fold(0.0, f64::max);
+    // An edge on the wall or the round turns no further round the axis than two of the
+    // footprint's facets: a longer one cuts through the wall (the top's may cross it).
+    let turn = |p: P2| (p[1] - centre[1]).atan2(p[0] - centre[0]);
+    let step = super::geometry::segments(&b.ring)
+        .map(|(p, q)| ((turn(q) - turn(p) + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI).abs())
+        .fold(0.0, f64::max);
     let off = |p: Vec3, slack: f64| {
         let rho = super::geometry::distance([p[0], p[1]], centre);
         let z = p[2];
@@ -107,7 +110,10 @@ fn filleted_boss_holds(b: &FoundBoss, t: &crate::mesh::Triangle, top_z: f64, tol
         }
         let across = (p[0] - q[0]).hypot(p[1] - q[1]);
         let on_lid = (p[2] - b.top).abs() <= tol && (q[2] - b.top).abs() <= tol;
-        if across > 2.0 * longest + tol && !on_lid {
+        let around = ((turn([q[0], q[1]]) - turn([p[0], p[1]]) + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI)
+            - std::f64::consts::PI)
+            .abs();
+        if around > 2.0 * step + 1e-9 && !on_lid {
             return false;
         }
         let on_round = p[2].max(q[2]) <= top_z + f + tol;
@@ -155,6 +161,42 @@ fn top_covers(b: &FoundBoss, top: &[[P2; 3]], tol: f64) -> bool {
     }
 }
 
+/// The round at a boss's foot, if it has one, and the cylinder's radius above it, for the boss
+/// standing on `foot` with its top at `top`, `upper` the facets above the plate's top face at
+/// `top_z`. The cylinder's radius is that of the circle fitted to the top's rim (its facets'
+/// boundary loop, without corners an exporter added along its facets); a footprint wider than that has a round, whose radius comes from its own
+/// corners: one `a` out from the cylinder and `h` up lies on a quarter circle of radius
+/// `a + h + sqrt(2ah)`. (The footprint itself may be smaller than the round's: its first, nearly
+/// flat facets may lie within the tolerance of the top face.)
+fn round_foot(upper: &[&crate::mesh::Triangle], foot: Footprint, top: f64, top_z: f64, tol: f64) -> (f64, f64) {
+    let Footprint::Round { centre, r } = foot else { return (0.0, 0.0) };
+    let flat = |p: &Vec3| [p[0], p[1]];
+    let on = |p: &Vec3| foot.contains(flat(p), tol);
+    let lid: Vec<[P2; 3]> = upper
+        .iter()
+        .filter(|t| t.iter().all(|p| on(p) && (p[2] - top).abs() <= tol) && facing(t).1 > 0.5)
+        .map(|t| t.map(|p| flat(&p)))
+        .collect();
+    let rim = boundary_loops(&lid, tol)
+        .ok()
+        .and_then(|loops| loops.into_iter().max_by(|a, b| signed_area(a).abs().total_cmp(&signed_area(b).abs())))
+        .and_then(|l| super::geometry::fit_circle(&drop_collinear(&l, tol)))
+        .map_or(r, |(_, rim)| rim);
+    if r - rim <= tol {
+        return (0.0, r);
+    }
+    let samples: Vec<f64> = upper
+        .iter()
+        .flat_map(|t| t.iter())
+        .filter(|p| on(p) && p[2] > top_z + tol && p[2] < top - tol)
+        .map(|p| (super::geometry::distance(flat(p), centre) - rim, p[2] - top_z))
+        .filter(|(a, _)| *a > tol)
+        .map(|(a, h)| a + h + (2.0 * a * h).sqrt())
+        .collect();
+    let f = if samples.is_empty() { r - rim } else { samples.iter().sum::<f64>() / samples.len() as f64 };
+    (f, rim)
+}
+
 /// [`strip_bosses`] with the top face at `top_z`: a boss's footprint is a round loop in that
 /// face, its wall stands straight on that loop (within the facets' sagitta), and its top is one
 /// flat face.
@@ -198,33 +240,7 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
             // Its walls follow the loop's chords as meshed, before any exporter split them.
             // A round foot: the top's rim lies closer to the axis than the footprint, by the
             // round's radius.
-            let (fillet, wall_r) = match foot {
-                Footprint::Round { centre, r } => {
-                    let rim = upper
-                        .iter()
-                        .flat_map(|t| t.iter())
-                        .filter(|p| on(p) && (p[2] - top).abs() <= tol)
-                        .map(|p| super::geometry::distance(flat(p), centre))
-                        .fold(0.0, f64::max);
-                    if r - rim > tol {
-                        // The round's radius from its own corners: one `a` out from the cylinder
-                        // and `h` up lies on the quarter circle of radius `a + h + sqrt(2ah)`.
-                        let samples: Vec<f64> = upper
-                            .iter()
-                            .flat_map(|t| t.iter())
-                            .filter(|p| on(p) && p[2] > top_z + tol && p[2] < top - tol)
-                            .map(|p| (super::geometry::distance(flat(p), centre) - rim, p[2] - top_z))
-                            .filter(|(a, _)| *a > tol)
-                            .map(|(a, h)| a + h + (2.0 * a * h).sqrt())
-                            .collect();
-                        let f = if samples.is_empty() { r - rim } else { samples.iter().sum::<f64>() / samples.len() as f64 };
-                        (f, rim)
-                    } else {
-                        (0.0, r)
-                    }
-                }
-                Footprint::Rect { .. } => (0.0, 0.0),
-            };
+            let (fillet, wall_r) = round_foot(&upper, foot, top, top_z, tol);
             bosses.push(FoundBoss { foot, top, fillet, wall_r, footprint: ring.clone(), ring: drop_collinear(ring, tol) });
         }
     }
