@@ -21,3 +21,8 @@ Copyright the SolidCraft authors (https://github.com/tangency-labs/solidcraft)
 Licensed under the Apache License, Version 2.0
 (https://www.apache.org/licenses/LICENSE-2.0).
   Vendored unchanged from SolidCraft v0.48.1, crates/craft-plugin/wit/plugin.wit.
+
+Real STL test files (crates/revmesh-core/tests/printables/*.stl)
+Downloaded from Printables (https://www.printables.com) and used unchanged.
+Each file keeps its author's licence, CC0 1.0 or CC BY 4.0; authors, sources
+and licences are listed in crates/revmesh-core/tests/printables/README.md.

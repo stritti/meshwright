@@ -79,6 +79,10 @@ writes them from a spec (`synth` tessellates the way CAD exporters do), and prin
 SolidCraft should measure after rebuilding. Each fixture in `plugin/revmesh/tests` has a
 `.json` case that `cargo xtask plugin-test` runs in SolidCraft.
 
+Real STL files from Printables, under CC0 or CC BY and used unchanged, are in
+`crates/revmesh-core/tests/printables/` (authors and licences in its README);
+`tests/printables.rs` checks them against the authors' published sources where there are any.
+
 The example parts in `examples/` (shown in the docs' [examples](/guide/examples) gallery) are
 generated the same way, by `crates/revmesh-core/examples/examples_stl.rs`;
 `crates/revmesh-core/tests/examples.rs` checks that each imports as the gallery describes. The

@@ -220,6 +220,70 @@ openings right through the part along an axis, drawn as holes in that axis's ske
 [`combined-cuts.stl`](https://github.com/stritti/revmesh/raw/main/plugin/revmesh/tests/combined-cuts.stl):
 a blind cut and a pocket, each `Cut<n>Sketch` and `Cut<n>` (`cut_<n>_len`, `cut_<n>_0`).
 
+## Real files from Printables
+
+Parts other people designed and shared on [Printables](https://www.printables.com), exported by
+their tools (OpenSCAD, FreeCAD, SketchUp, …) rather than generated here. They are test files in
+[`crates/revmesh-core/tests/printables/`](https://github.com/stritti/revmesh/tree/main/crates/revmesh-core/tests/printables),
+each under its author's licence (CC0 or CC BY 4.0, listed there). Where the author published
+the design's source, the test checks revmesh's parameters against it.
+
+### NEMA 17 plate for aluminium extrusion
+
+![NEMA 17 aluminium extrusion mounting plate by diegotrap](/examples/printables/nema17-extrusion-plate.png)
+
+[NEMA 17 aluminium extrusion mounting plate](https://www.printables.com/model/509515-nema-17-aluminium-extrusion-mounting-plate)
+by diegotrap, CC BY 4.0. Every number matches the author's DXF: the 42 x 80 outline with 2 mm
+chamfers (`Sketch1`, eight sides, `extrude_len` 4), the motor's holes (`HoleGrid1`,
+`hole_grid_1_d` 3.2 on 31 mm), the Ø24 pilot bore (`hole_1_d` 24) and two slots
+(`slot_<n>_len` 24, `slot_<n>_w` 5.25, `slot_1_x` −10, `slot_2_x` 10).
+
+### Simple tiny calibration block
+
+![Simple Tiny Calibration Block by Andy](/examples/printables/tiny-calibration-block.png)
+
+[Simple Tiny Calibration Block](https://www.printables.com/model/182018-simple-tiny-calibration-block)
+by Andy, CC0. As in the author's OpenSCAD file: `base_x` 30, `base_y` 20, `base_t` 10 and
+`Pocket1` (`pocket_1_w` 20, `pocket_1_l` 10, `pocket_1_depth` 7).
+
+### NEMA 17 spacer plate
+
+![2mm NEMA17 Spacer Plate by derfley](/examples/printables/nema17-spacer-plate.png)
+
+[2mm NEMA17 Spacer Plate](https://www.printables.com/model/149549-2mm-nema17-spacer-plate) by
+derfley, CC BY 4.0: the 42.3 mm square with chamfered corners, `hole_grid_1_d` 3.5 on the
+31 mm square and `hole_1_d` 27.
+
+### Calibration block with a counterbore and a slot
+
+![Calibration Block with Countersunk Hole and Slot by TechnoSwiss](/examples/printables/calibration-cube.png)
+
+[Calibration Block with Countersunk Hole and Slot](https://www.printables.com/model/254589-calibration-block-with-countersunk-hole-and-slot)
+by TechnoSwiss, CC BY 4.0. Despite its title, the hole has a flat step 2 mm down, so revmesh
+makes it a counterbored `Hole1` (`hole_1_cbore_depth` 2); the slot is `Pocket1`
+(5.5 x 2.4, 5 deep).
+
+### Angle bracket: imported, holes still polygons
+
+![90 degree angle bracket by Ken S](/examples/printables/angle-bracket.png)
+
+[90 degree angle bracket](https://www.printables.com/model/276330-90-degree-angle-bracket) by
+Ken S, CC0. It comes over as outlines extruded along X, Y and Z (`extrude_x_len` 30,
+`extrude_y_len` 40, `extrude_z_len` 40) with its gusset, but OpenSCAD wrote the two Ø10 holes
+as 72-sided polygons, and revmesh keeps them as cut-outs of straight sides, not as round holes.
+
+### Not recognised yet
+
+![Mending Plate by Gwilherm Kerherve](/examples/printables/mending-plate.png)
+
+[Mending Plate](https://www.printables.com/model/1840620-mending-plate) by Gwilherm Kerherve,
+CC0: countersinks that taper through the whole plate. Kept as a mesh.
+
+![Heavy Duty Flat Mending Plate by Mateusz Tokarz](/examples/printables/flat-mending-plate-4x20x60.png)
+
+[Heavy Duty Flat Mending Plates](https://www.printables.com/model/1549159-heavy-duty-flat-mending-plates-20x4mm-m4)
+by Mateusz Tokarz, CC BY 4.0: its top edges are rounded all round. Kept as a mesh.
+
 ## Making your own
 
 The everyday parts are generated, so they are exact and reproducible:
@@ -228,7 +292,8 @@ The everyday parts are generated, so they are exact and reproducible:
 cargo run -q -p revmesh-core --example examples_stl -- examples   # writes examples/*.stl
 pip install numpy pillow
 python3 scripts/render-stl.py --out docs/public/examples examples/*.stl
-cargo test -p revmesh-core --test examples                         # each imports as described here
+python3 scripts/render-stl.py --out docs/public/examples/printables crates/revmesh-core/tests/printables/*.stl
+cargo test -p revmesh-core --test examples --test printables      # each imports as described here
 ```
 
 To see what revmesh makes of any STL without SolidCraft, run
