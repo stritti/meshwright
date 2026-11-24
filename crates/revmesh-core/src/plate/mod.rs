@@ -149,21 +149,21 @@ fn tolerance(scale: f64) -> f64 {
 type P2 = [f64; 2];
 
 const NOT_FLAT: &str = "it is not a flat plate: some corners lie between its top and bottom faces \
-                        (steps, pockets and bosses are not recognised yet)";
+                        and belong to no step, pocket or hole (not recognised yet)";
 
 const NOT_CLOSED: &str = "the mesh is not closed, or its top and bottom faces differ";
 
 /// Looks for a plate in `mesh`, possibly with round bosses on its top face. `Err` carries the
 /// reason in the user's words.
-pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
-    let why = match recognize_prism(mesh) {
+pub(crate) fn recognize_plate(mesh: &Mesh, allow_steps: bool) -> Result<Recognition, String> {
+    let why = match recognize_prism(mesh, allow_steps) {
         Ok(found) => return Ok(found),
         Err(why) => why,
     };
     // Something may stand on the top face: the plate is then what lies below it, its top face
     // closed over the bosses' footprints.
     let Some((plate, found)) = strip_bosses(mesh)? else { return Err(why) };
-    let mut recognised = recognize_prism(&plate)?;
+    let mut recognised = recognize_prism(&plate, allow_steps)?;
     let (offset, top) = match &recognised {
         Recognition::Plate { plate, offset } => (*offset, offset[2] + plate.z),
         Recognition::Profile { profile, offset, .. } => (*offset, offset[2] + profile.z),

@@ -72,14 +72,14 @@ fn bosses_must_be_straight_and_round() {
     // A diamond standing on the plate is no plate's pad; it is a stack of the plate and the
     // diamond.
     let diamond = standing(&diamond, &|p| p, 4.0);
-    assert!(crate::plate::recognize_plate(&diamond).is_err());
+    assert!(crate::plate::recognize_plate(&diamond, true).is_err());
     let found = crate::recognize::recognize(&diamond);
     let crate::recognize::Recognition::Stack { spec, .. } = found else { panic!("not a stack: {found:?}") };
     assert_eq!(spec.bands.len(), 2);
     // A square pad narrowing straight up is no plate's pad; it is the intersection of two
     // trapezoids extruded along X and Y, a combined extrusion.
     let tapered = standing(&block, &pad_draft, 4.0);
-    assert!(crate::plate::recognize_plate(&tapered).is_err());
+    assert!(crate::plate::recognize_plate(&tapered, true).is_err());
     assert!(matches!(crate::recognize::recognize(&tapered), crate::recognize::Recognition::Combined { .. }));
 }
 

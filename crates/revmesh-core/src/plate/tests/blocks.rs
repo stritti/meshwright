@@ -145,3 +145,85 @@ fn recognises_pockets_of_any_straight_sided_outline() {
     );
     assert!((profile.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", profile.volume(), mesh.volume());
 }
+
+/// Walls of a ring's edges from `lo` to `hi`, outward for a counter-clockwise ring.
+fn ring_walls(ring: &[P2], lo: f64, hi: f64) -> Vec<[[f64; 3]; 3]> {
+    let at = |p: P2, z: f64| [p[0], p[1], z];
+    let mut w = Vec::new();
+    for i in 0..ring.len() {
+        let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+        w.extend([[at(a, lo), at(b, lo), at(b, hi)], [at(a, lo), at(b, hi), at(a, hi)]]);
+    }
+    w
+}
+
+/// A 60 x 40 x 6 plate with a step: the region x >= 30 lies at Z = 3, meshed the way an exporter
+/// meshes it (the lower box's walls up to Z = 3, the upper box's from there, the step's level as
+/// a cap). The outline is the whole footprint; the step is a pocket cut from the top (5.3).
+fn stepped_plate(hole: Option<Vec<P2>>) -> Mesh {
+    let bottom = [[0.0, 0.0], [30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0], [0.0, 40.0]];
+    let high = [[0.0, 0.0], [30.0, 0.0], [30.0, 40.0], [0.0, 40.0]];
+    let step = [[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
+    let at = |p: P2, z: f64| [p[0], p[1], z];
+    let holes: &[Vec<P2>] = match &hole {
+        Some(h) => std::slice::from_ref(h),
+        None => &[],
+    };
+    let mut t = Vec::new();
+    for [a, b, c] in synth::triangulate(&bottom, holes) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    t.extend(ring_walls(&bottom, 0.0, 3.0));
+    for [a, b, c] in synth::triangulate(&step, holes) {
+        t.push([at(a, 3.0), at(b, 3.0), at(c, 3.0)]);
+    }
+    t.extend(ring_walls(&high, 3.0, 6.0));
+    for [a, b, c] in synth::triangulate(&high, &[]) {
+        t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+    }
+    if let Some(ring) = hole {
+        // The hole's wall from the bottom face up to the step's level.
+        let cw: Vec<P2> = ring.iter().rev().copied().collect();
+        for i in 0..cw.len() {
+            let (p, q) = (cw[i], cw[(i + 1) % cw.len()]);
+            t.extend([[at(p, 0.0), at(q, 0.0), at(q, 3.0)], [at(p, 0.0), at(q, 3.0), at(p, 3.0)]]);
+        }
+    }
+    Mesh::new(t)
+}
+
+/// A step down from the top face: the region x >= 30 of a 60 x 40 x 6 plate lies at Z = 3.
+#[test]
+fn recognises_a_step_in_the_top_face() {
+    let mesh = stepped_plate(None);
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let step = vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile.outline_pockets, [OutlinePocketSpec { corners: step, depth: 3.0, bottom: false }]);
+    assert!((profile.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", profile.volume(), mesh.volume());
+}
+
+/// A through hole in a step's level goes from that level down through the bottom face.
+#[test]
+fn recognises_a_hole_in_a_step_level() {
+    let ring: Vec<P2> = (0..16)
+        .map(|i| {
+            let a = 2.0 * std::f64::consts::PI * f64::from(i) / 16.0;
+            [45.0 + 5.0 * a.cos(), 20.0 + 5.0 * a.sin()]
+        })
+        .collect();
+    let mesh = stepped_plate(Some(ring));
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let step = vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile.outline_pockets, [OutlinePocketSpec { corners: step, depth: 3.0, bottom: false }]);
+    assert_eq!(profile.holes.len(), 1);
+    assert!(
+        (profile.holes[0].x - 45.0).abs() < 0.01 && (profile.holes[0].y - 20.0).abs() < 0.01 && (profile.holes[0].d - 10.0).abs() < 0.01,
+        "{:?}",
+        profile.holes[0]
+    );
+    assert!(profile.holes[0].blind.is_some(), "blind from the bottom, as deep as the step's level: {:?}", profile.holes[0]);
+    // The volume differs only by the hole's facets becoming a true circle.
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
+}

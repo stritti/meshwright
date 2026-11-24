@@ -92,7 +92,7 @@ pub fn recognize(mesh: &Mesh) -> Recognition {
             rotated = axis.rotate_mesh(mesh);
             &rotated
         };
-        match crate::plate::recognize_plate(source) {
+        match crate::plate::recognize_plate(source, axis == Axis::Z) {
             Ok(Recognition::Plate { plate, offset }) => {
                 let offset = axis.unrotate(offset).map(crate::mesh::snap_mm);
                 if axis == Axis::Z {

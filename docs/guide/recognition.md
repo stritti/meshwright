@@ -18,6 +18,7 @@
 | A rectangular block (pad) along X and Y standing on the top face | `Pad<n>` (a box joined to the plate) | `pad_<n>_w` (along X), `pad_<n>_l` (along Y), `pad_<n>_h`, the middle `pad_<n>_x`, `pad_<n>_y` |
 | A rectangular blind pocket along X and Y with a flat floor, in the top or the bottom face | `Pocket<n>` (a box cut out of the plate) | `pocket_<n>_w`, `pocket_<n>_l`, `pocket_<n>_depth` (from that face), the middle `pocket_<n>_x`, `pocket_<n>_y` |
 | A blind pocket of any other outline of straight sides (3 to 24 corners, each a real turn) with a flat floor, in the top or the bottom face | `Pocket<n>Sketch` (the mouth's outline on XY, every side a `Length` dimension) and `Pocket<n>` (a cut from that face down by `pocket_<n>_depth`), numbered after the rectangular pockets | `pocket_<n>_depth`, `pocket_<n>_<i>_len` per side |
+| A step down from the top face along Z (a lower level whose region shares an edge with the outline) | written like a pocket of that region's outline: `Pocket<n>Sketch` and `Pocket<n>` cut from the top down to the level | `pocket_<n>_depth` (the step's height), `pocket_<n>_<i>_len` per side |
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 | A rectangular box with all twelve edges rounded with one radius, with through holes | `Fillet1` on all twelve edges of the extrude (the four `side|side`, the four `side|top`, the four `side|start`), before the holes | `edge_fillet_r` |
@@ -41,7 +42,7 @@ These are kept as a mesh, with the reason in the report:
 - corners with different radii, or only some corners rounded
 - D-shaped and other curved cut-outs, blind or slanted slots
 - corners rounded almost all the way along their sides
-- steps, pockets with curved sides, other shapes on the top face, and bosses with a draft, a round or a hole
+- steps along X or Y, pockets with curved sides, other shapes on the top face, and bosses with a draft, a round or a hole
 - blind holes with a drill point or a counterbore
 - parts rotated off the axes
 - combined extrusions with holes that cross each other or a cut, round holes ending in a
