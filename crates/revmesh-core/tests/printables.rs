@@ -89,7 +89,7 @@ fn nema17_spacer_plate() {
     );
 }
 
-/// TechnoSwiss's calibration block (CC BY 4.0). Its title says countersunk, but the mesh has a
+/// The calibration block by `TechnoSwiss` (CC BY 4.0). Its title says countersunk, but the mesh has a
 /// flat step 2 mm down at Ø5.9: a counterbore, which is what revmesh makes of it. The slot is a
 /// rectangular pocket 5 mm deep.
 #[test]
@@ -121,7 +121,7 @@ fn angle_bracket_holes_stay_polygons() {
 fn mending_plate_stays_a_mesh() {
     let (summary, _, params, items) = imported("mending-plate");
     assert_eq!(summary, "A mesh of 1052 triangles");
-    assert!(params.is_empty());
+    assert_eq!(params, Vec::<String>::new());
     assert!(items.iter().any(|m| m.contains("tapered holes are not recognised yet")), "{items:?}");
 }
 
@@ -131,6 +131,6 @@ fn mending_plate_stays_a_mesh() {
 fn flat_mending_plate_stays_a_mesh() {
     let (summary, _, params, items) = imported("flat-mending-plate-4x20x60");
     assert_eq!(summary, "A mesh of 1248 triangles");
-    assert!(params.is_empty());
+    assert_eq!(params, Vec::<String>::new());
     assert!(items.iter().any(|m| m.contains("top and bottom faces differ")), "{items:?}");
 }
