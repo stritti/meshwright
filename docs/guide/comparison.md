@@ -3,8 +3,8 @@
 revmesh turns an STL triangle mesh into a parametric, editable design inside SolidCraft. This
 page lists comparable solutions — tools that turn a triangle mesh (STL, OBJ, PLY) or a point
 cloud into an editable CAD model — with a link, the license and what each product is special
-at. The **Feature history?** column says whether the mesh becomes named, parametric features
-automatically, the way revmesh does it, or only a solid/surface that you edit by hand.
+at. Below the overview tables, a [feature matrix](#feature-matrix) compares the capabilities
+in detail.
 
 Licenses are as stated in each project's own `LICENSE` file; links and prices were checked in
 November 2026 and may change. revmesh is an independent project and not affiliated with any
@@ -39,6 +39,13 @@ of the listed products.
 | [Artec Studio](https://www.artec3d.com/3d-software/artec-studio) | proprietary; Lite free | subscription or lifetime, Pro ≈ USD 1,700/yr | Scanner suite with mesh cleanup, measurement and mesh-to-CAD deviation; basic scan-to-CAD (auto-surfacing, booleans; since v20 also chamfer, fillet and draft-angle recognition); one-click export to SOLIDWORKS | Partial |
 | [EXModel](https://www.shining3d.com/reverse-engineering/exmodel) (Shining 3D) | proprietary; Personal tier free | paid EXModel/EXModel Pro from ≈ USD 495 | Mesh → CAD solid in a few steps: primitive extraction, auto-surfacing, constrained 2D sketching (Pro), STEP/IGES export; one-click handoff from EXScan/FreeScan scanners | Guided, parametric in Pro |
 | [peel 3.CAD](https://store.peel-3d.com/software/peel-cad/) | proprietary | scanner + software bundles, ≈ USD 12,000 and up | Turnkey scan-to-CAD with peel 3D scanners: feature extraction, advanced sketching, real-time deviation against the scan | Guided |
+| [MeshWright](https://www.meshwright.io/) (meshwright.io) | proprietary | Seat USD 99, Pro USD 199 per user/month, Site by agreement; AI usage billed separately by the AI provider | Windows app with Fusion add-in and CLI: your own AI assistant (Claude Code, Codex) builds a native, parametric Fusion feature tree from a scan (STL, OBJ, PLY, 3MF); detected holes, bosses and flats are measured from the mesh; verification compares the rebuilt model with the scan and saves F3D plus STEP; jobs stay local, licence checks go online | Yes — native Fusion feature tree, AI-guided |
+
+> **Name note:** MeshWright (meshwright.io) is another vendor's product, unrelated to revmesh.
+> This repository was renamed from *meshwright* to *revmesh* precisely because the name was
+> already taken (see [PR #34](https://github.com/stritti/revmesh/pull/34)). meshwright.dev and
+> several GitHub projects called *Meshwright* (mesh repair for 3D printing) are further
+> unrelated products.
 
 ## Mesh to B-rep inside CAD apps (editable solid, no feature history)
 
@@ -58,13 +65,74 @@ of the listed products.
 | [Blender](https://www.blender.org/) | GPL-3.0 | free | Mesh editing, repair and sculpting; no B-rep or feature history | No |
 | [MeshLab](https://www.meshlab.net/) | GPL-3.0 | free | Mesh cleanup, repair, decimation and format conversion (STL, OBJ, PLY, …); PyMeshLab for batch processing | No |
 
+## Feature matrix
+
+Legend: ✓ supported · ~ partial, guided or paid tier · – not supported. The ML prototypes
+(CAD-Recode, Point2CAD) are omitted here: they take point clouds, not mesh files, and need a
+GPU.
+
+### Recognised geometry (automatic tools)
+
+| Feature | revmesh | mesh2cad | MeshWright (meshwright.io) | FreeCAD RE workbench | Detessellate | MeshRemodel | CAD Sketcher |
+|---|---|---|---|---|---|---|---|
+| Input meshes | STL (≤ 8 MiB in auto, 32 MiB mesh-only) | STL, OBJ, PLY | STL, OBJ, PLY, 3MF | mesh + point cloud | STL, OBJ, 3MF | mesh (STL, OBJ, …) | mesh as sketch reference |
+| Plate/outline extruded along Z | ✓ | ✓ | ~ AI-built features | – | ~ cross-sections | ~ manual | ~ projected sketch |
+| Extrusion along X or Y | ✓ | ✓ (tries X, Y, Z) | ~ | – | – | – | ~ |
+| Through holes | ✓ | ✓ | ✓ fitted from mesh | – | – | – | – |
+| Blind holes, counterbore, countersink | ✓ all three | ✓ counterbore + countersink | ~ | – | – | – | – |
+| Slots | ✓ | ~ | – | – | – | – | – |
+| Bosses, pads, pockets, cut-outs | ✓ | ✓ bosses, ~ rest | ✓ bosses detected | – | – | – | – |
+| Hole patterns (row, grid, bolt circle) | ✓ as SolidCraft patterns | ✓ hole_row / hole_grid | – | – | – | – | ✓ array tools |
+| Fillets with one radius | ✓ vertical corners, any outline | ✓ vertical corners + all edges (`edge_fillet_r`) | ~ fillet radii as parameters | – | – | – | ✓ constraint-driven |
+| Chamfers, drafts | – (roadmap) | ~ | ~ | – | – | – | ✓ |
+| Freeform/NURBS surfaces from the mesh | – mesh body fallback | – faceted/hybrid fallback | ~ reference fit, not the feature tree | ✓ B-spline fitting | ~ loft splines | – | – |
+
+### Workflow and platform (automatic tools)
+
+| Feature | revmesh | mesh2cad | MeshWright (meshwright.io) | FreeCAD RE workbench | Detessellate | MeshRemodel | CAD Sketcher |
+|---|---|---|---|---|---|---|---|
+| Parametric feature history out | ✓ SolidCraft design + named parameters | ✓ CadQuery / OpenSCAD / FreeCAD scripts + exact STEP | ✓ native Fusion feature tree | – | ~ sketches | ~ manual | ✓ Blender constraints |
+| Fidelity report vs the mesh | ✓ import report, rebuild check | ✓ Hausdorff, RMS, volume; refuses misses | ✓ verification vs scan, F3D + STEP saved | ~ deviation | – | – | – |
+| Mesh fallback when nothing is found | ✓ mesh body + reason | ✓ faceted/hybrid solid | – manual corrections | ✓ (surface fitting) | ✓ | ✓ | n/a |
+| Automation | fully automatic, deterministic | fully automatic CLI + MCP server | AI-assistant-guided (Claude Code, Codex) | semi-automatic | guided | manual aid | manual |
+| Environment | WebAssembly plugin in SolidCraft | desktop CLI / Python | Windows + Fusion add-in / CLI | FreeCAD desktop | FreeCAD add-on | FreeCAD add-on | Blender add-on |
+| Works offline | ✓ | ✓ | – licence check online; the AI app may transmit data | ✓ | ✓ | ✓ | ✓ |
+| License, cost | MIT, free | MIT, free | proprietary, USD 99–199/user/mo + AI usage | LGPL, free | LGPL, free | LGPL, free | GPL-3.0, free |
+
+### Commercial suites
+
+| Feature | Geomagic Design X | ZEISS REVERSE ENGINEERING | PolyWorks Modeler | QUICKSURFACE | Artec Studio | EXModel | peel 3.CAD | MeshWright |
+|---|---|---|---|---|---|---|---|---|
+| Primitive fitting (plane, cylinder, cone, sphere) | ✓ automatic extraction | ✓ | ✓ constrained best-fit | ✓ | ✓ | ✓ | ✓ | ✓ measured from mesh |
+| Constrained 2D sketching | ✓ Auto-Sketch | ✓ | ✓ parametric sketches | ✓ | – | ✓ (Pro) | ✓ | ~ via the AI assistant |
+| NURBS / freeform surfacing | ✓ Exact Surfacing | ✓ | ✓ | ✓ automatic surfacing | ✓ auto-surfacing | ✓ | – | ~ reference fit |
+| Feature tree transferred into CAD | ✓ LiveTransfer (SOLIDWORKS, NX, Creo, Inventor, Solid Edge) | – exports STEP/IGES/SAT | ✓ add-ins for CATIA, NX, Creo, SOLIDWORKS, Inventor | ✓ QSConnect for SOLIDWORKS | ✓ one-click to SOLIDWORKS | ~ parametric STEP | ~ | ✓ native Fusion tree |
+| Real-time deviation vs the scan | ✓ Accuracy Analyser | ✓ best-fit | ✓ | ✓ deviation analyser | ✓ compare map | ✓ | ✓ | ✓ verification record |
+| AI assistant / MCP integration | – | – | – | – | – | – | – | ✓ Claude Code, Codex |
+| Scanner-vendor integration | ✓ plugins (Faro, Hexagon, Aicon) | ✓ one-click from ZEISS INSPECT | – | – | ✓ Artec scanners | ✓ one-click from EXScan | ✓ peel scanners | – |
+| Batch / automation | ✓ Pro batch processing | ~ | ✓ macros | – | ✓ workflows | – | – | ✓ Site plan |
+| Works offline | ✓ perpetual/offline activation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – licence check online |
+| Price tier | ≈ USD 1,900–22,000+ | enterprise | enterprise | Lite to Pro | ≈ USD 1,700/yr Pro | from ≈ USD 495 | ≈ USD 12,000+ bundle | USD 99–199/user/mo |
+
+### Mesh to B-rep in CAD apps
+
+| Feature | SOLIDWORKS ScanTo3D | Autodesk Fusion 360 | Rhino 3D |
+|---|---|---|---|
+| Conversion methods | Surface Wizard (analytic + non-analytic fit), Curve Wizard, Mesh Prep | Convert Mesh: faceted, prismatic, T-spline | MeshToNURB / ToNURBS (one NURBS face per polygon), SubD |
+| Result | solid or surface body, then manual features | B-rep solid/surface; timeline entry in parametric mode | polysurface; unusable at high face counts |
+| Face-count limit for direct conversion | mesh repair first, then wizard | ≈ 10,000 triangles | impractical beyond low-poly meshes |
+| Organic shapes | ~ | ✓ T-spline path via the Form workspace | ~ plug-ins such as RhinoResurf |
+| Feature history from the mesh | – | – | – |
+
 ## Where revmesh fits
 
 The open-source recognisers above all run on a desktop with Python and OpenCascade. revmesh
 is the only one that runs inside SolidCraft's WebAssembly plugin sandbox and writes
 SolidCraft's own feature history directly, keeping the mesh — with the reason in the import
-report — wherever no features are found. If you already work in Fusion 360, SOLIDWORKS or
-Rhino, the mesh-to-B-rep conversions there are the pragmatic route to an editable solid,
-without a feature history. For 3D scan data with organic shapes, the commercial suites
-(Geomagic Design X, ZEISS REVERSE ENGINEERING, PolyWorks\|Modeler, …) remain the most
-complete, at enterprise prices.
+report — wherever no features are found. MeshWright (meshwright.io) is the AI-guided
+alternative: an assistant builds a parametric feature tree in Fusion, guided by measurements
+taken from the mesh, but it needs Windows, Fusion, an AI account and an online licence check.
+If you already work in Fusion 360, SOLIDWORKS or Rhino, the mesh-to-B-rep conversions there
+are the pragmatic route to an editable solid, without a feature history. For 3D scan data
+with organic shapes, the commercial suites (Geomagic Design X, ZEISS REVERSE ENGINEERING,
+PolyWorks\|Modeler, …) remain the most complete, at enterprise prices.
