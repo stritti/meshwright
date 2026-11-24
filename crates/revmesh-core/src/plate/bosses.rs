@@ -152,7 +152,17 @@ fn top_covers(b: &FoundBoss, top: &[[P2; 3]], tol: f64) -> bool {
             let r = b.wall_r;
             let rim = cylinder_loop(b, centre, foot, r);
             let Ok(loops) = boundary_loops(top, tol) else { return false };
-            loops.len() == 1 && loops[0].iter().all(|q| super::walls::on_wall(*q, centre, r, &rim, tol))
+            // One loop, going once all the way round the axis along the rim: every corner on it,
+            // and no edge turning further than two of the footprint's facets (a chord across
+            // the top would).
+            let turn = |p: P2| (p[1] - centre[1]).atan2(p[0] - centre[0]);
+            let wrap = |a: f64| (a + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI;
+            let step = super::geometry::segments(&b.ring).map(|(p, q)| wrap(turn(q) - turn(p)).abs()).fold(0.0, f64::max);
+            let [boundary] = loops.as_slice() else { return false };
+            let turns: Vec<f64> = super::geometry::segments(boundary).map(|(p, q)| wrap(turn(q) - turn(p))).collect();
+            boundary.iter().all(|q| super::walls::on_wall(*q, centre, r, &rim, tol))
+                && turns.iter().all(|t| t.abs() <= 2.0 * step + 1e-9)
+                && (turns.iter().sum::<f64>().abs() - 2.0 * std::f64::consts::PI).abs() <= 1e-6
         }
         _ => {
             let area: f64 = top.iter().map(|t| signed_area(t)).sum();
@@ -220,7 +230,7 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
     let top: Vec<[P2; 3]> = mesh
         .triangles
         .iter()
-        .filter(|t| facing(t).1 > 0.5 && level(t, tol).is_some_and(|z| (z - top_z).abs() <= tol))
+        .filter(|t| facing(t).1 > 0.5 && t.iter().all(|p| (p[2] - top_z).abs() <= tol))
         .map(|t| t.map(|p| flat(&p)))
         .collect();
     let Ok(loops) = boundary_loops(&top, tol) else { return Ok(None) };

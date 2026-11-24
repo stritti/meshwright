@@ -290,3 +290,27 @@ fn rounded_feet_fine_round_and_far_away() {
     );
     assert_eq!(found(&far).0.bosses, expected);
 }
+
+/// A 0.1 mm round of 30 bands, its first bands within the tolerance of the plate's face; and a
+/// rounded boss whose top lacks half its facets, which is no top.
+#[test]
+fn rounded_feet_tiny_round_and_open_top() {
+    let (r, f) = (5.0, 0.1);
+    let mut rings: Vec<(f64, f64)> = (0..=30).map(|k| f64::from(k) * PI / 60.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+    rings.push((r, 8.0));
+    assert_eq!(found(&layered_boss(&rings, 48)).0.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(0.1) }]);
+    let f = 2.0;
+    let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+    rings.push((r, 8.0));
+    let mut mesh = layered_boss(&rings, 48);
+    let mut kept = 0;
+    mesh.triangles.retain(|t| {
+        if t.iter().all(|p| (p[2] - 14.0).abs() < 1e-9) {
+            kept += 1;
+            kept <= 23
+        } else {
+            true
+        }
+    });
+    reason(&mesh);
+}
