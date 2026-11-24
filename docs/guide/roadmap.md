@@ -39,6 +39,41 @@
       pockets and steps, and with 3.12 combined extrusions
    4. per-face surface deviation in the import report, computed in the sandbox (today: volume
       within 1% at import, Hausdorff in `cargo xtask check`)
+6. **More parts, fitted robustly** — from the code review of the recognisers against the
+   references (the extracted know-how is packaged in the `revmesh-recognition-knowhow` agent
+   skill; the concept → code mapping with the sources is [Comparable tools → Concepts from the
+   list, applied to revmesh](/guide/comparison#concepts-from-the-list-applied-to-revmesh)):
+   1. an arbitrary prism axis: detect the two dominant parallel planes with fixed-seed RANSAC
+      (Schnabel et al. 2007) and rotate the mesh so their normal is +Z, instead of trying only
+      X, Y and Z (`recognize/axis.rs`) — today a part rotated in the file stays a mesh
+   2. robust circle fits on rim loops: a fixed-seed RANSAC circle (3-point minimal sample plus
+      inliers) or a geometric fit, augmenting the algebraic `fit_circle`
+      (`plate/geometry.rs::fit_circle`); with it, round holes with fewer than eight facets
+      (`MIN_HOLE_SEGMENTS`, `plate/mod.rs`) when their steps stay even — a D-shape's flat side
+      stays one long step and is still refused
+   3. analytic torus detection for the rounds at hole rims and boss feet (today measured band by
+      band in `plate/bosses.rs::round_foot`)
+   4. per-corner radii in outlines (`plate/outline.rs` already fits one circle per rounded corner
+      with `CircleSums`; today all corners must share one radius)
+   5. hole rows at any angle (a pattern's direction is not an expression in SolidCraft — write
+      them as single holes or on a rotated sketch)
+   6. ComplexGen-style topology gates alongside exact-or-nothing and the volume check: recognised
+      faces close into loops, walls meet their face at 90°
+   plus what is still open in 3.10 and 3.12: bosses on side faces, roofs and bevels on stacks
+7. **Import and conversion**:
+   1. an in-sandbox self-check: request the `evaluate@0.2` capability, stage the produced design
+      and rebuild it, and on feature errors fall back to the mesh body with the reason in the
+      report (closes item 4 at import time — today the rebuild check runs only in
+      `cargo xtask check`, and the plugin requests only `formats@0.2`)
+   2. OBJ and PLY input next to STL, with the same chunked streaming and size limits as
+      `StlReader` (`plugin.json` accepts only `stl` today)
+   3. double-precision coordinates in mesh bodies beyond the single-precision range (the design
+      is written with `f32` coordinates today, `design/mod.rs`) — parts far from the origin lose
+      precision in the mesh fallback
+   4. a higher `auto` input ceiling (8 MiB today vs 32 MiB in mesh mode, `revmesh-plugin`) by
+      slimming the face and wall indexes recognition builds
+   5. localised ASCII-STL syntax reasons (they stay English today, `stl.rs`) and an optional
+      `units` import option (STL is unitless and assumed to be mm)
 
 Contributions are very welcome: bug reports, STL files that import badly, recognisers, docs.
 Start with [CONTRIBUTING.md](https://github.com/stritti/revmesh/blob/main/CONTRIBUTING.md).
