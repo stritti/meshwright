@@ -3,6 +3,7 @@
 use serde::Deserialize;
 
 use crate::design::{Design, DesignBuilder, FeatureKind, MeshData};
+use crate::i18n::Locale;
 use crate::mesh::Mesh;
 use crate::recognize::{Recognition, recognize};
 use crate::report::{LossItem, LossReport, Severity};
@@ -17,6 +18,10 @@ const SMOOTHING_NOTE: f64 = 1e-4;
 pub struct ImportOptions {
     /// What to make of the mesh.
     pub mode: Mode,
+    /// The language of the loss report. Not a dialog option: the plugin sets the locale it was
+    /// built for.
+    #[serde(skip)]
+    pub locale: Locale,
 }
 
 impl ImportOptions {
@@ -56,11 +61,12 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
 #[must_use]
 pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> ImportResult {
     let body = body_name(file_name);
+    let locale = options.locale;
     if options.mode == Mode::Auto {
         let recognised = match recognize(&mesh) {
-            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", offset), plate.describe(), plate.volume())),
+            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", offset), plate.describe_in(locale), plate.volume())),
             Recognition::Profile { profile, offset, axis } => {
-                Ok((profile.to_design_on("", offset, axis), profile.describe(), profile.volume()))
+                Ok((profile.to_design_on("", offset, axis), profile.describe_in(locale), profile.volume()))
             }
             Recognition::Unrecognized { reason } => Err(reason),
         };
@@ -71,35 +77,33 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
                 if change.abs() > SMOOTHING_NOTE {
                     report.push(LossItem {
                         severity: Severity::Info,
-                        title: "Facets smoothed".into(),
+                        title: locale.text("report.smoothed.title").into(),
                         subject: body,
-                        message: format!(
-                            "Holes and rounded corners are rebuilt as true circles, so the volume changes by {:+.2}% from the mesh's facets.",
-                            change * 100.0
-                        ),
+                        message: locale
+                            .format("report.smoothed.message", &[("change", &locale.decimal(&format!("{:+.2}", change * 100.0)))]),
                         code: "revmesh.smoothed",
                     });
                 }
                 return ImportResult { design, report };
             }
             Err(reason) => {
-                let mut result = mesh_import(mesh, file_name, &body);
+                let mut result = mesh_import(mesh, file_name, &body, locale);
                 result.report.push(LossItem {
                     severity: Severity::Degraded,
-                    title: "Kept as a mesh".into(),
+                    title: locale.text("report.unrecognized.title").into(),
                     subject: body,
-                    message: format!("No parametric features were recognised: {reason}."),
+                    message: locale.format("report.unrecognized.message", &[("reason", &reason)]),
                     code: "revmesh.unrecognized",
                 });
                 return result;
             }
         }
     }
-    mesh_import(mesh, file_name, &body)
+    mesh_import(mesh, file_name, &body, locale)
 }
 
-fn mesh_import(mesh: Mesh, file_name: &str, body: &str) -> ImportResult {
-    let report = LossReport::new(format!("A mesh of {} triangles", mesh.triangles.len()));
+fn mesh_import(mesh: Mesh, file_name: &str, body: &str, locale: Locale) -> ImportResult {
+    let report = LossReport::new(locale.format("report.mesh.summary", &[("triangles", &mesh.triangles.len())]));
     let mut b = DesignBuilder::new("");
     b.feature(body, vec![body.to_owned()], FeatureKind::MeshImport { file: file_name.to_owned(), meshes: vec![MeshData::new(body, mesh)] });
     ImportResult { design: b.build(), report }
@@ -136,8 +140,61 @@ mod tests {
     }
 
     #[test]
+    fn reports_speak_the_chosen_locale() {
+        use crate::recognize::{HoleSpec, PlateSpec, ProfileSpec};
+        let german = ImportOptions { locale: Locale::De, ..ImportOptions::default() };
+        let result = import(TETRA, "tetra.stl", &german).expect("imports");
+        assert_eq!(result.report.summary, "Ein Netz aus 4 Dreiecken");
+        assert_eq!(result.report.items[0].title, "Als Netz behalten");
+        assert!(result.report.items[0].message.starts_with("Es wurden keine parametrischen Features erkannt: "));
+        let mesh = ImportOptions { mode: Mode::Mesh, locale: Locale::De };
+        assert_eq!(import(TETRA, "tetra.stl", &mesh).expect("imports").report.summary, "Ein Netz aus 4 Dreiecken");
+
+        let mut spec = PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 5.0,
+            holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 10.0, head: None, blind: None }],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: Some(2.5),
+            edge_fillet_r: None,
+        };
+        let bytes = stl::write_binary(&crate::synth::plate(&spec, 24, [0.0; 3]));
+        let result = import(&bytes, "bracket.stl", &german).expect("imports");
+        assert_eq!(result.report.summary, "Eine 60 x 40 x 5 mm Platte mit 1 Bohrung und 2,5 mm verrundeten Ecken");
+        assert_eq!(result.report.items[0].title, "Facetten geglättet");
+        assert!(result.report.items[0].message.contains(" %."), "{}", result.report.items[0].message);
+        assert!(result.report.items[0].message.contains(','), "a decimal comma: {}", result.report.items[0].message);
+
+        spec.holes.push(spec.holes[0].clone());
+        spec.outline_fillet_r = None;
+        spec.edge_fillet_r = Some(2.0);
+        assert_eq!(spec.describe_in(Locale::De), "Eine 60 x 40 x 5 mm Platte mit 2 Bohrungen und 2 mm verrundeten Kanten");
+        spec.holes.clear();
+        spec.edge_fillet_r = None;
+        assert_eq!(spec.describe_in(Locale::De), "Eine 60 x 40 x 5 mm Platte");
+        let profile = ProfileSpec {
+            corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+            z: 5.0,
+            holes: vec![],
+            slots: vec![],
+            bosses: vec![],
+            pads: vec![],
+            pockets: vec![],
+            cutouts: vec![],
+            outline_fillet_r: None,
+        };
+        assert_eq!(profile.describe_in(Locale::De), "Eine 60 x 40 x 5 mm Platte mit einer 4-eckigen Kontur");
+        assert_eq!(profile.describe(), "A 60 x 40 x 5 mm plate with a 4-sided outline");
+    }
+
+    #[test]
     fn mesh_mode_reports_nothing_lost() {
-        let result = import(TETRA, "tetra.stl", &ImportOptions { mode: Mode::Mesh }).expect("imports");
+        let result = import(TETRA, "tetra.stl", &ImportOptions { mode: Mode::Mesh, ..ImportOptions::default() }).expect("imports");
         assert_eq!(result.report.items, []);
     }
 
@@ -356,13 +413,13 @@ mod tests {
 
     #[test]
     fn streamed_design_matches_and_writes_single_precision() {
-        let result = import(TETRA, "tetra.stl", &ImportOptions { mode: Mode::Mesh }).expect("imports");
+        let result = import(TETRA, "tetra.stl", &ImportOptions { mode: Mode::Mesh, ..ImportOptions::default() }).expect("imports");
         let mut streamed = Vec::new();
         result.design.write_json(&mut streamed).expect("writes");
         assert_eq!(String::from_utf8(streamed).expect("utf-8"), result.design.to_json());
 
         let mesh = Mesh::new(vec![[[0.1, 0.0, 0.0], [0.0, 0.2, 0.0], [0.0, 0.0, 0.3]]]);
-        let json = import_mesh(mesh, "t.stl", &ImportOptions { mode: Mode::Mesh }).design.to_json();
+        let json = import_mesh(mesh, "t.stl", &ImportOptions { mode: Mode::Mesh, ..ImportOptions::default() }).design.to_json();
         assert!(json.contains(r#""positions":[0.1,0.0,0.0,0.0,0.2,0.0,0.0,0.0,0.3]"#), "{json}");
         assert!(json.contains(r#""triangles":[0,1,2]"#), "{json}");
     }

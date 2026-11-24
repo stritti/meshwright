@@ -20,6 +20,7 @@
 
 pub mod check;
 pub mod design;
+pub mod i18n;
 pub mod import;
 pub mod mesh;
 pub mod patterns;
@@ -29,4 +30,5 @@ pub mod report;
 pub mod stl;
 pub mod synth;
 
+pub use i18n::Locale;
 pub use import::{ImportOptions, ImportResult, import, import_mesh};

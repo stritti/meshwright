@@ -1,6 +1,5 @@
-use std::fmt::Write as _;
-
 use crate::design::fmt_number;
+use crate::i18n::Locale;
 
 /// A rectangular plate from the origin, extruded up, with vertical through holes.
 #[derive(Debug, Clone, PartialEq)]
@@ -210,7 +209,14 @@ impl PlateSpec {
     /// One line describing the plate, for the loss report.
     #[must_use]
     pub fn describe(&self) -> String {
+        self.describe_in(Locale::En)
+    }
+
+    /// [`Self::describe`] in `locale`'s words.
+    #[must_use]
+    pub fn describe_in(&self, locale: Locale) -> String {
         describe(
+            locale,
             [self.x, self.y, self.z],
             None,
             [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
@@ -265,8 +271,15 @@ impl ProfileSpec {
     /// One line describing the plate, for the loss report.
     #[must_use]
     pub fn describe(&self) -> String {
+        self.describe_in(Locale::En)
+    }
+
+    /// [`Self::describe`] in `locale`'s words.
+    #[must_use]
+    pub fn describe_in(&self, locale: Locale) -> String {
         let size = self.size();
         describe(
+            locale,
             [size[0], size[1], self.z],
             Some(self.corners.len()),
             [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
@@ -320,53 +333,37 @@ fn blocks(pads: &[PadSpec], pockets: &[PocketSpec]) -> f64 {
 }
 
 /// `counts` are the holes, the slots, the bosses, the cut-outs, the pads and the pockets.
-fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 6], fillet_r: Option<f64>, edge_r: Option<f64>) -> String {
-    let [holes, slots, bosses, cutouts, pads, pockets] = counts;
-    let [x, y, z] = size.map(fmt_number);
+fn describe(
+    locale: Locale,
+    size: [f64; 3],
+    sides: Option<usize>,
+    counts: [usize; 6],
+    fillet_r: Option<f64>,
+    edge_r: Option<f64>,
+) -> String {
+    let number = |v: f64| locale.decimal(&fmt_number(v));
+    let [x, y, z] = size.map(number);
     let mut parts = Vec::new();
     if let Some(n) = sides {
-        parts.push(format!("a {n}-sided outline"));
+        parts.push(locale.format("summary.outline", &[("n", &n)]));
     }
-    match holes {
-        0 => {}
-        1 => parts.push("1 hole".to_owned()),
-        n => parts.push(format!("{n} holes")),
-    }
-    match slots {
-        0 => {}
-        1 => parts.push("1 slot".to_owned()),
-        n => parts.push(format!("{n} slots")),
-    }
-    match bosses {
-        0 => {}
-        1 => parts.push("1 boss".to_owned()),
-        n => parts.push(format!("{n} bosses")),
-    }
-    match cutouts {
-        0 => {}
-        1 => parts.push("1 cut-out".to_owned()),
-        n => parts.push(format!("{n} cut-outs")),
-    }
-    for (n, one, many) in [(pads, "pad", "pads"), (pockets, "pocket", "pockets")] {
+    for (n, kind) in counts.into_iter().zip(["hole", "slot", "boss", "cutout", "pad", "pocket"]) {
         match n {
             0 => {}
-            1 => parts.push(format!("1 {one}")),
-            n => parts.push(format!("{n} {many}")),
+            1 => parts.push(locale.text(&format!("summary.{kind}.one")).to_owned()),
+            n => parts.push(locale.format(&format!("summary.{kind}.other"), &[("n", &n)])),
         }
     }
     if let Some(r) = fillet_r {
-        parts.push(format!("{} mm rounded corners", fmt_number(r)));
+        parts.push(locale.format("summary.rounded_corners", &[("r", &number(r))]));
     }
     if let Some(r) = edge_r {
-        parts.push(format!("{} mm rounded edges", fmt_number(r)));
+        parts.push(locale.format("summary.rounded_edges", &[("r", &number(r))]));
     }
-    let mut text = format!("A {x} x {y} x {z} mm plate");
-    if let Some((last, rest)) = parts.split_last() {
-        text.push_str(" with ");
-        if !rest.is_empty() {
-            let _ = write!(text, "{} and ", rest.join(", "));
-        }
-        text.push_str(last);
-    }
-    text
+    let plate = locale.format("summary.plate", &[("x", &x), ("y", &y), ("z", &z)]);
+    let Some((last, rest)) = parts.split_last() else {
+        return plate;
+    };
+    let parts = if rest.is_empty() { last.clone() } else { locale.format("summary.list", &[("rest", &rest.join(", ")), ("last", last)]) };
+    locale.format("summary.with", &[("plate", &plate), ("parts", &parts)])
 }

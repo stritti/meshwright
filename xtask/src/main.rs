@@ -2,8 +2,12 @@
 //!
 //! - `component`: builds `revmesh-plugin` for `wasm32-unknown-unknown` and wraps the module as
 //!   a component into `plugin/revmesh/revmesh.wasm` (what `wasm-tools component new` does).
-//! - `dist`: `component`, then zips the package (without its tests) to
-//!   `target/dist/revmesh-<version>.zip`, ready for Preferences › Plugins › Install plugin….
+//! - `dist`: builds one package per language and zips each (without its tests), ready for
+//!   Preferences › Plugins › Install plugin…: `target/dist/revmesh-<version>.zip` in English (the
+//!   default) and `target/dist/revmesh-<version>-<locale>.zip` for every other locale (German:
+//!   `-de`). Each has `plugin.json` localized from `crates/revmesh-core/locales/<locale>.json` and
+//!   a component built with `REVMESH_LOCALE=<locale>`, as SolidCraft shows a plugin's texts as
+//!   its package gives them and tells the plugin nothing about the app's language.
 //! - `plugin-test`: `component`, then runs `solidcraft-cli plugin test --require-cases` on the
 //!   package. The CLI is taken from `$SOLIDCRAFT_CLI`, else from `PATH`, else from the default
 //!   Windows install (`C:\Program Files\SolidCraft`, also found from WSL).
@@ -17,6 +21,8 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use revmesh_core::Locale;
+
 const PLUGIN_CRATE: &str = "revmesh-plugin";
 const PACKAGE_DIR: &str = "plugin/revmesh";
 const TARGET: &str = "wasm32-unknown-unknown";
@@ -25,9 +31,9 @@ fn main() -> ExitCode {
     let task = std::env::args().nth(1).unwrap_or_default();
     let root = workspace_root();
     let result = match task.as_str() {
-        "component" => component(&root).map(|path| println!("component: {}", path.display())),
-        "dist" => component(&root).and_then(|_| dist(&root)).map(|path| println!("package: {}", path.display())),
-        "plugin-test" => component(&root).and_then(|_| plugin_test(&root)),
+        "component" => component(&root, Locale::En).map(|path| println!("component: {}", path.display())),
+        "dist" => dist(&root).map(|paths| paths.iter().for_each(|path| println!("package: {}", path.display()))),
+        "plugin-test" => component(&root, Locale::En).and_then(|_| plugin_test(&root)),
         "check" => check(&root),
         _ => {
             eprintln!("usage: cargo xtask <component|dist|plugin-test|check>");
@@ -47,11 +53,12 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask lives in the workspace root").to_path_buf()
 }
 
-/// Builds the plugin module and wraps it as a component in the package folder.
-fn component(root: &Path) -> Result<PathBuf, String> {
+/// Builds the plugin module for `locale` and wraps it as a component in the package folder.
+fn component(root: &Path, locale: Locale) -> Result<PathBuf, String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let status = Command::new(cargo)
         .current_dir(root)
+        .env("REVMESH_LOCALE", locale.code())
         .args(["build", "--release", "--locked", "--target", TARGET, "-p", PLUGIN_CRATE])
         .status()
         .map_err(|e| format!("running cargo: {e}"))?;
@@ -69,21 +76,36 @@ fn component(root: &Path) -> Result<PathBuf, String> {
     Ok(out)
 }
 
-/// Zips `plugin.json` and the component, leaving out tests and hidden files.
-fn dist(root: &Path) -> Result<PathBuf, String> {
-    let manifest = manifest(root)?;
-    let version = manifest["version"].as_str().ok_or("plugin.json has no version")?;
+/// Builds and zips one package per locale (English last, so the package folder is left holding
+/// the default component), leaving out tests and hidden files.
+fn dist(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut packages = Vec::new();
+    for locale in Locale::ALL.into_iter().rev() {
+        component(root, locale)?;
+        packages.push(zip_package(root, locale)?);
+    }
+    packages.reverse();
+    Ok(packages)
+}
+
+/// Zips `plugin.json`, localized to `locale`, and the component.
+fn zip_package(root: &Path, locale: Locale) -> Result<PathBuf, String> {
+    let mut manifest = manifest(root)?;
+    let version = manifest["version"].as_str().ok_or("plugin.json has no version")?.to_owned();
     let module = module_file(root)?;
+    revmesh_core::i18n::localize_manifest(&mut manifest, locale);
+    let manifest = serde_json::to_vec_pretty(&manifest).map_err(|e| format!("plugin.json: {e}"))?;
     let dist = root.join("target").join("dist");
     fs::create_dir_all(&dist).map_err(|e| format!("{}: {e}", dist.display()))?;
-    let out = dist.join(format!("revmesh-{version}.zip"));
+    let suffix = if locale == Locale::En { String::new() } else { format!("-{}", locale.code()) };
+    let out = dist.join(format!("revmesh-{version}{suffix}.zip"));
     let file = fs::File::create(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    for name in ["plugin.json", module.as_str()] {
-        let bytes = fs::read(root.join(PACKAGE_DIR).join(name)).map_err(|e| format!("{name}: {e}"))?;
+    let component = fs::read(root.join(PACKAGE_DIR).join(&module)).map_err(|e| format!("{module}: {e}"))?;
+    for (name, bytes) in [("plugin.json", manifest.as_slice()), (module.as_str(), component.as_slice())] {
         zip.start_file(name, options).map_err(|e| format!("zip: {e}"))?;
-        zip.write_all(&bytes).map_err(|e| format!("zip: {e}"))?;
+        zip.write_all(bytes).map_err(|e| format!("zip: {e}"))?;
     }
     zip.finish().map_err(|e| format!("zip: {e}"))?;
     Ok(out)

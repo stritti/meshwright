@@ -9,6 +9,7 @@
 
 use std::fmt;
 
+use crate::i18n::Locale;
 use crate::mesh::{Mesh, Triangle, Vec3, cross, length, sub};
 
 /// Why an STL file could not be read.
@@ -54,24 +55,26 @@ pub enum StlError {
     Empty,
 }
 
+impl StlError {
+    /// The error in `locale`'s words. The `reason` of a [`StlError::Syntax`] stays English.
+    #[must_use]
+    pub fn message(&self, locale: Locale) -> String {
+        match self {
+            Self::TooShort => locale.text("stl.too_short").to_owned(),
+            Self::Truncated { expected, actual } => locale.format("stl.truncated", &[("expected", expected), ("actual", actual)]),
+            Self::Syntax { line, reason } => locale.format("stl.syntax", &[("line", line), ("reason", reason)]),
+            Self::NonFinite { triangle } => locale.format("stl.non_finite", &[("triangle", triangle)]),
+            Self::OutOfRange { triangle } => locale.format("stl.out_of_range", &[("triangle", triangle)]),
+            Self::SizeLimit { size, max_bytes } => locale.format("stl.size_limit", &[("size", size), ("max_bytes", max_bytes)]),
+            Self::Allocation => locale.text("stl.allocation").to_owned(),
+            Self::Empty => locale.text("stl.empty").to_owned(),
+        }
+    }
+}
+
 impl fmt::Display for StlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TooShort => write!(f, "the file is too short to be an STL file"),
-            Self::Truncated { expected, actual } => {
-                write!(f, "the binary STL header announces {expected} triangles, but the file has only {actual} bytes")
-            }
-            Self::Syntax { line, reason } => write!(f, "ASCII STL, line {line}: {reason}"),
-            Self::NonFinite { triangle } => write!(f, "triangle {triangle} has a corner that is not a finite number (nan or inf)"),
-            Self::OutOfRange { triangle } => {
-                write!(f, "triangle {triangle} has a coordinate too large for an STL mesh (beyond about 3.4e38)")
-            }
-            Self::SizeLimit { size, max_bytes } => {
-                write!(f, "the STL is {size} bytes; this import mode supports at most {max_bytes} bytes")
-            }
-            Self::Allocation => write!(f, "there is not enough memory to hold the STL triangles"),
-            Self::Empty => write!(f, "the file holds no triangles"),
-        }
+        f.write_str(&self.message(Locale::En))
     }
 }
 
@@ -495,7 +498,12 @@ mod tests {
         ];
         for (error, fragment) in cases {
             assert!(error.to_string().contains(fragment), "{error}");
+            assert_eq!(error.to_string(), error.message(Locale::En));
+            let german = error.message(Locale::De);
+            assert_ne!(german, error.to_string(), "{error} has a German text");
+            assert!(!german.contains('{'), "{german} fills every placeholder");
         }
+        assert_eq!(StlError::Syntax { line: 4, reason: "bad".into() }.message(Locale::De), "ASCII-STL, Zeile 4: bad");
     }
 
     #[test]

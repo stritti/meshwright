@@ -26,7 +26,9 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
 
 ## Install
 
-1. Download `revmesh-<version>.zip` from the [releases](https://github.com/stritti/revmesh/releases).
+1. Download `revmesh-<version>.zip` (English) or `revmesh-<version>-de.zip` (German) from the
+   [releases](https://github.com/stritti/revmesh/releases). Both are the same plugin with the same
+   id, so install one of them: SolidCraft shows a plugin's texts as its package gives them.
 2. In SolidCraft, open **Preferences › Plugins › Install plugin…** (also *File › Plugins…*) and pick
    the zip.
 
@@ -123,7 +125,7 @@ with SolidCraft.
 ```sh
 cargo test                     # unit tests of the core, natively
 cargo xtask component          # builds plugin/revmesh/revmesh.wasm
-cargo xtask dist               # target/dist/revmesh-<version>.zip
+cargo xtask dist               # target/dist/revmesh-<version>.zip (en) and revmesh-<version>-de.zip
 cargo xtask plugin-test        # runs plugin/revmesh/tests in SolidCraft (set SOLIDCRAFT_CLI)
 cargo xtask check              # checks every rebuild against its source mesh (volume + deviation)
 ```
