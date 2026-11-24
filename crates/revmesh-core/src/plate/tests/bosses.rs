@@ -314,3 +314,24 @@ fn rounded_feet_tiny_round_and_open_top() {
     });
     reason(&mesh);
 }
+
+/// A facet of a round split into three at its centroid: the new corner lies on the facet, a
+/// little off the round, and the boss is the same.
+#[test]
+fn split_round_facets() {
+    let (r, f) = (5.0, 2.0);
+    let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+    rings.push((r, 8.0));
+    let mut mesh = layered_boss(&rings, 48);
+    // A facet of the band between 30° and 45° along the round.
+    let (lo, hi) = (6.0 + rings[2].1, 6.0 + rings[3].1);
+    let k = mesh
+        .triangles
+        .iter()
+        .position(|t| t.iter().all(|p| p[2] >= lo - 1e-9 && p[2] <= hi + 1e-9) && t.iter().any(|p| p[2] < hi - 1e-9))
+        .expect("a facet of the band");
+    let [a, b, c] = mesh.triangles.swap_remove(k);
+    let m = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0];
+    mesh.triangles.extend([[a, b, m], [b, c, m], [c, a, m]]);
+    assert_eq!(found(&mesh).0.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
+}

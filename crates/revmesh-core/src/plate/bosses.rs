@@ -96,7 +96,16 @@ fn filleted_boss_holds(b: &FoundBoss, t: &crate::mesh::Triangle, top_z: f64, tol
     let wall_loop = cylinder_loop(b, centre, foot, r);
     let on_wall_chord =
         |p: &Vec3| p[2] >= top_z + f - tol && p[2] <= b.top + tol && super::walls::on_wall([p[0], p[1]], centre, r, &wall_loop, tol);
-    let corners = t.iter().all(|p| off(*p, tol) || on_wall_chord(p));
+    // A corner an exporter adds within a facet of the round lies on that facet: off the round by
+    // no more than the facets of the coarsest round allowed (50° along it, the footprint's
+    // facets round the axis) come off it, and never at a cone's distance.
+    let on_round_facet = |p: &Vec3| {
+        let rho = super::geometry::distance([p[0], p[1]], centre);
+        let off_round = ((rho - (r + f)).hypot(p[2] - (top_z + f)) - f).abs();
+        let bound = f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + rho * (1.0 - (step / 2.0).cos());
+        p[2] >= top_z - tol && p[2] <= top_z + f + tol && rho >= r - tol && rho <= r + f + tol && off_round <= bound + tol
+    };
+    let corners = t.iter().all(|p| off(*p, tol) || on_wall_chord(p) || on_round_facet(p));
     // An edge along the round (both ends no higher than its top) bows like a chord of its
     // quarter circle, and spans no more of it than a round hole's facet may of its circle (a
     // quarter in one step is a chamfer); any other edge bows like a chord of the cylinder round
@@ -131,7 +140,7 @@ fn filleted_boss_holds(b: &FoundBoss, t: &crate::mesh::Triangle, top_z: f64, tol
             sagitta(across, r)
         };
         let middle = [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])];
-        off(middle, tol + bow) || on_wall_chord(&middle)
+        off(middle, tol + bow) || on_wall_chord(&middle) || on_round_facet(&middle)
     });
     corners && middles
 }
