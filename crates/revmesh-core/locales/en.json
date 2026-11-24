@@ -13,6 +13,8 @@
   "report.smoothed.message": "Holes and rounded corners are rebuilt as true circles, so the volume changes by {change}% from the mesh's facets.",
   "report.unrecognized.title": "Kept as a mesh",
   "report.unrecognized.message": "No parametric features were recognised: {reason}.",
+  "report.update.title": "A newer version of revmesh is available",
+  "report.update.message": "This import ran with revmesh {current}, but {latest} is out. Install it from https://github.com/stritti/revmesh/releases",
 
   "summary.plate": "A {x} x {y} x {z} mm plate",
   "summary.stack": "A {x} x {y} x {z} mm part of {n} outlines stacked along {axis}",

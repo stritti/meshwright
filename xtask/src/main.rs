@@ -6,7 +6,9 @@
 //!   Preferences › Plugins › Install plugin…: `target/dist/revmesh-<version>.zip` in English (the
 //!   default) and `target/dist/revmesh-<version>-<locale>.zip` for every other locale (German:
 //!   `-de`). Each has `plugin.json` localized from `crates/revmesh-core/locales/<locale>.json` and
-//!   a component built with `REVMESH_LOCALE=<locale>`, as SolidCraft shows a plugin's texts as
+//!   a component built with `REVMESH_LOCALE=<locale>` and `REVMESH_LATEST_VERSION` (the newest
+//!   published release, betas included, for the import-time update check), as SolidCraft shows a
+//!   plugin's texts as
 //!   its package gives them and tells the plugin nothing about the app's language.
 //! - `plugin-test`: `component`, then runs `solidcraft-cli plugin test --require-cases` on the
 //!   package. The CLI is taken from `$SOLIDCRAFT_CLI`, else from `PATH`, else from the default
@@ -53,12 +55,15 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask lives in the workspace root").to_path_buf()
 }
 
-/// Builds the plugin module for `locale` and wraps it as a component in the package folder.
+/// Builds the plugin module for `locale` and wraps it as a component in the package folder. The
+/// build gets `REVMESH_LATEST_VERSION` (the newest release, for the import-time update check the
+/// plugin runs; its sandbox has no network) alongside `REVMESH_LOCALE`.
 fn component(root: &Path, locale: Locale) -> Result<PathBuf, String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let status = Command::new(cargo)
         .current_dir(root)
         .env("REVMESH_LOCALE", locale.code())
+        .env("REVMESH_LATEST_VERSION", latest_release(root))
         .args(["build", "--release", "--locked", "--target", TARGET, "-p", PLUGIN_CRATE])
         .status()
         .map_err(|e| format!("running cargo: {e}"))?;
@@ -113,6 +118,7 @@ fn zip_package(root: &Path, locale: Locale) -> Result<PathBuf, String> {
 
 /// Runs SolidCraft's own plugin test runner on the package folder.
 fn plugin_test(root: &Path) -> Result<(), String> {
+    note_update(root);
     let cli = cli_path();
     let status = Command::new(&cli)
         .current_dir(root.join("plugin"))
@@ -152,6 +158,7 @@ fn default_cli() -> String {
 ///
 /// Fixtures that do not import (the error cases of `plugin test`) are skipped.
 fn check(root: &Path) -> Result<(), String> {
+    note_update(root);
     let cli = cli_path();
     let tests = root.join(PACKAGE_DIR).join("tests");
     let out = root.join("target").join("check");
@@ -241,6 +248,63 @@ fn check(root: &Path) -> Result<(), String> {
     } else {
         Err(format!("{} of {checked} rebuilds failed:\n  {}", failures.len(), failures.join("\n  ")))
     }
+}
+
+/// Prints a note when a newer revmesh release than this tree is out. The import flows this xtask
+/// drives (`plugin-test`, `check`) run the locally built component, whose sandbox cannot ask for
+/// newer releases itself — here, where the network exists, the fresh check happens.
+fn note_update(root: &Path) {
+    let current = manifest(root).ok().and_then(|m| m["version"].as_str().map(str::to_owned)).unwrap_or_default();
+    let latest = latest_release(root);
+    if let (Some(current), Some(latest)) = (revmesh_core::version::Version::parse(&current), revmesh_core::version::Version::parse(&latest))
+        && latest > current
+    {
+        println!("note: revmesh {latest} is out, this tree is {current}; the imports below run with {current}");
+    }
+}
+
+/// The newest published revmesh release's version, for `REVMESH_LATEST_VERSION`: the newest tag
+/// among the GitHub releases — drafts excluded, pre-releases included, since revmesh releases
+/// betas and `/releases/latest` skips those — when `gh` can ask for it, else the package's own
+/// version, which makes the baked-in update check find nothing newer (offline or `gh`-less
+/// builds still package fine).
+fn latest_release(root: &Path) -> String {
+    static LATEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LATEST
+        .get_or_init(|| {
+            let fallback = || manifest(root).ok().and_then(|m| m["version"].as_str().map(str::to_owned)).unwrap_or_default();
+            let output = Command::new("gh")
+                .args([
+                    "api",
+                    &format!("repos/{}/releases?per_page=100", repository(root)),
+                    "--jq",
+                    ".[] | select(.draft | not) | .tag_name",
+                ])
+                .output();
+            output
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|tags| {
+                    tags.lines().filter_map(|tag| revmesh_core::version::Version::parse(tag.trim())).max().map(|v| v.to_string())
+                })
+                .unwrap_or_else(fallback)
+        })
+        .clone()
+}
+
+/// The `owner/repo` the workspace's `repository` in the root `Cargo.toml` names.
+fn repository(root: &Path) -> String {
+    let fallback = "stritti/revmesh".to_owned();
+    let Ok(toml) = fs::read_to_string(root.join("Cargo.toml")) else { return fallback };
+    toml.lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("repository = ")
+                .and_then(|value| value.trim_matches('"').strip_prefix("https://github.com/"))
+                .map(str::to_owned)
+        })
+        .unwrap_or(fallback)
 }
 
 fn manifest(root: &Path) -> Result<serde_json::Value, String> {
