@@ -154,19 +154,56 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
             steps += 1;
         }
         if steps >= 3 {
-            let w: Vec<P2> = (0..=steps).map(|k| v[(first + k) % n]).collect();
-            let (short, long) = (0..steps).map(|k| len(first + k)).fold((f64::INFINITY, 0.0_f64), |(lo, hi), l| (lo.min(l), hi.max(l)));
-            let Some((centre, r)) = fit_circle(&w) else {
-                return Err("the outline has a curved side that is not a circular arc (only arc sides are recognised so far)".into());
+            // Adjoining straight sides pass `curving` at a gentle junction when they are about as
+            // long as the arc's facets, but their far corners lie off the circle: trim the run to
+            // the corners that really lie on it, fitting again after each trim.
+            let mut lo = first;
+            let mut hi = first + steps; // the run's corners are v[lo..=hi]
+            let (centre, r) = loop {
+                let w: Vec<P2> = (lo..=hi).map(|k| v[k % n]).collect();
+                let (short, long) =
+                    (lo..hi).map(|k| distance(v[k % n], v[(k + 1) % n])).fold((f64::INFINITY, 0.0_f64), |(a, b), l| (a.min(l), b.max(l)));
+                let Some((centre, r)) = fit_circle(&w) else {
+                    return Err("the outline has a curved side that is not a circular arc (only arc sides are recognised so far)".into());
+                };
+                if long <= CURVE_LEN_SPREAD * short && w.iter().all(|p| (distance(*p, centre) - r).abs() <= tol) {
+                    break (centre, r);
+                }
+                // Trim an adjoining straight side: its far corner is a real polygon corner (a sharp
+                // turn there) and lies off the circle. A gently turning off-circle end is part of a
+                // non-circular curve, not a side: refuse instead of trimming into the curve.
+                let res = |k: usize| (distance(v[k % n], centre) - r).abs();
+                let removable = |k: usize| res(k) > tol && turn(k).abs() > MAX_CURVE_TURN;
+                if removable(lo) && (!removable(hi) || res(lo) >= res(hi)) {
+                    lo += 1;
+                } else if removable(hi) {
+                    hi -= 1;
+                } else {
+                    return Err("the outline has a curved side that is not a circular arc (only arc sides are recognised so far)".into());
+                }
+                if hi - lo < 3 {
+                    return Err("the outline has a curved side that is not a circular arc (only arc sides are recognised so far)".into());
+                }
             };
-            if long > CURVE_LEN_SPREAD * short || !w.iter().all(|p| (distance(*p, centre) - r).abs() <= tol) {
-                return Err("the outline has a curved side that is not a circular arc (only arc sides are recognised so far)".into());
+            let span = hi - lo;
+            // The signed sweep around the fitted circle: positive for a convex (counter-clockwise)
+            // arc side of a counter-clockwise outline. A negative sweep is a concave arc side (a
+            // notch); the sketch arcs are counter-clockwise, so emitting it would rebuild the
+            // complementary bulge: refuse it.
+            let sweep: f64 = (lo..hi)
+                .map(|k| {
+                    let (p, q) = (v[k % n], v[(k + 1) % n]);
+                    let (u, w) = ([p[0] - centre[0], p[1] - centre[1]], [q[0] - centre[0], q[1] - centre[1]]);
+                    (u[0] * w[1] - u[1] * w[0]).atan2(u[0] * w[0] + u[1] * w[1])
+                })
+                .sum();
+            if sweep < 0.0 {
+                return Err("the outline has a concave arc side (only convex arc sides are recognised so far)".into());
             }
-            let theta: f64 = (1..=steps).map(|s| turn(first + s)).sum();
-            if steps == n || theta >= 2.0 * PI - 1e-6 {
+            if span == n || sweep >= 2.0 * PI - 1e-6 {
                 return Err("the outline is round all the way round (round outlines are not recognised yet)".into());
             }
-            arc_sides.push((first, (first + steps) % n, centre, r));
+            arc_sides.push((lo % n, hi % n, centre, r));
         }
         j = (first + steps) % n;
         scanned += steps;
@@ -209,12 +246,10 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
     if corners.len() < 2 || corners.len() == 2 && arc_sides.is_empty() {
         return Err("the outline is degenerate".into());
     }
-    let arc_of = |src: usize| {
-        arc_sides
-            .iter()
-            .find(|(f, _, _, _)| *f == src)
-            .map(|&(_, _, c, r)| ArcSide { centre: c.map(crate::mesh::snap_mm), r: crate::mesh::snap_mm(r) })
-    };
+    // The fitted circle goes out as it is: snapping the centre and radius independently here would
+    // move the wall by more than the tolerance on small parts, and the wall check needs the exact
+    // fit. Only the output parameters snap, in `recognition`.
+    let arc_of = |src: usize| arc_sides.iter().find(|(f, _, _, _)| *f == src).map(|&(_, _, c, r)| ArcSide { centre: c, r });
     let side_arcs: Vec<Option<ArcSide>> = corner_src.iter().map(|&src| arc_of(src)).collect();
     if arcs.is_empty() {
         return Ok((corners, None, side_arcs));

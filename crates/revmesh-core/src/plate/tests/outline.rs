@@ -408,3 +408,74 @@ fn arc_radius_covers_its_snapped_chord() {
     let chord = distance(profile.corners[2], profile.corners[3]);
     assert!(2.0 * arc.r >= chord - 1e-9, "diameter {} < chord {chord}", 2.0 * arc.r);
 }
+
+/// A concave arc side (a notch) sweeps clockwise around its circle; the sketch arcs are
+/// counter-clockwise, so emitting it would rebuild the complementary bulge and the volume gate
+/// would still pass — the run is refused instead.
+#[test]
+fn a_concave_arc_side_is_refused() {
+    let (cx, cy, r) = (50.0, 100.0, 1.0);
+    let seg = 32;
+    let mut outline: Vec<P2> = vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [cx + r, cy]];
+    for k in 1..seg {
+        let t = -PI * f64::from(k) / f64::from(seg); // clockwise from angle 0 to -pi: the notch dips down
+        outline.push([cx + r * t.cos(), cy + r * t.sin()]);
+    }
+    outline.push([cx - r, cy]);
+    outline.push([0.0, 100.0]);
+    let mesh = synth::prism(&outline, &[], 4.0, [0.0; 3]);
+    let why = reason(&mesh);
+    assert!(why.contains("concave arc side"), "{why}");
+}
+
+/// Straight sides about as long as the arc's facets adjoin a gentle junction and would be carried
+/// into the run; their far corners lie off the circle, so the run is trimmed to the arc before the
+/// fit (a 60 x 5 base under a radius-30 semicircle in 32 facets is an arc-sided outline, not
+/// "not a circular arc").
+#[test]
+fn adjoining_short_straight_sides_are_trimmed_from_the_arc_fit() {
+    let expected = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 5.0], [0.0, 5.0]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, None, Some(ArcSide { centre: [30.0, 5.0], r: 30.0 }), None],
+        outline_fillet_r: None,
+    };
+    let mesh = synth::profile(&expected, 16, [0.0; 3]);
+    let (profile, offset) = found_profile(&mesh);
+    assert_eq!(offset, [0.0; 3]);
+    assert_eq!(profile, expected);
+}
+
+/// The wall checks need the arc side's exact fitted circle: snapping centre and radius
+/// independently would move the wall by more than the tolerance on a small part. Only the output
+/// parameters snap.
+#[test]
+fn arc_sides_keep_the_exact_fit_and_only_the_params_snap() {
+    use super::super::outline::outline_shape;
+    let (cx, cy, r) = (5.00049, 5.00049, 5.00049);
+    let seg = 32;
+    let a = [cx + r, cy];
+    let b = [cx - r, cy];
+    let mut outline: Vec<P2> = vec![[b[0], 0.0], [a[0], 0.0], a];
+    for k in 1..seg {
+        let t = PI * f64::from(k) / f64::from(seg);
+        outline.push([cx + r * t.cos(), cy + r * t.sin()]);
+    }
+    outline.push(b);
+    let (_, _, side_arcs) = outline_shape(&outline, 0.001).expect("an arc side");
+    let arc = side_arcs.iter().flatten().next().expect("one arc side");
+    assert!(distance(arc.centre, [cx, cy]) < 1e-9 && (arc.r - r).abs() < 1e-9, "the exact fit: {arc:?}");
+    assert!(arc.centre[0] - 5.0 > 1e-4, "the fitted centre goes out unsnapped: {arc:?}");
+    let mesh = synth::prism(&outline, &[], 4.0, [0.0; 3]);
+    let (profile, offset) = found_profile(&mesh);
+    assert_eq!(offset, [0.0; 3]);
+    let arcs: Vec<ArcSide> = profile.arc_sides().iter().flatten().copied().collect();
+    // Centre and radius snap to 1 um, and the radius covers half the snapped chord (10.001 / 2).
+    assert_eq!(arcs, vec![ArcSide { centre: [5.0, 5.0], r: 5.0005 }], "the params snap to 1 um");
+}

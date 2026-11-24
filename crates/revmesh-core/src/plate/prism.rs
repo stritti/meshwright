@@ -676,10 +676,13 @@ pub(super) fn recognition(
         let mut side_arcs = side_arcs;
         side_arcs.rotate_left(first.unwrap_or(0));
         let mut arcs = if side_arcs.iter().any(Option::is_some) { side_arcs } else { Vec::new() };
-        // An arc's diameter must cover the distance between its snapped endpoints, or the
-        // sketch's Diameter constraint has no solution; snapping can shave the radius below it.
+        // The output parameters snap; the wall checks above kept the exact fitted circles. An
+        // arc's diameter must cover the distance between its snapped endpoints, or the sketch's
+        // Diameter constraint has no solution; snapping can shave the radius below it.
         for (i, arc) in arcs.iter_mut().enumerate() {
             if let Some(a) = arc {
+                a.centre = a.centre.map(snap_mm);
+                a.r = snap_mm(a.r);
                 let chord = distance(corners[i], corners[(i + 1) % corners.len()]);
                 a.r = a.r.max(chord / 2.0);
             }
