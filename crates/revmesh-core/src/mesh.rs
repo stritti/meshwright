@@ -98,6 +98,16 @@ pub fn snap_mm(value: f64) -> f64 {
     if snapped == 0.0 { 0.0 } else { snapped }
 }
 
+/// A sketch dimension rounded to 0.1 µm: coarse enough to hide single-precision STL noise
+/// (35.0000019 becomes 35), fine enough to keep thin profiles valid (a 0.1 mm high triangle's
+/// slanted sides stay 50.0001 mm, not 50, which would collapse the triangle). Negative zero
+/// becomes `0.0`.
+#[must_use]
+pub fn snap_dim(value: f64) -> f64 {
+    let snapped = (value * 1e4).round() / 1e4;
+    if snapped == 0.0 { 0.0 } else { snapped }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;

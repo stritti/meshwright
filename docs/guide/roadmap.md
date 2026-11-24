@@ -29,10 +29,10 @@
    can be reworked in SolidCraft. The concepts behind this and their sources (products and
    papers) are mapped in [Comparable tools → Concepts from the list, applied to
    revmesh](/guide/comparison#concepts-from-the-list-applied-to-revmesh):
-   1. a `Length` or `Angle` constraint per outline side (or `DistanceX`/`DistanceY` per corner),
-      each with its own model parameter, in `polygon_sketch`/`add_polygons`
-      (`crates/revmesh-core/src/design/sketch.rs`) — today outlines and cut-outs are free points
-      with only horizontal/vertical constraints
+   1. (done for plate outlines and cut-outs; the stack's and combined's sketches follow) a
+      `Length` constraint per side with its own parameter (`outline_<i>_len`,
+      `cutout_<n>_<i>_len`) in `polygon_sketch_dimensioned`/`polygons_sketch_dimensioned`
+      (`crates/revmesh-core/src/design/sketch.rs`); an `Angle` per slanted side still to do
    2. arcs in outlines and cut-outs (`SketchCurve::Arc` with a `Diameter` parameter) instead of
       only fillet features — round outlines and D-shaped cut-outs, today a mesh
    3. one sketch per face level: generalise `split_faces` beyond bottom and top — arbitrary

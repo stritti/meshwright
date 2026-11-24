@@ -14,8 +14,8 @@ mod sketch;
 mod tests;
 
 pub use sketch::{
-    Constraint, Link, PointExprs, Sketch, SketchCurve, SketchPoint, SlotDimensions, polygon_sketch, polygons_sketch, rectangle_sketch,
-    slot_sketch,
+    Constraint, Link, PointExprs, Sketch, SketchCurve, SketchPoint, SlotDimensions, dimensioned_sides, polygon_sketch,
+    polygon_sketch_dimensioned, polygons_sketch, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
 };
 
 use serde::Serialize;
@@ -461,6 +461,9 @@ pub struct DesignBuilder {
     params: Vec<Param>,
     features: Vec<Feature>,
     bodies: Vec<String>,
+    /// The next `d<n>` sequence number for a model parameter, so
+    /// [`Self::next_model_param_name`] need not rescan the parameters per name.
+    model_param_seq: usize,
 }
 
 impl DesignBuilder {
@@ -476,10 +479,17 @@ impl DesignBuilder {
         self
     }
 
-    /// A name for the next model parameter, `d<n>`, that no parameter has yet.
+    /// A name for the next model parameter, `d<n>`, that no parameter has yet. The sequence
+    /// advances monotonically, so allocating a name does not rescan all parameters.
     #[must_use]
-    pub fn next_model_param_name(&self) -> String {
-        (1..=self.params.len() + 1).map(|n| format!("d{n}")).find(|name| self.params.iter().all(|p| &p.name != name)).unwrap_or_default()
+    pub fn next_model_param_name(&mut self) -> String {
+        loop {
+            self.model_param_seq += 1;
+            let name = format!("d{}", self.model_param_seq);
+            if self.params.iter().all(|p| p.name != name) {
+                return name;
+            }
+        }
     }
 
     /// Appends a feature and returns its id.

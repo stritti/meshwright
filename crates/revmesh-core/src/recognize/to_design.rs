@@ -4,10 +4,10 @@ use super::axis::Axis;
 use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions, polygon_sketch,
-    polygons_sketch, rectangle_sketch, slot_sketch,
+    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
+    dimensioned_sides, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
 };
-use crate::mesh::{Vec3, snap_mm};
+use crate::mesh::{Vec3, snap_dim, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
 
 /// The expressions for a point's world coordinates: along the extrusion axis the face's
@@ -142,12 +142,12 @@ impl ProfileSpec {
 
     /// The profile as a parametric history with its bounding box's lowest corner at `at`,
     /// extruded along `axis`, as mesh2cad writes an extruded outline: parameters `extrude_len`
-    /// (the thickness), `extrude_0` (where it starts along the axis), `hole_<n>_<a>/_<b>/_d` for
-    /// the profile plane's world axis letters and `outline_fillet_r`; a sketch of the outline on
-    /// the axis's plane (see [`Axis::plane`]), an extrusion along the plane's normal, a move to
-    /// where the part is, a fillet of every corner edge parallel to the axis and a hole per
-    /// hole. The fillet comes before the holes: an inside corner's rounding adds material, and a
-    /// hole may lie in it.
+    /// (the thickness), `extrude_0` (where it starts along the axis), `outline_<i>_len` per side,
+    /// `hole_<n>_<a>/_<b>/_d` for the profile plane's world axis letters and `outline_fillet_r`;
+    /// a sketch of the outline on the axis's plane (see [`Axis::plane`]), every side dimensioned
+    /// by its own parameter, an extrusion along the plane's normal, a move to where the part is,
+    /// a fillet of every corner edge parallel to the axis and a hole per hole. The fillet comes
+    /// before the holes: an inside corner's rounding adds material, and a hole may lie in it.
     #[must_use]
     pub fn to_design_on(&self, name: &str, at: Vec3, axis: Axis) -> Design {
         let mut b = DesignBuilder::new(name);
@@ -160,10 +160,14 @@ impl ProfileSpec {
         if let Some(r) = self.outline_fillet_r {
             b.param(Param::user("outline_fillet_r", r));
         }
+        let outline_lens = side_len_params(&mut b, "outline", &self.corners);
         let sketch = b.feature(
             "Sketch1",
             vec![],
-            FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygon_sketch(&self.corners) },
+            FeatureKind::Sketch {
+                plane: Plane::Origin { name: axis.plane() },
+                sketch: polygon_sketch_dimensioned(&self.corners, &outline_lens),
+            },
         );
         let extrude = b.feature(
             "Extrude1",
@@ -196,6 +200,29 @@ impl ProfileSpec {
         block_features(&mut b, &self.pads, &self.pockets, axis, top, "extrude_0");
         b.build()
     }
+}
+
+/// One user parameter `<prefix>_<i>_len` per driving side of `corners` (see
+/// [`dimensioned_sides`]) and a model parameter driving its `Length` constraint in the sketch, so
+/// the polygon re-dimensions in SolidCraft side by side, like the rectangle's `base_x`/`base_y`.
+/// Returns the model parameters' names, `None` for a side that does not drive.
+fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Vec<Option<String>> {
+    let n = corners.len();
+    let dim = dimensioned_sides(corners);
+    (0..n)
+        .map(|i| {
+            if !dim[i] {
+                return None;
+            }
+            let (a, c) = (corners[i], corners[(i + 1) % n]);
+            let len = snap_dim((a[0] - c[0]).hypot(a[1] - c[1]));
+            let user = format!("{prefix}_{}_len", i + 1);
+            b.param(Param::user(&user, len));
+            let model = b.next_model_param_name();
+            b.param(Param::model(&model, &user));
+            Some(model)
+        })
+        .collect()
 }
 
 /// The slots' parameters, as mesh2cad names them: `slot_<n>_len` (between the end centres),
@@ -259,10 +286,12 @@ fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3, a
         return;
     }
     let sketched: Vec<Vec<[f64; 2]>> = cutouts.iter().map(|c| c.iter().map(|p| axis.sketch_point(at, *p).map(snap_mm)).collect()).collect();
+    let lens: Vec<Vec<Option<String>>> =
+        sketched.iter().enumerate().map(|(k, poly)| side_len_params(b, &format!("cutout_{}", k + 1), poly)).collect();
     let sketch = b.feature(
         "CutoutsSketch",
         vec![],
-        FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygons_sketch(&sketched) },
+        FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygons_sketch_dimensioned(&sketched, &lens) },
     );
     b.feature(
         "Cutouts",
