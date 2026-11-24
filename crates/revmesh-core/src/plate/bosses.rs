@@ -13,6 +13,11 @@ use super::holes::Footprint;
 pub(super) struct FoundBoss {
     pub(super) foot: Footprint,
     pub(super) top: f64,
+    /// The radius of the round at its foot, 0 without one, and the cylinder's radius above it
+    /// (the footprint's, by the round's radius less where the round's first, nearly flat
+    /// facets lie in the top face).
+    pub(super) fillet: f64,
+    pub(super) wall_r: f64,
     pub(super) footprint: Vec<P2>,
     pub(super) ring: Vec<P2>,
 }
@@ -64,15 +69,177 @@ pub(super) fn level(t: &crate::mesh::Triangle, tol: f64) -> Option<f64> {
     (hi - lo <= tol).then_some(f64::midpoint(lo, hi))
 }
 
+/// Whether the facet `t` lies on the filleted round boss `b` standing on the top face at
+/// `top_z`: every corner and every edge's middle on its cylinder (above the round), its round (a
+/// quarter circle's outside swept about the axis) or its flat top, the middles within their own
+/// chord's sagitta.
+fn filleted_boss_holds(b: &FoundBoss, t: &crate::mesh::Triangle, top_z: f64, tol: f64) -> bool {
+    let Footprint::Round { centre, r: foot } = b.foot else { return false };
+    let (f, r) = (b.fillet, b.wall_r);
+    // An edge on the wall or the round turns no further round the axis than two of the
+    // footprint's facets: a longer one cuts through the wall (the top's may cross it).
+    let turn = |p: P2| (p[1] - centre[1]).atan2(p[0] - centre[0]);
+    let step = super::geometry::segments(&b.ring)
+        .map(|(p, q)| ((turn(q) - turn(p) + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI).abs())
+        .fold(0.0, f64::max);
+    let off = |p: Vec3, slack: f64| {
+        let rho = super::geometry::distance([p[0], p[1]], centre);
+        let z = p[2];
+        let wall = if z >= top_z + f - slack && z <= b.top + slack { (rho - r).abs() } else { f64::INFINITY };
+        let round =
+            if rho >= r - slack && z <= top_z + f + slack { ((rho - (r + f)).hypot(z - (top_z + f)) - f).abs() } else { f64::INFINITY };
+        let lid = if rho <= r + slack { (z - b.top).abs() } else { f64::INFINITY };
+        wall.min(round).min(lid) <= slack
+    };
+    // A corner an exporter adds within a wall facet lies on one of the wall's chords round the
+    // axis (the footprint's loop, drawn at the cylinder's radius), not on the circle.
+    let wall_loop = cylinder_loop(b, centre, foot, r);
+    let on_wall_chord =
+        |p: &Vec3| p[2] >= top_z + f - tol && p[2] <= b.top + tol && super::walls::on_wall([p[0], p[1]], centre, r, &wall_loop, tol);
+    // A corner an exporter adds within a facet of the round lies on that facet: off the round by
+    // no more than the facets of the coarsest round allowed (50° along it, the footprint's
+    // facets round the axis) come off it, and never at a cone's distance.
+    let on_round_facet = |p: &Vec3| {
+        let rho = super::geometry::distance([p[0], p[1]], centre);
+        let off_round = ((rho - (r + f)).hypot(p[2] - (top_z + f)) - f).abs();
+        let bound = f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + rho * (1.0 - (step / 2.0).cos());
+        p[2] >= top_z - tol && p[2] <= top_z + f + tol && rho >= r - tol && rho <= r + f + tol && off_round <= bound + tol
+    };
+    let corners = t.iter().all(|p| off(*p, tol) || on_wall_chord(p) || on_round_facet(p));
+    // An edge along the round (both ends no higher than its top) bows like a chord of its
+    // quarter circle, and spans no more of it than a round hole's facet may of its circle (a
+    // quarter in one step is a chamfer); any other edge bows like a chord of the cylinder round
+    // the axis (a straight edge up the wall not at all).
+    let middles = (0..3).all(|i| {
+        let (p, q) = (t[i], t[(i + 1) % 3]);
+        // No edge runs from the round past its top: there the wall would be a cone.
+        let (low, high) = (p[2].min(q[2]), p[2].max(q[2]));
+        if low < top_z + f - tol && high > top_z + f + tol {
+            return false;
+        }
+        let across = (p[0] - q[0]).hypot(p[1] - q[1]);
+        let on_lid = (p[2] - b.top).abs() <= tol && (q[2] - b.top).abs() <= tol;
+        let around = ((turn([q[0], q[1]]) - turn([p[0], p[1]]) + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI)
+            - std::f64::consts::PI)
+            .abs();
+        if around > 2.0 * step + 1e-9 && !on_lid {
+            return false;
+        }
+        let on_round = p[2].max(q[2]) <= top_z + f + tol;
+        let (radial, rise) =
+            (super::geometry::distance([p[0], p[1]], centre) - super::geometry::distance([q[0], q[1]], centre), p[2] - q[2]);
+        let along = radial.hypot(rise);
+        // How far the middle of a chord `c` long lies inside a circle of radius `radius`.
+        let sagitta = |c: f64, radius: f64| radius - (radius * radius - (c * c / 4.0).min(radius * radius)).sqrt();
+        let bow = if on_round {
+            if along > 2.0 * f * (super::MAX_HOLE_STEP / 2.0).sin() + tol {
+                return false;
+            }
+            sagitta(along, f) + sagitta(across, r)
+        } else {
+            sagitta(across, r)
+        };
+        let middle = [f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])];
+        off(middle, tol + bow) || on_wall_chord(&middle) || on_round_facet(&middle)
+    });
+    corners && middles
+}
+
+/// The footprint's loop (as meshed, without the corners an exporter added along it) drawn at the
+/// radius `r` of the cylinder above a round of foot radius `foot`: the chords the cylinder's
+/// facets run along.
+fn cylinder_loop(b: &FoundBoss, centre: P2, foot: f64, r: f64) -> Vec<P2> {
+    b.ring.iter().map(|q| [centre[0] + (q[0] - centre[0]) * r / foot, centre[1] + (q[1] - centre[1]) * r / foot]).collect()
+}
+
+/// Whether the facets `top` (facing up, seen from above) of the boss `b` cover its top: one
+/// loop round them, every corner of it on the top's rim. A filleted boss's rim is its cylinder's
+/// (the footprint's loop drawn at that radius); any other's its footprint.
+fn top_covers(b: &FoundBoss, top: &[[P2; 3]], tol: f64) -> bool {
+    match b.foot {
+        Footprint::Round { centre, r: foot } if b.fillet > 0.0 => {
+            let r = b.wall_r;
+            let rim = cylinder_loop(b, centre, foot, r);
+            let Ok(loops) = boundary_loops(top, tol) else { return false };
+            // One loop, going once all the way round the axis along the rim: every corner on it,
+            // and no edge turning further than two of the footprint's facets (a chord across
+            // the top would).
+            let turn = |p: P2| (p[1] - centre[1]).atan2(p[0] - centre[0]);
+            let wrap = |a: f64| (a + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI;
+            let step = super::geometry::segments(&b.ring).map(|(p, q)| wrap(turn(q) - turn(p)).abs()).fold(0.0, f64::max);
+            let [boundary] = loops.as_slice() else { return false };
+            let turns: Vec<f64> = super::geometry::segments(boundary).map(|(p, q)| wrap(turn(q) - turn(p))).collect();
+            boundary.iter().all(|q| super::walls::on_wall(*q, centre, r, &rim, tol))
+                && turns.iter().all(|t| t.abs() <= 2.0 * step + 1e-9)
+                && (turns.iter().sum::<f64>().abs() - 2.0 * std::f64::consts::PI).abs() <= 1e-6
+        }
+        _ => {
+            let area: f64 = top.iter().map(|t| signed_area(t)).sum();
+            (area - b.foot.area(&b.ring)).abs() <= 1e-3 * area.max(tol)
+        }
+    }
+}
+
+/// The round at a boss's foot, if it has one, and the cylinder's radius above it, for the boss
+/// standing on `foot` with its top at `top`, `upper` the facets above the plate's top face at
+/// `top_z`. The cylinder's radius is that of the circle fitted to the top's rim (its facets'
+/// boundary loop, without corners an exporter added along its facets); a footprint wider than that has a round, whose radius comes from its own
+/// corners: one `a` out from the cylinder and `h` up lies on a quarter circle of radius
+/// `a + h + sqrt(2ah)`. (The footprint itself may be smaller than the round's: its first, nearly
+/// flat facets may lie within the tolerance of the top face.)
+fn round_foot(upper: &[&crate::mesh::Triangle], foot: Footprint, top: f64, top_z: f64, tol: f64) -> (f64, f64) {
+    let Footprint::Round { centre, r } = foot else { return (0.0, 0.0) };
+    let flat = |p: &Vec3| [p[0], p[1]];
+    let on = |p: &Vec3| foot.contains(flat(p), tol);
+    let lid: Vec<[P2; 3]> = upper
+        .iter()
+        .filter(|t| t.iter().all(|p| on(p) && (p[2] - top).abs() <= tol) && facing(t).1 > 0.5)
+        .map(|t| t.map(|p| flat(&p)))
+        .collect();
+    let rim = boundary_loops(&lid, tol)
+        .ok()
+        .and_then(|loops| loops.into_iter().max_by(|a, b| signed_area(a).abs().total_cmp(&signed_area(b).abs())))
+        .and_then(|l| super::geometry::fit_circle(&drop_collinear(&l, tol)))
+        .map_or(r, |(_, rim)| rim);
+    if r - rim <= tol {
+        return (0.0, r);
+    }
+    let samples: Vec<f64> = upper
+        .iter()
+        .flat_map(|t| t.iter())
+        .filter(|p| on(p) && p[2] > top_z + tol && p[2] < top - tol)
+        .map(|p| (super::geometry::distance(flat(p), centre) - rim, p[2] - top_z))
+        .filter(|(a, _)| *a > tol)
+        .map(|(a, h)| a + h + (2.0 * a * h).sqrt())
+        .collect();
+    let f = if samples.is_empty() { r - rim } else { samples.iter().sum::<f64>() / samples.len() as f64 };
+    (f, rim)
+}
+
 /// [`strip_bosses`] with the top face at `top_z`: a boss's footprint is a round loop in that
 /// face, its wall stands straight on that loop (within the facets' sagitta), and its top is one
 /// flat face.
 pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Option<(Mesh, Vec<FoundBoss>)>, String> {
     let flat = |p: &Vec3| [p[0], p[1]];
+    // The face's own height: the one most of its area lies at (a round's first, nearly flat
+    // facets may lie within the tolerance of it, a little higher).
+    let mut heights: Vec<(f64, f64)> = Vec::new();
+    for t in &mesh.triangles {
+        let (len, nz) = facing(t);
+        if nz > 0.5 && level(t, tol).is_some_and(|z| (z - top_z).abs() <= tol) {
+            for p in t {
+                match heights.iter_mut().find(|(z, _)| (z - p[2]).abs() <= tol * 1e-3) {
+                    Some((_, area)) => *area += len,
+                    None => heights.push((p[2], len)),
+                }
+            }
+        }
+    }
+    let top_z = heights.iter().max_by(|a, b| a.1.total_cmp(&b.1)).map_or(top_z, |(z, _)| *z);
     let top: Vec<[P2; 3]> = mesh
         .triangles
         .iter()
-        .filter(|t| facing(t).1 > 0.5 && level(t, tol).is_some_and(|z| (z - top_z).abs() <= tol))
+        .filter(|t| facing(t).1 > 0.5 && t.iter().all(|p| (p[2] - top_z).abs() <= tol))
         .map(|t| t.map(|p| flat(&p)))
         .collect();
     let Ok(loops) = boundary_loops(&top, tol) else { return Ok(None) };
@@ -90,7 +257,10 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
         let on = |p: &Vec3| foot.contains(flat(p), tol);
         if let Some(top) = upper.iter().flat_map(|t| t.iter()).filter(|p| on(p)).map(|p| p[2]).reduce(f64::max) {
             // Its walls follow the loop's chords as meshed, before any exporter split them.
-            bosses.push(FoundBoss { foot, top, footprint: ring.clone(), ring: drop_collinear(ring, tol) });
+            // A round foot: the top's rim lies closer to the axis than the footprint, by the
+            // round's radius.
+            let (fillet, wall_r) = round_foot(&upper, foot, top, top_z, tol);
+            bosses.push(FoundBoss { foot, top, fillet, wall_r, footprint: ring.clone(), ring: drop_collinear(ring, tol) });
         }
     }
     if bosses.is_empty() {
@@ -98,16 +268,25 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
     }
     // Everything above the top face belongs to one boss: a facet of its wall, every corner and
     // every edge's middle on the wall (an edge two facets long at most), or of its flat top.
-    let mut tops = vec![0.0; bosses.len()];
+    let mut tops: Vec<Vec<[P2; 3]>> = vec![Vec::new(); bosses.len()];
     for t in &upper {
         let k = bosses.iter().position(|b| t.iter().all(|p| b.foot.contains(flat(p), tol))).ok_or(NO_BOSS)?;
         let b = &bosses[k];
-        let (len, nz) = facing(t);
+        let (_, nz) = facing(t);
+        if b.fillet > 0.0 {
+            if !filleted_boss_holds(b, t, top_z, tol) {
+                return Err(NO_BOSS.into());
+            }
+            if t.iter().all(|p| (p[2] - b.top).abs() <= tol) {
+                tops[k].push(t.map(|p| flat(&p)));
+            }
+            continue;
+        }
         if nz > 0.5 {
             if t.iter().any(|p| (p[2] - b.top).abs() > tol) {
                 return Err(NO_BOSS.into());
             }
-            tops[k] += len / 2.0;
+            tops[k].push(t.map(|p| flat(&p)));
         } else if nz < -0.5 {
             return Err(NO_BOSS.into());
         } else {
@@ -123,14 +302,21 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
             }
         }
     }
-    // Each top covers its footprint (the two may be meshed apart, with their own corners).
-    for (b, area) in bosses.iter().zip(&tops) {
-        if b.top - top_z <= tol || (area - b.foot.area(&b.ring)).abs() > 1e-3 * area.max(tol) {
+    // Each top covers its footprint or, for a filleted boss, its cylinder (the two may be meshed
+    // apart, with their own corners).
+    for (b, top) in bosses.iter().zip(&tops) {
+        let covers = top_covers(b, top, tol);
+        if b.top - top_z <= tol + b.fillet || !covers {
             return Err(NO_BOSS.into());
         }
     }
-    let mut triangles: Vec<crate::mesh::Triangle> =
-        mesh.triangles.iter().filter(|t| t.iter().all(|p| p[2] <= top_z + tol)).copied().collect();
+    // What lies within the tolerance of the face lies on it.
+    let mut triangles: Vec<crate::mesh::Triangle> = mesh
+        .triangles
+        .iter()
+        .filter(|t| t.iter().all(|p| p[2] <= top_z + tol))
+        .map(|t| t.map(|p| if (p[2] - top_z).abs() <= tol { [p[0], p[1], top_z] } else { p }))
+        .collect();
     // Each footprint is closed by a fan from its centre over its corners as meshed, so that the
     // top face's loop is joined edge for edge.
     for b in &bosses {

@@ -76,13 +76,20 @@ pub struct BossSpec {
     pub d: f64,
     /// Height above the top face.
     pub h: f64,
+    /// The radius of the round where the boss meets the top face, if it has one.
+    pub fillet: Option<f64>,
 }
 
 impl BossSpec {
-    /// The boss's volume, in mm³.
+    /// The boss's volume, in mm³, with the material its foot's round adds: the ring a quarter
+    /// circle's outside sweeps round the cylinder (Pappus: the square of side `f` beside the
+    /// wall, less the quarter disk, about the axis).
     #[must_use]
     pub fn volume(&self) -> f64 {
-        std::f64::consts::PI * self.d * self.d / 4.0 * self.h
+        use std::f64::consts::PI;
+        let r = self.d / 2.0;
+        let ring = self.fillet.map_or(0.0, |f| 2.0 * PI * (f * f * (r + f / 2.0) - PI * f * f / 4.0 * (r + f) + f.powi(3) / 3.0));
+        PI * r * r * self.h + ring
     }
 }
 
