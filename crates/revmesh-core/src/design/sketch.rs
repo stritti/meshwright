@@ -267,6 +267,17 @@ pub fn rectangle_sketch(width: f64, height: f64) -> Sketch {
 /// Y are constrained horizontal or vertical; the corners are otherwise free, as drawn.
 #[must_use]
 pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
+    polygon_sketch_sized(corners, &[])
+}
+
+/// Like [`polygon_sketch`], but with a `Length` constraint per side driven by the model parameter
+/// `lens[i]`, so every side of the outline re-dimensions in SolidCraft like the rectangle's do.
+#[must_use]
+pub fn polygon_sketch_dimensioned(corners: &[[f64; 2]], lens: &[String]) -> Sketch {
+    polygon_sketch_sized(corners, lens)
+}
+
+fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[String]) -> Sketch {
     let n = corners.len();
     let mut points = vec![SketchPoint::new("origin", [0.0, 0.0], true)];
     points.extend(corners.iter().enumerate().map(|(i, c)| SketchPoint::new(format!("p{}", i + 1), *c, false)));
@@ -276,11 +287,19 @@ pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
     let mut constraints = Vec::new();
     for i in 0..n {
         let (a, b) = (corners[i], corners[(i + 1) % n]);
-        let id = format!("k{}", constraints.len() + 1);
         if (a[1] - b[1]).abs() < 1e-9 {
-            constraints.push(Constraint::Horizontal { id, l: i });
+            constraints.push(Constraint::Horizontal { id: format!("k{}", constraints.len() + 1), l: i });
         } else if (a[0] - b[0]).abs() < 1e-9 {
-            constraints.push(Constraint::Vertical { id, l: i });
+            constraints.push(Constraint::Vertical { id: format!("k{}", constraints.len() + 1), l: i });
+        }
+        if let Some(param) = lens.get(i) {
+            constraints.push(Constraint::Length {
+                id: format!("k{}", constraints.len() + 1),
+                l: i,
+                value: (a[0] - b[0]).hypot(a[1] - b[1]),
+                param: param.clone(),
+                text: None,
+            });
         }
     }
     let counters = Counters { a: 0, j: 0, k: constraints.len(), l: n, p: n };
@@ -292,6 +311,17 @@ pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
 /// vertical.
 #[must_use]
 pub fn polygons_sketch(polygons: &[Vec<[f64; 2]>]) -> Sketch {
+    polygons_sketch_sized(polygons, &[])
+}
+
+/// Like [`polygons_sketch`], but with a `Length` constraint per side driven by the model parameter
+/// `lens[polygon][side]`, so every side re-dimensions in SolidCraft.
+#[must_use]
+pub fn polygons_sketch_dimensioned(polygons: &[Vec<[f64; 2]>], lens: &[Vec<String>]) -> Sketch {
+    polygons_sketch_sized(polygons, lens)
+}
+
+fn polygons_sketch_sized(polygons: &[Vec<[f64; 2]>], lens: &[Vec<String>]) -> Sketch {
     let mut sketch = Sketch {
         points: vec![SketchPoint::new("origin", [0.0, 0.0], true)],
         curves: vec![],
@@ -299,12 +329,12 @@ pub fn polygons_sketch(polygons: &[Vec<[f64; 2]>]) -> Sketch {
         links: vec![],
         counters: Counters { a: 0, j: 0, k: 0, l: 0, p: 0 },
     };
-    add_polygons(&mut sketch, polygons);
+    add_polygons(&mut sketch, polygons, lens);
     sketch
 }
 
-fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>]) {
-    for corners in polygons {
+fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<String>]) {
+    for (pi, corners) in polygons.iter().enumerate() {
         let n = corners.len();
         let first = sketch.points.len();
         let base_point = sketch.counters.p;
@@ -322,12 +352,21 @@ fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>]) {
                 link: None,
             });
             let (a, b) = (corners[i], corners[(i + 1) % n]);
-            let id = format!("k{}", sketch.counters.k + 1);
             if (a[1] - b[1]).abs() < 1e-9 {
-                sketch.constraints.push(Constraint::Horizontal { id, l: line });
+                sketch.constraints.push(Constraint::Horizontal { id: format!("k{}", sketch.counters.k + 1), l: line });
                 sketch.counters.k += 1;
             } else if (a[0] - b[0]).abs() < 1e-9 {
-                sketch.constraints.push(Constraint::Vertical { id, l: line });
+                sketch.constraints.push(Constraint::Vertical { id: format!("k{}", sketch.counters.k + 1), l: line });
+                sketch.counters.k += 1;
+            }
+            if let Some(param) = lens.get(pi).and_then(|l| l.get(i)) {
+                sketch.constraints.push(Constraint::Length {
+                    id: format!("k{}", sketch.counters.k + 1),
+                    l: line,
+                    value: (a[0] - b[0]).hypot(a[1] - b[1]),
+                    param: param.clone(),
+                    text: None,
+                });
                 sketch.counters.k += 1;
             }
         }

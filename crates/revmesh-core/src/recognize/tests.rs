@@ -1,7 +1,7 @@
 use super::spec::{BossSpec, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 use super::{Axis, Recognition, recognize};
 
-use crate::design::Design;
+use crate::design::{Design, fmt_number};
 use crate::mesh::Mesh;
 use crate::mesh::tests::tetrahedron;
 use crate::synth;
@@ -189,6 +189,62 @@ fn cut_outs_are_cut_after_the_fillet() {
     let names: Vec<String> =
         json["features"].as_array().expect("features").iter().filter_map(|f| f["name"].as_str().map(String::from)).collect();
     assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Fillet1", "CutoutsSketch", "Cutouts", "Hole1"]);
+}
+
+/// Roadmap 5.1: every side of an outline and of a cut-out carries a `Length` constraint driven by
+/// its own model parameter, which a user parameter `outline_<i>_len` / `cutout_<n>_<i>_len` drives
+/// — the sketch re-dimensions in SolidCraft side by side, like the rectangle's `base_x`/`base_y`.
+#[test]
+fn outline_and_cutout_sides_are_dimensioned() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [30.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let param = |name: &str| {
+        params.iter().find(|p| p["name"] == name).map(|p| (p["expr"].as_str().expect("expr"), p["model"].as_bool().expect("model")))
+    };
+    // One user parameter per outline side with the side's length; the slanted side's too.
+    let sides = [60.0, 15.0, (30.0f64).hypot(25.0), 30.0, 40.0];
+    for (i, len) in sides.iter().enumerate() {
+        let snapped = (len * 1000.0).round() / 1000.0;
+        let (expr, model) = param(&format!("outline_{}_len", i + 1)).expect("user param");
+        assert!(!model);
+        assert_eq!(expr, format!("{} mm", fmt_number(snapped)));
+    }
+    let sketch = &json["features"][0]["sketch"];
+    let constraints = sketch["constraints"].as_array().expect("constraints");
+    let lengths: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "length").collect();
+    assert_eq!(lengths.len(), 5, "one Length per outline side");
+    // The four axis-aligned sides keep their horizontal/vertical constraints; the slanted one
+    // gets only its length.
+    assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 4);
+    for (i, c) in lengths.iter().enumerate() {
+        assert_eq!(c["l"].as_u64(), Some(i as u64));
+        let model = c["param"].as_str().expect("param");
+        let (expr, is_model) = param(model).expect("model param");
+        assert!(is_model);
+        assert_eq!(expr, format!("outline_{}_len", i + 1));
+    }
+    // The cut-out's three sides are dimensioned the same way, as `cutout_1_<i>_len`.
+    let cutouts = &json["features"].as_array().expect("features").iter().find(|f| f["name"] == "CutoutsSketch").expect("cutouts sketch");
+    let cut_lengths: Vec<&serde_json::Value> =
+        cutouts["sketch"]["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "length").collect();
+    assert_eq!(cut_lengths.len(), 3);
+    for (i, c) in cut_lengths.iter().enumerate() {
+        let model = c["param"].as_str().expect("param");
+        let (expr, _) = param(model).expect("model param");
+        assert_eq!(expr, format!("cutout_1_{}_len", i + 1));
+    }
+    assert_eq!(param("cutout_1_1_len").map(|(e, _)| e), Some("10 mm"));
 }
 
 /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face

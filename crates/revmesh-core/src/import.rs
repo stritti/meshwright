@@ -333,7 +333,20 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
         assert_eq!(json["features"][0]["plane"]["name"], "YZ");
         let names: Vec<&str> = result.design.params.iter().filter(|p| !p.model).map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["extrude_len", "extrude_0", "hole_1_y", "hole_1_z", "hole_1_d"]);
+        assert_eq!(
+            names,
+            [
+                "extrude_len",
+                "extrude_0",
+                "hole_1_y",
+                "hole_1_z",
+                "hole_1_d",
+                "outline_1_len",
+                "outline_2_len",
+                "outline_3_len",
+                "outline_4_len"
+            ]
+        );
         let hole = json["features"].as_array().expect("features").iter().find(|f| f["type"] == "hole").expect("a hole");
         assert_eq!(hole["direction"], serde_json::json!([-1.0, 0.0, 0.0]));
         assert_eq!(result.report.summary, "A 40 x 20 x 60 mm plate with a 4-sided outline and 1 hole");
@@ -357,7 +370,22 @@ mod tests {
         let result = import(&bytes, "l.stl", &ImportOptions::default()).expect("imports");
         let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
         let names: Vec<&str> = result.design.params.iter().filter(|p| !p.model).map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["extrude_len", "extrude_0", "hole_1_x", "hole_1_y", "hole_1_d"]);
+        assert_eq!(
+            names,
+            [
+                "extrude_len",
+                "extrude_0",
+                "hole_1_x",
+                "hole_1_y",
+                "hole_1_d",
+                "outline_1_len",
+                "outline_2_len",
+                "outline_3_len",
+                "outline_4_len",
+                "outline_5_len",
+                "outline_6_len"
+            ]
+        );
         assert_eq!(result.design.params[1].expr, "3 mm");
         assert_eq!(result.design.params[2].expr, "27.5 mm");
         assert_eq!(json["features"][2]["translate"], serde_json::json!(["20", "10", "extrude_0"]));
