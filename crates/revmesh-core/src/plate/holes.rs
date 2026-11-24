@@ -248,7 +248,9 @@ impl Stepped {
             let f = self.head_r - self.bore_r;
             let off = ((r - self.head_r).hypot(depth - f) - f).abs();
             let round_the_axis = (sagitta(&self.mouth, self.head_r) / self.head_r).max(sagitta(&self.bore, self.bore_r) / self.bore_r);
-            r >= self.bore_r - tol
+            // (Facets round the axis bow inward: a point may lie inside the bore by its loop's
+            // sagitta.)
+            r >= self.bore_r - sagitta(&self.bore, self.bore_r) - tol
                 && r <= self.head_r + tol
                 && off <= f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + r * round_the_axis + tol
         } else {

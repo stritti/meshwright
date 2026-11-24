@@ -455,3 +455,52 @@ fn a_bulging_hole_rim_is_refused() {
     }
     super::reason(&mesh);
 }
+
+/// A closed 60 x 60 x 8 plate with an Ø20 bore at (30, 30) whose top rim is rounded with
+/// `f`, the bore `n` facets round and the round `bands` facets along.
+fn rounded_rim_plate(f: f64, n: usize, bands: u32) -> crate::mesh::Mesh {
+    use std::f64::consts::PI;
+    let (z, r) = (8.0, 10.0);
+    let ring = |rho: f64| -> Vec<[f64; 2]> {
+        (0..n).map(|i| 2.0 * PI * i as f64 / n as f64).map(|a| [30.0 + rho * a.cos(), 30.0 + rho * a.sin()]).collect()
+    };
+    // The rim's profile from the face down to the bore: (radius, height).
+    let profile: Vec<(f64, f64)> =
+        (0..=bands).map(|k| f64::from(k) * PI / f64::from(2 * bands)).map(|a| (r + f - f * a.sin(), z - f + f * a.cos())).collect();
+    let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 60.0], [0.0, 60.0]];
+    let at = |p: [f64; 2], h: f64| [p[0], p[1], h];
+    let mut t = Vec::new();
+    let mouth = ring(r + f);
+    for [a, b, c] in crate::synth::triangulate(&outline, std::slice::from_ref(&mouth)) {
+        t.push([at(a, z), at(b, z), at(c, z)]);
+    }
+    let bore = ring(r);
+    for [a, b, c] in crate::synth::triangulate(&outline, std::slice::from_ref(&bore)) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (outline[i], outline[(i + 1) % 4]);
+        t.extend([[at(a, 0.0), at(b, 0.0), at(b, z)], [at(a, 0.0), at(b, z), at(a, z)]]);
+    }
+    // The hole's wall from the bottom up the bore and over the round to the face, each band
+    // between two rings (seen from inside the hole they run clockwise).
+    let mut levels = vec![(r, 0.0)];
+    levels.extend(profile.iter().rev().copied());
+    for w in levels.windows(2) {
+        let ((r0, z0), (r1, z1)) = (w[0], w[1]);
+        let (lo, hi) = (ring(r0), ring(r1));
+        for i in 0..n {
+            let j = (i + 1) % n;
+            t.extend([[at(lo[j], z0), at(lo[i], z0), at(hi[i], z1)], [at(lo[j], z0), at(hi[i], z1), at(hi[j], z1)]]);
+        }
+    }
+    crate::mesh::Mesh::new(t)
+}
+
+/// A rounded rim of only 16 facets round the hole and eight along the round: its facets' middles
+/// lie inside the bore's circle by the loop's sagitta.
+#[test]
+fn coarse_rounded_hole_rims() {
+    let (plate, _) = super::found(&rounded_rim_plate(1.0, 16, 8));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.0, bottom: false }));
+}
