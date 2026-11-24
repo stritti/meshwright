@@ -157,6 +157,39 @@ fn default_cli() -> String {
 ///    (Hausdorff) between the source STL and the rebuilt STL, and applies mesh2cad's gate.
 ///
 /// Fixtures that do not import (the error cases of `plugin test`) are skipped.
+/// The first user parameter that drives a sketch side or an extrusion — a plain `"<n> mm"` length
+/// named `outline_*`, `cutout_*`, `base_*` or `extrude_*` — with its value.
+/// Rebuilds the design at `design_path` in SolidCraft after bumping its first driving
+/// sketch/extrude length parameter by 1 mm (see [`first_driving_length`]). `Ok(false)` when the
+/// rebuild reports a feature error.
+fn eval_after_param_change(
+    cli: &str,
+    design: &revmesh_core::design::Design,
+    design_path: &Path,
+    script_path: &Path,
+) -> Result<bool, String> {
+    let Some((param, value)) = first_driving_length(design) else { return Ok(true) };
+    let mut changes = serde_json::Map::new();
+    changes.insert(param, serde_json::json!(format!("{} mm", value + 1.0)));
+    let script = serde_json::json!({ "commands": [{ "command": "parameters.change", "params": { "changes": changes } }] });
+    fs::write(script_path, script.to_string()).map_err(|e| format!("{}: {e}", script_path.display()))?;
+    let out = Command::new(cli)
+        .args(["eval", &script_path.to_string_lossy(), "--in", &design_path.to_string_lossy(), "--quiet"])
+        .output()
+        .map_err(|e| format!("running {cli} eval: {e}"))?;
+    Ok(out.status.success())
+}
+
+fn first_driving_length(design: &revmesh_core::design::Design) -> Option<(String, f64)> {
+    design.params.iter().filter(|p| !p.model).find_map(|p| {
+        if !["outline_", "cutout_", "base_", "extrude_"].iter().any(|pre| p.name.starts_with(pre)) {
+            return None;
+        }
+        let value: f64 = p.expr.strip_suffix(" mm")?.parse().ok()?;
+        Some((p.name.clone(), value))
+    })
+}
+
 fn check(root: &Path) -> Result<(), String> {
     note_update(root);
     let cli = cli_path();
@@ -208,6 +241,17 @@ fn check(root: &Path) -> Result<(), String> {
             serde_json::from_str(&fs::read_to_string(&eval_path).map_err(|e| format!("{}: {e}", eval_path.display()))?)
                 .map_err(|e| format!("{}: {e}", eval_path.display()))?;
         let eval_volume = eval["total"]["volume_mm3"].as_f64().unwrap_or(f64::NAN);
+
+        // Rebuild after a parameter change too: bump the first driving sketch/extrude length by
+        // 1 mm, so a dimension that is dependent on the others (an over-constrained sketch) fails
+        // here as well, not only when the user edits it in SolidCraft.
+        if let Some((param, _)) = first_driving_length(&imported.design) {
+            let script_path = out.join(format!("{stem}-change.json"));
+            if !eval_after_param_change(&cli, &imported.design, &design_path, &script_path)? {
+                failures.push(format!("{name}: rebuild after changing {param} reported a feature error"));
+                println!("FAIL {name}: eval after changing {param} failed");
+            }
+        }
 
         // Export the rebuilt part and compare it with the source mesh.
         let rebuilt_path = out.join(format!("{stem}-rebuilt.stl"));

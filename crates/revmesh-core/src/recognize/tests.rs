@@ -247,6 +247,37 @@ fn outline_and_cutout_sides_are_dimensioned() {
     assert_eq!(param("cutout_1_1_len").map(|(e, _)| e), Some("10 mm"));
 }
 
+/// In a fully axis-aligned outline the longest horizontal and vertical sides are derived through
+/// loop closure, so they get no driving `Length` — driving them too would leave no solution when
+/// one parameter changes (the L's `outline_1_len = outline_3_len + outline_5_len`).
+#[test]
+fn orthogonal_outline_skips_the_dependent_sides() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let has = |name: &str| params.iter().any(|p| p["name"] == name);
+    // Sides 0 (60 mm horizontal) and 5 (40 mm vertical) are the longest per direction: derived.
+    for i in [1, 2, 3, 4] {
+        assert!(has(&format!("outline_{}_len", i + 1)), "outline_{}_len exists", i + 1);
+    }
+    assert!(!has("outline_1_len") && !has("outline_6_len"));
+    let constraints = json["features"][0]["sketch"]["constraints"].as_array().expect("constraints");
+    let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    assert_eq!(lengths, [1, 2, 3, 4], "one Length per driving side, none on the derived ones");
+    // All six sides keep their horizontal/vertical constraints.
+    assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 6);
+}
+
 /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face
 /// down, or from the bottom face up.
 #[test]

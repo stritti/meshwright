@@ -5,7 +5,7 @@ use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec,
 
 use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
-    polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
+    dimensioned_sides, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Vec3, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
@@ -202,20 +202,25 @@ impl ProfileSpec {
     }
 }
 
-/// One user parameter `<prefix>_<i>_len` per side of `corners` and a model parameter driving its
-/// `Length` constraint in the sketch, so the polygon re-dimensions in SolidCraft side by side,
-/// like the rectangle's `base_x`/`base_y`. Returns the model parameters' names, one per side.
-fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Vec<String> {
+/// One user parameter `<prefix>_<i>_len` per driving side of `corners` (see
+/// [`dimensioned_sides`]) and a model parameter driving its `Length` constraint in the sketch, so
+/// the polygon re-dimensions in SolidCraft side by side, like the rectangle's `base_x`/`base_y`.
+/// Returns the model parameters' names, `None` for a side that does not drive.
+fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Vec<Option<String>> {
     let n = corners.len();
+    let dim = dimensioned_sides(corners);
     (0..n)
         .map(|i| {
+            if !dim[i] {
+                return None;
+            }
             let (a, c) = (corners[i], corners[(i + 1) % n]);
             let len = snap_mm((a[0] - c[0]).hypot(a[1] - c[1]));
             let user = format!("{prefix}_{}_len", i + 1);
             b.param(Param::user(&user, len));
             let model = b.next_model_param_name();
             b.param(Param::model(&model, &user));
-            model
+            Some(model)
         })
         .collect()
 }
@@ -281,7 +286,7 @@ fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3, a
         return;
     }
     let sketched: Vec<Vec<[f64; 2]>> = cutouts.iter().map(|c| c.iter().map(|p| axis.sketch_point(at, *p).map(snap_mm)).collect()).collect();
-    let lens: Vec<Vec<String>> =
+    let lens: Vec<Vec<Option<String>>> =
         sketched.iter().enumerate().map(|(k, poly)| side_len_params(b, &format!("cutout_{}", k + 1), poly)).collect();
     let sketch = b.feature(
         "CutoutsSketch",

@@ -271,13 +271,49 @@ pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
 }
 
 /// Like [`polygon_sketch`], but with a `Length` constraint per side driven by the model parameter
-/// `lens[i]`, so every side of the outline re-dimensions in SolidCraft like the rectangle's do.
+/// `lens[i]`, where `Some`, so the outline re-dimensions in SolidCraft side by side like the
+/// rectangle's do. See [`dimensioned_sides`] for which sides may drive.
 #[must_use]
-pub fn polygon_sketch_dimensioned(corners: &[[f64; 2]], lens: &[String]) -> Sketch {
+pub fn polygon_sketch_dimensioned(corners: &[[f64; 2]], lens: &[Option<String>]) -> Sketch {
     polygon_sketch_sized(corners, lens)
 }
 
-fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[String]) -> Sketch {
+/// Which sides of a closed polygon may get a driving `Length` constraint. In a fully
+/// axis-aligned polygon the longest horizontal and the longest vertical side are left out: with
+/// every side held horizontal or vertical, loop closure makes those two lengths sums of the
+/// others, so driving them too would leave no solution when one parameter changes.
+#[must_use]
+pub fn dimensioned_sides(corners: &[[f64; 2]]) -> Vec<bool> {
+    let n = corners.len();
+    let side = |i: usize| (corners[i], corners[(i + 1) % n]);
+    let len = |i: usize| {
+        let (a, b) = side(i);
+        (a[0] - b[0]).hypot(a[1] - b[1])
+    };
+    let axis = |i: usize| {
+        let (a, b) = side(i);
+        if (a[1] - b[1]).abs() < 1e-9 {
+            Some(true)
+        } else if (a[0] - b[0]).abs() < 1e-9 {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let mut dim = vec![true; n];
+    if (0..n).all(|i| axis(i).is_some()) {
+        let longest = |horizontal: bool| (0..n).filter(|&i| axis(i) == Some(horizontal)).max_by(|&a, &b| len(a).total_cmp(&len(b)));
+        if let Some(i) = longest(true) {
+            dim[i] = false;
+        }
+        if let Some(i) = longest(false) {
+            dim[i] = false;
+        }
+    }
+    dim
+}
+
+fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[Option<String>]) -> Sketch {
     let n = corners.len();
     let mut points = vec![SketchPoint::new("origin", [0.0, 0.0], true)];
     points.extend(corners.iter().enumerate().map(|(i, c)| SketchPoint::new(format!("p{}", i + 1), *c, false)));
@@ -292,7 +328,7 @@ fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[String]) -> Sketch {
         } else if (a[0] - b[0]).abs() < 1e-9 {
             constraints.push(Constraint::Vertical { id: format!("k{}", constraints.len() + 1), l: i });
         }
-        if let Some(param) = lens.get(i) {
+        if let Some(param) = lens.get(i).and_then(|l| l.as_ref()) {
             constraints.push(Constraint::Length {
                 id: format!("k{}", constraints.len() + 1),
                 l: i,
@@ -315,13 +351,14 @@ pub fn polygons_sketch(polygons: &[Vec<[f64; 2]>]) -> Sketch {
 }
 
 /// Like [`polygons_sketch`], but with a `Length` constraint per side driven by the model parameter
-/// `lens[polygon][side]`, so every side re-dimensions in SolidCraft.
+/// `lens[polygon][side]`, where `Some`, so every side re-dimensions in SolidCraft. See
+/// [`dimensioned_sides`] for which sides may drive.
 #[must_use]
-pub fn polygons_sketch_dimensioned(polygons: &[Vec<[f64; 2]>], lens: &[Vec<String>]) -> Sketch {
+pub fn polygons_sketch_dimensioned(polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>]) -> Sketch {
     polygons_sketch_sized(polygons, lens)
 }
 
-fn polygons_sketch_sized(polygons: &[Vec<[f64; 2]>], lens: &[Vec<String>]) -> Sketch {
+fn polygons_sketch_sized(polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>]) -> Sketch {
     let mut sketch = Sketch {
         points: vec![SketchPoint::new("origin", [0.0, 0.0], true)],
         curves: vec![],
@@ -333,7 +370,7 @@ fn polygons_sketch_sized(polygons: &[Vec<[f64; 2]>], lens: &[Vec<String>]) -> Sk
     sketch
 }
 
-fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<String>]) {
+fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>]) {
     for (pi, corners) in polygons.iter().enumerate() {
         let n = corners.len();
         let first = sketch.points.len();
@@ -359,7 +396,7 @@ fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Str
                 sketch.constraints.push(Constraint::Vertical { id: format!("k{}", sketch.counters.k + 1), l: line });
                 sketch.counters.k += 1;
             }
-            if let Some(param) = lens.get(pi).and_then(|l| l.get(i)) {
+            if let Some(param) = lens.get(pi).and_then(|l| l.get(i)).and_then(|o| o.as_ref()) {
                 sketch.constraints.push(Constraint::Length {
                     id: format!("k{}", sketch.counters.k + 1),
                     l: line,
