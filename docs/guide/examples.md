@@ -263,14 +263,14 @@ by TechnoSwiss, CC BY 4.0. Despite its title, the hole has a flat step 2 mm down
 makes it a counterbored `Hole1` (`hole_1_cbore_depth` 2); the slot is `Pocket1`
 (5.5 x 2.4, 5 deep).
 
-### Angle bracket: imported, holes still polygons
+### Angle bracket
 
 ![90 degree angle bracket by Ken S](/examples/printables/angle-bracket.png)
 
 [90 degree angle bracket](https://www.printables.com/model/276330-90-degree-angle-bracket) by
-Ken S, CC0. It comes over as outlines extruded along X, Y and Z (`extrude_x_len` 30,
-`extrude_y_len` 40, `extrude_z_len` 40) with its gusset, but OpenSCAD wrote the two Ø10 holes
-as 72-sided polygons, and revmesh keeps them as cut-outs of straight sides, not as round holes.
+Ken S, CC0. As in the author's OpenSCAD file: the side view (base, upright and gusset) is one
+outline extruded 30 mm along X (`extrude_x_len` 30), and the two Ø10 holes are `Hole1` in the
+upright, 25 mm up (`hole_1_z` 25), and `Hole2` in the base (`hole_2_x` 15, `hole_2_y` 15).
 
 ### Not recognised yet
 

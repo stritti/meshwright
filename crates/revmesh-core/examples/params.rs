@@ -53,6 +53,7 @@ fn main() -> ExitCode {
             Recognition::Plate { plate, .. } => plate.volume(),
             Recognition::Profile { profile, .. } => profile.volume(),
             Recognition::Combined { spec, .. } => spec.volume(),
+            Recognition::Stack { spec, .. } => spec.volume(),
             Recognition::Unrecognized { .. } => mesh.volume(),
         };
         eprintln!("features {}, volume after rebuild {volume:.6} mm³", result.design.features.len());

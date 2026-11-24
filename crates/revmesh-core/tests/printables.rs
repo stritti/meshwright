@@ -103,16 +103,24 @@ fn calibration_cube_has_a_counterbore_and_a_pocket() {
     );
 }
 
-/// Ken S's 90° angle bracket (CC0): OpenSCAD's two 5 mm legs, a gusset and two Ø10 holes. It
-/// comes over as outlines along X, Y and Z, but OpenSCAD wrote the holes as 72-sided polygons
-/// (`$fn = 72`), and revmesh keeps them as cut-outs of 72 straight sides instead of round holes.
+/// Ken S's 90° angle bracket (CC0). The author's OpenSCAD file: 30 wide, a 40 x 5 base and a
+/// 40 high upright with a gusset (one outline seen from the side, extruded 30 along X), and two
+/// Ø10 holes, one in the base at (15, 15) and one in the upright 25 up (`hole_offset`).
 #[test]
-fn angle_bracket_holes_stay_polygons() {
+fn angle_bracket_matches_the_authors_scad() {
     assert_part(
         "angle-bracket",
-        "A 30 x 40 x 40 mm part of outlines extruded along X, Y and Z with 2 cut-outs",
-        &["Sketch1", "Extrude1", "Sketch2", "Extrude2", "Sketch3", "Extrude3", "Move1"],
-        &["extrude_x_len 30 mm", "extrude_y_len 40 mm", "extrude_z_len 40 mm"],
+        "A 30 x 40 x 40 mm part of outlines extruded along X with 2 holes",
+        &["Sketch1", "Extrude1", "Hole1", "Hole2", "Move1"],
+        &[
+            "extrude_x_len 30 mm",
+            "hole_1_d 10 mm",
+            "hole_1_x 15 mm",
+            "hole_1_z 25 mm",
+            "hole_2_d 10 mm",
+            "hole_2_x 15 mm",
+            "hole_2_y 15 mm",
+        ],
     );
 }
 
