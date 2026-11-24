@@ -22,6 +22,20 @@
    12. combined extrusions
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate` (volume
    and deviation), as mesh2cad does with CadQuery.
+5. **Reworkable sketches** — beyond parity: every sketch fully dimensioned and constrained, so it
+   can be reworked in SolidCraft. The concepts behind this and their sources (products and
+   papers) are mapped in [Comparable tools → Concepts from the list, applied to
+   revmesh](/guide/comparison#concepts-from-the-list-applied-to-revmesh):
+   1. a `Length` or `Angle` constraint per outline side (or `DistanceX`/`DistanceY` per corner),
+      each with its own model parameter, in `polygon_sketch`/`add_polygons`
+      (`crates/revmesh-core/src/design/sketch.rs`) — today outlines and cut-outs are free points
+      with only horizontal/vertical constraints
+   2. arcs in outlines and cut-outs (`SketchCurve::Arc` with a `Diameter` parameter) instead of
+      only fillet features — round outlines and D-shaped cut-outs, today a mesh
+   3. one sketch per face level: generalise `split_faces` beyond bottom and top — arbitrary
+      pockets and steps, and with 3.12 combined extrusions
+   4. per-face surface deviation in the import report, computed in the sandbox (today: volume
+      within 1% at import, Hausdorff in `cargo xtask check`)
 
 Contributions are very welcome: bug reports, STL files that import badly, recognisers, docs.
 Start with [CONTRIBUTING.md](https://github.com/stritti/revmesh/blob/main/CONTRIBUTING.md).

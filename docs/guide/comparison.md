@@ -225,23 +225,14 @@ What revmesh's sketch writers produce today:
 | Cut-outs | `polygons_sketch` (`sketch.rs:294`, used at `to_design.rs:265`) | same as the outline | no |
 | Slot | `slot_sketch` (`sketch.rs:364`, used at `to_design.rs:244`) | tangent ×4, equal, midpoint, `Length`, `Diameter`, coincident position, `Angle` — all parameter-driven | yes |
 
-The gap to the vision of reworkable sketches is exactly the outline and cut-out sketches. In the
-order the [roadmap](/guide/roadmap) can take it:
-
-1. **Dimension every outline side** in `polygon_sketch`/`add_polygons`: a `Length` per side (or an
-   `Angle` between adjacent sides), or `DistanceX`/`DistanceY` per corner from the fixed origin
-   point — each naming its own model parameter, keeping `Horizontal`/`Vertical` where the side is
-   axis-aligned. No new constraint type is needed; all of them already exist in the `Constraint`
-   enum and SolidCraft reads them. The recogniser already measures every side and corner
-   (`plate/outline.rs`), so the values stay exact-or-nothing.
-2. **Arcs in outlines, not only fillet features**: `outline_shape` already fits one circle per
-   rounded corner (`CircleSums`, `plate/outline.rs:165`) to place the `Fillet` feature — write
-   those corner runs as `SketchCurve::Arc` with a `Diameter` parameter as well; that also covers
-   round outlines and D-shaped cut-outs, which today stay a mesh.
-3. **One sketch per face level**: generalise `split_faces` beyond bottom/top, take the loops at
-   every level and write sketch + extrude/cut per level (the Auto-Sketch concept; Point2Cyl's
-   extrusion cylinders for combined extrusions) — arbitrary pockets and steps instead of `box`
-   features only.
-4. **Keep the deterministic gates** — exact-or-nothing, volume within 1%, plus the
-   ComplexGen-style topology checks. The neural reconstructors stay out of the sandbox: their
-   representation is the target, their compute is not.
+The gap to the vision of reworkable sketches is exactly the outline and cut-out sketches. The
+steps are [item 5 of the roadmap](/guide/roadmap): dimension every outline side with its own model
+parameter in `polygon_sketch`/`add_polygons` (no new constraint type is needed — `Length`,
+`Angle`, `DistanceX`/`DistanceY` all exist in the `Constraint` enum and SolidCraft reads them, and
+the recogniser already measures every side in `plate/outline.rs`), write rounded-corner runs as
+`SketchCurve::Arc` with a `Diameter` parameter (`outline_shape` already fits one circle per
+corner, `CircleSums` at `plate/outline.rs:165`), generalise `split_faces` to one sketch + extrude
+or cut per face level, and report the per-face deviation in the import report — all within the
+deterministic gates (exact-or-nothing, volume within 1%, ComplexGen-style topology checks; the
+neural reconstructors stay out of the sandbox: their representation is the target, their compute
+is not).
