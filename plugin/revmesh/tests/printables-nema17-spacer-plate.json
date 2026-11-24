@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "printables/nema17-spacer-plate.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 6, "loss_report": {"summary": "A 42.3 x 42.3 x 2 mm plate with a 8-sided outline and 5 holes"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 2287.610458}},
+    "tolerance": 1e-4
+  }
+}

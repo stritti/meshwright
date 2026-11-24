@@ -16,6 +16,9 @@ hero:
       text: What it recognises
       link: /guide/recognition
     - theme: alt
+      text: Examples
+      link: /guide/examples
+    - theme: alt
       text: GitHub
       link: https://github.com/stritti/revmesh
 

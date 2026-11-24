@@ -48,7 +48,9 @@ The plugin accepts STL files up to 8 MiB in `auto` mode and 32 MiB in `mesh` mod
 A recognised part arrives as a timeline (sketch, extrusion, holes, fillet) with its sizes as
 parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. A
 part that is not recognised arrives as a mesh body, and the report says why. To try it, import
-[`plugin/revmesh/tests/plate-holes.stl`](plugin/revmesh/tests/plate-holes.stl).
+one of the example parts in [`examples/`](examples/) (a motor plate, a flange, a corner plate,
+…); the docs' [examples gallery](https://stritti.github.io/revmesh/guide/examples) shows each
+with the features and parameters it gets.
 
 ### What `auto` recognises
 

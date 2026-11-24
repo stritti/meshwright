@@ -44,8 +44,9 @@ cargo llvm-cov --workspace --fail-under-lines 80                      # coverage
 - Inside SolidCraft's sandbox there is no WASI, no threads, no network, no system randomness:
   stream host I/O in ≤ 1 MiB chunks (`source::read` / `design::write`), report progress, honour
   `control::cancelled()`, stay deterministic (fixed seeds).
-- Never hand-edit golden files (`crates/revmesh-core/tests/data/*.json`) or STL fixtures
-  (`plugin/revmesh/tests/*.stl`); regenerate them with the documented commands.
+- Never hand-edit golden files (`crates/revmesh-core/tests/data/*.json`), STL fixtures
+  (`plugin/revmesh/tests/*.stl`) or example parts (`examples/*.stl`); regenerate them with the
+  documented commands.
 - Coverage gate: at least 80% line coverage across the whole workspace, no source excluded,
   enforced by the CI `coverage` job (`cargo llvm-cov --workspace --fail-under-lines 80`,
   required via `ci-ok`) — new code comes with tests that keep it above the gate.

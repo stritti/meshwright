@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "printables/angle-bracket.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 5, "loss_report": {"summary": "A 30 x 40 x 40 mm part of outlines extruded along X with 2 holes"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 11964.601837}},
+    "tolerance": 1e-4
+  }
+}

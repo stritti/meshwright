@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "printables/calibration-cube.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 5, "loss_report": {"summary": "A 20 x 20 x 10 mm plate with 1 hole and 1 pocket"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 3819.900968}},
+    "tolerance": 1e-4
+  }
+}

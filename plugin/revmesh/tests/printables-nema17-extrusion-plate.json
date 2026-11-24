@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "printables/nema17-extrusion-plate.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 10, "loss_report": {"summary": "A 42 x 80 x 4 mm plate with a 8-sided outline, 5 holes and 2 slots"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 10288.582701}},
+    "tolerance": 1e-4
+  }
+}

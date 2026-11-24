@@ -78,3 +78,22 @@ STL fixtures are generated, never edited by hand: `crates/revmesh-core/examples/
 writes them from a spec (`synth` tessellates the way CAD exporters do), and prints the volume
 SolidCraft should measure after rebuilding. Each fixture in `plugin/revmesh/tests` has a
 `.json` case that `cargo xtask plugin-test` runs in SolidCraft.
+
+Real STL files from Printables, under CC0 or CC BY and used unchanged, are in
+`plugin/revmesh/tests/printables/` (authors and licences in its README);
+`crates/revmesh-core/tests/printables.rs` checks them against the authors' published sources
+where there are any, and the `printables-*.json` cases import each in SolidCraft. For any STL,
+`cargo run -q -p revmesh-core --example params -- part.stl` ends with the feature count and the
+volume a plugin test case expects.
+
+The example parts in `examples/` (shown in the docs' [examples](/guide/examples) gallery) are
+generated the same way, by `crates/revmesh-core/examples/examples_stl.rs`;
+`crates/revmesh-core/tests/examples.rs` checks that each imports as the gallery describes. The
+gallery's pictures in `docs/public/examples/` come from `scripts/render-stl.py` (numpy and
+Pillow): regenerate both after changing an example or a fixture it shows:
+
+```sh
+cargo run -q -p revmesh-core --example examples_stl -- examples
+python3 scripts/render-stl.py --out docs/public/examples examples/*.stl \
+  plugin/revmesh/tests/{stepped-holes,blind-holes,hole-rims,slots,boss-fillet,boss-draft-chamfer,pockets,cutouts,combined,combined-3,combined-windows,combined-cuts}.stl
+```

@@ -16,7 +16,8 @@ part that is not recognised arrives as a mesh body, and the report says why.
 ::: tip Try it
 Import
 [`plugin/revmesh/tests/plate-holes.stl`](https://github.com/stritti/revmesh/blob/main/plugin/revmesh/tests/plate-holes.stl)
-from the repository.
+from the repository, or one of the [examples](/guide/examples): everyday parts with pictures
+and the parameters each one gets.
 :::
 
 Which parts are recognised, and which parameters they get, is on

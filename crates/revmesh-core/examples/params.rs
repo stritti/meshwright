@@ -1,5 +1,8 @@
 //! Imports an STL file as the plugin would and prints what came out: one line per user
-//! parameter (`name value`), then the import report's summary and items on standard error.
+//! parameter (`name value`), then the import report's summary and items on standard error, and
+//! the volume SolidCraft should measure after rebuilding the design (the exact volume of the
+//! recognised part, or the mesh's own where it is kept as a mesh): the `volume_mm3` a plugin test
+//! case in `plugin/revmesh/tests` expects.
 //!
 //! ```sh
 //! cargo run -q -p revmesh-core --example params -- part.stl
@@ -12,7 +15,8 @@
 
 use std::process::ExitCode;
 
-use revmesh_core::{ImportOptions, import};
+use revmesh_core::recognize::{Recognition, recognize};
+use revmesh_core::{ImportOptions, import, stl};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -43,6 +47,16 @@ fn main() -> ExitCode {
     eprintln!("{}", result.report.summary);
     for item in &result.report.items {
         eprintln!("  {}: {}", item.title, item.message);
+    }
+    if let Ok(mesh) = stl::parse(&bytes) {
+        let volume = match recognize(&mesh) {
+            Recognition::Plate { plate, .. } => plate.volume(),
+            Recognition::Profile { profile, .. } => profile.volume(),
+            Recognition::Combined { spec, .. } => spec.volume(),
+            Recognition::Stack { spec, .. } => spec.volume(),
+            Recognition::Unrecognized { .. } => mesh.volume(),
+        };
+        eprintln!("features {}, volume after rebuild {volume:.6} mm³", result.design.features.len());
     }
     if let Some(out) = design_out
         && let Err(e) = std::fs::write(out, result.design.to_json_pretty())
