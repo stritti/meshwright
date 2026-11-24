@@ -460,13 +460,20 @@ fn a_bulging_hole_rim_is_refused() {
 /// `f`, the bore `n` facets round and the round `bands` facets along.
 fn rounded_rim_plate(f: f64, n: usize, bands: u32) -> crate::mesh::Mesh {
     use std::f64::consts::PI;
+    let profile: Vec<(f64, f64)> =
+        (0..=bands).map(|k| f64::from(k) * PI / f64::from(2 * bands)).map(|a| (10.0 + f - f * a.sin(), 8.0 - f + f * a.cos())).collect();
+    rim_plate(&profile, n)
+}
+
+/// A closed 60 x 60 x 8 plate with an Ø20 bore at (30, 30) whose top rim follows `profile`
+/// ((radius, height) from the face down to the bore), the bore `n` facets round.
+fn rim_plate(profile: &[(f64, f64)], n: usize) -> crate::mesh::Mesh {
+    use std::f64::consts::PI;
     let (z, r) = (8.0, 10.0);
     let ring = |rho: f64| -> Vec<[f64; 2]> {
         (0..n).map(|i| 2.0 * PI * i as f64 / n as f64).map(|a| [30.0 + rho * a.cos(), 30.0 + rho * a.sin()]).collect()
     };
-    // The rim's profile from the face down to the bore: (radius, height).
-    let profile: Vec<(f64, f64)> =
-        (0..=bands).map(|k| f64::from(k) * PI / f64::from(2 * bands)).map(|a| (r + f - f * a.sin(), z - f + f * a.cos())).collect();
+    let f = profile[0].0 - r;
     let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 60.0], [0.0, 60.0]];
     let at = |p: [f64; 2], h: f64| [p[0], p[1], h];
     let mut t = Vec::new();
@@ -523,4 +530,11 @@ fn fine_and_split_rounded_hole_rims() {
     mesh.triangles.extend([[a, b, m], [b, c, m], [c, a, m]]);
     let (plate, _) = super::found(&mesh);
     assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.5, bottom: false }));
+}
+
+/// A 90° countersink meshed in two bands is a countersink, not a wider round.
+#[test]
+fn two_band_countersinks_are_no_rounds() {
+    let (plate, _) = super::found(&rim_plate(&[(11.0, 8.0), (10.5, 7.5), (10.0, 7.0)], 32));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Countersink { d: 22.0, angle: 90.0, bottom: false }));
 }

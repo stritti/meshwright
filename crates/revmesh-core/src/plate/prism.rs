@@ -404,8 +404,12 @@ fn rounded_rim(s: &Stepped, mine: &[Vec3], tol: f64) -> Option<(f64, f64)> {
         return None;
     }
     let f = samples.iter().sum::<f64>() / samples.len() as f64;
+    // The mouth as measured agrees with it: as wide, or narrower by no more than the round's
+    // first facets can lie within the tolerance of the face (rising by `tol` at most, they reach
+    // `sqrt(2 f tol)` in from the mouth).
     let head_r = s.bore_r + f;
-    if (head_r - s.head_r).abs() > f / 2.0 || f > s.head_r - s.bore_r + f / 2.0 {
+    let narrower = head_r - s.head_r;
+    if narrower < -tol || narrower > (2.0 * f * tol).sqrt() + tol {
         return None;
     }
     let off = |p: &Vec3| ((r(p) - head_r).hypot(depth(p) - f) - f).abs();

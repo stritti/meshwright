@@ -276,10 +276,16 @@ impl Stepped {
             let f = self.head_r - self.bore_r;
             let round_the_axis = (sagitta(&self.mouth, self.head_r) / self.head_r).max(sagitta(&self.bore, self.bore_r) / self.bore_r);
             let reach = f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + self.head_r * round_the_axis;
+            // (Never inside the bore: a facet across it is no part of the round.)
+            let bore_in = self.bore_r - sagitta(&self.bore, self.bore_r) - tol;
             let near = |p: &Vec3| {
                 let r = distance([p[0], p[1]], self.centre);
                 let d = depth(p);
-                d >= -tol && d <= f + tol && r <= self.head_r + tol && ((r - self.head_r).hypot(d - f) - f).abs() <= reach + tol
+                d >= -tol
+                    && d <= f + tol
+                    && r >= bore_in
+                    && r <= self.head_r + tol
+                    && ((r - self.head_r).hypot(d - f) - f).abs() <= reach + tol
             };
             let middle = |a: &Vec3, b: &Vec3| [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), f64::midpoint(a[2], b[2])];
             let centroid3 = [centroid[0], centroid[1], (cap[0][2] + cap[1][2] + cap[2][2]) / 3.0];
