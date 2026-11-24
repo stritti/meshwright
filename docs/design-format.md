@@ -254,7 +254,10 @@ warnings.
 A polygon outline (`ProfileSpec::to_design`: horizontal and vertical constraints on the
 axis-aligned sides plus a `Length` constraint per side driven by the model parameter behind
 `outline_<i>_len`, a fillet on every corner named `F2:side:l<i>|F2:side:l<i+1>`) works the same
-way, inside corners included. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
+way, inside corners included. An outline with arc sides (`polygon_sketch_arcs`) draws each arc
+side as an `arc` curve whose `Diameter` constraint is driven by the model parameter behind
+`arc_<i>_d`, the arc's centre a sketch point placed by `arc_<i>_cx` and `arc_<i>_cy`; the straight
+sides keep their `Length` constraints. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
 in `solidcraft-cli 0.48.1` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
 9,461.81 mm³, again as computed.

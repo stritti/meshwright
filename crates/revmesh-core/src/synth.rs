@@ -7,7 +7,7 @@
 use std::f64::consts::PI;
 
 use crate::mesh::{Mesh, Triangle, Vec3};
-use crate::recognize::{HoleSpec, PlateSpec, ProfileSpec};
+use crate::recognize::{ArcSide, HoleSpec, PlateSpec, ProfileSpec};
 
 type P2 = [f64; 2];
 
@@ -22,7 +22,36 @@ pub fn plate(spec: &PlateSpec, segments: usize, offset: Vec3) -> Mesh {
 /// The plate `spec` with any outline as a closed mesh, moved by `offset`, faceted as [`plate`].
 #[must_use]
 pub fn profile(spec: &ProfileSpec, segments: usize, offset: Vec3) -> Mesh {
-    prism(&rounded(&spec.corners, spec.outline_fillet_r, segments), &rings(&spec.holes, segments), spec.z, offset)
+    let arcs = spec.arc_sides();
+    let outline = if arcs.iter().any(Option::is_some) {
+        expand_arcs(&spec.corners, arcs, segments)
+    } else {
+        rounded(&spec.corners, spec.outline_fillet_r, segments)
+    };
+    prism(&outline, &rings(&spec.holes, segments), spec.z, offset)
+}
+
+/// The outline's corners with each arc side faceted into about `segments` facets per quarter
+/// circle, as a CAD exporter meshes it.
+#[allow(clippy::cast_sign_loss)] // theta is in (0, 2 pi], so the quarter count is at least 1
+fn expand_arcs(corners: &[P2], arcs: &[Option<ArcSide>], segments: usize) -> Vec<P2> {
+    let n = corners.len();
+    let mut out = Vec::new();
+    for i in 0..n {
+        let a = corners[i];
+        out.push(a);
+        if let Some(arc) = arcs.get(i).copied().flatten() {
+            let b = corners[(i + 1) % n];
+            let aa = (a[1] - arc.centre[1]).atan2(a[0] - arc.centre[0]);
+            let theta = ((b[1] - arc.centre[1]).atan2(b[0] - arc.centre[0]) - aa).rem_euclid(2.0 * std::f64::consts::PI);
+            let steps = (((theta / (std::f64::consts::PI / 2.0)).round() as usize).max(1)) * segments;
+            for k in 1..steps {
+                let t = aa + theta * k as f64 / steps as f64;
+                out.push([arc.centre[0] + arc.r * t.cos(), arc.centre[1] + arc.r * t.sin()]);
+            }
+        }
+    }
+    out
 }
 
 /// A straight prism of height `z` over the counter-clockwise `outline` with counter-clockwise

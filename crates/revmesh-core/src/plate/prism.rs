@@ -8,7 +8,7 @@ use super::outline::outline_shape;
 use super::walls::Walls;
 use super::{AREA_MATCH_REL, CHORD_FACET_SPAN, MAX_VOLUME_ERROR, NOT_CLOSED, NOT_FLAT, P2, VOLUME_MATCH_REL, tolerance};
 use crate::mesh::{Mesh, Vec3, snap_mm};
-use crate::recognize::{Blind, HoleSpec, OutlinePocketSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
+use crate::recognize::{ArcSide, Blind, HoleSpec, OutlinePocketSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
 
 use super::holes::Footprint;
 /// Looks for a plate in `mesh`: a prism over its top face, with holes, slots, cut-outs, pockets
@@ -28,13 +28,13 @@ pub(super) fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
 
     let faces = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
     let face_loops = face_outlines(&faces, tol)?;
-    let (corners, radius) = outline_shape(&face_loops.outline, tol)?;
+    let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
     let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
     let cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
     check_prism(&faces, mesh_volume, size[2], &cutouts.stepped, &cutouts.blinds, rim.as_ref())?;
     check_walls(&faces, &corners, radius, &cutouts, scale, tol, rim.as_ref())?;
     let offset = bounds.min.map(snap_mm);
-    recognition(&corners, radius, cutouts, size, offset, mesh_volume, rim.as_ref())
+    recognition(&corners, radius, side_arcs, cutouts, size, offset, mesh_volume, rim.as_ref())
 }
 
 /// A box rounded all over (mesh2cad's `edge_fillet_r`): its rim radius and size, for the checks
@@ -616,9 +616,11 @@ pub(super) fn check_walls(
 /// The recognition from the outline's corners: a rectangular outline without cut-outs becomes a
 /// [`PlateSpec`], any other outline (or one with cut-outs) a [`ProfileSpec`]; the rebuilt part
 /// must match the mesh's volume within [`MAX_VOLUME_ERROR`].
+#[allow(clippy::too_many_arguments)] // the outline, its cut-outs and the frame, one recognition
 pub(super) fn recognition(
     corners: &[P2],
     radius: Option<f64>,
+    side_arcs: Vec<Option<ArcSide>>,
     cutouts: PlateCutouts,
     size: Vec3,
     offset: Vec3,
@@ -638,7 +640,11 @@ pub(super) fn recognition(
     };
     // A pocket of any outline but a rectangle also turns the plate into a profile: its sketch
     // is the pocket's, not the rectangle's.
-    let rectangle = cutouts.is_empty() && outline_pockets.is_empty() && corners.len() == 4 && (matches(&box_corners) || rim.is_some());
+    let rectangle = cutouts.is_empty()
+        && outline_pockets.is_empty()
+        && corners.len() == 4
+        && side_arcs.iter().all(Option::is_none)
+        && (matches(&box_corners) || rim.is_some());
     if rim.is_some() && !rectangle {
         return Err("a box with all edges rounded and cut-outs is not recognised yet".into());
     }
@@ -664,8 +670,12 @@ pub(super) fn recognition(
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
         corners.rotate_left(first.unwrap_or(0));
+        // The arc sides are parallel to the corners, so they rotate with them.
+        let mut side_arcs = side_arcs;
+        side_arcs.rotate_left(first.unwrap_or(0));
+        let arcs = if side_arcs.iter().any(Option::is_some) { side_arcs } else { Vec::new() };
         let profile =
-            ProfileSpec { corners, z, holes, slots, pads: vec![], pockets, outline_pockets, bosses: vec![], cutouts, outline_fillet_r };
+            ProfileSpec { corners, arcs, z, holes, slots, pads: vec![], pockets, outline_pockets, bosses: vec![], cutouts, outline_fillet_r };
         let volume = profile.volume();
         // The pipeline runs in a frame where the extrusion axis is Z.
         (Recognition::Profile { profile, offset, axis: crate::recognize::Axis::Z }, volume)

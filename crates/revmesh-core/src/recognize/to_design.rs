@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use super::axis::Axis;
-use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+use super::spec::{ArcSide, BossChamfer, BossSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
-    dimensioned_sides, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
+    ArcDims, Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
+    dimensioned_sides, polygon_sketch_arcs, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Vec3, snap_dim, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
@@ -142,10 +142,12 @@ impl ProfileSpec {
 
     /// The profile as a parametric history with its bounding box's lowest corner at `at`,
     /// extruded along `axis`, as mesh2cad writes an extruded outline: parameters `extrude_len`
-    /// (the thickness), `extrude_0` (where it starts along the axis), `outline_<i>_len` per side,
+    /// (the thickness), `extrude_0` (where it starts along the axis), `outline_<i>_len` per
+    /// straight side, `arc_<i>_d` per arc side with its centre `arc_<i>_cx`/`arc_<i>_cy`,
     /// `hole_<n>_<a>/_<b>/_d` for the profile plane's world axis letters and `outline_fillet_r`;
     /// a sketch of the outline on the axis's plane (see [`Axis::plane`]), every side dimensioned
-    /// by its own parameter, an extrusion along the plane's normal, a move to where the part is,
+    /// by its own parameter (a line side's `Length`, an arc side's `Diameter`), an extrusion along
+    /// the plane's normal, a move to where the part is,
     /// a fillet of every corner edge parallel to the axis and a hole per hole. The fillet comes
     /// before the holes: an inside corner's rounding adds material, and a hole may lie in it.
     #[must_use]
@@ -160,15 +162,25 @@ impl ProfileSpec {
         if let Some(r) = self.outline_fillet_r {
             b.param(Param::user("outline_fillet_r", r));
         }
-        let outline_lens = side_len_params(&mut b, "outline", &self.corners);
-        let sketch = b.feature(
-            "Sketch1",
-            vec![],
-            FeatureKind::Sketch {
-                plane: Plane::Origin { name: axis.plane() },
-                sketch: polygon_sketch_dimensioned(&self.corners, &outline_lens),
-            },
-        );
+        let arcs = self.arc_sides();
+        let has_arcs = arcs.iter().any(Option::is_some);
+        let mut dim = dimensioned_sides(&self.corners);
+        // An arc side's curve closes the loop differently from its chord, so it always drives
+        // (its `Diameter`), even where its chord would be the derived side of a parallel group.
+        for (i, arc) in arcs.iter().enumerate() {
+            if arc.is_some() {
+                dim[i] = true;
+            }
+        }
+        let outline_lens = side_len_params(&mut b, "outline", &self.corners, arcs, &dim);
+        let sketch_geom = if has_arcs {
+            let arc_dims = arc_side_params(&mut b, &self.corners, arcs, &dim);
+            let geom: Vec<Option<([f64; 2], f64)>> = arcs.iter().map(|a| a.map(|a| (a.centre, a.r))).collect();
+            polygon_sketch_arcs(&self.corners, &geom, &outline_lens, &arc_dims)
+        } else {
+            polygon_sketch_dimensioned(&self.corners, &outline_lens)
+        };
+        let sketch = b.feature("Sketch1", vec![], FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: sketch_geom });
         let extrude = b.feature(
             "Extrude1",
             vec!["Body1".into()],
@@ -206,12 +218,17 @@ impl ProfileSpec {
 /// [`dimensioned_sides`]) and a model parameter driving its `Length` constraint in the sketch, so
 /// the polygon re-dimensions in SolidCraft side by side, like the rectangle's `base_x`/`base_y`.
 /// Returns the model parameters' names, `None` for a side that does not drive.
-fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Vec<Option<String>> {
+fn side_len_params(
+    b: &mut DesignBuilder,
+    prefix: &str,
+    corners: &[[f64; 2]],
+    arcs: &[Option<ArcSide>],
+    dim: &[bool],
+) -> Vec<Option<String>> {
     let n = corners.len();
-    let dim = dimensioned_sides(corners);
     (0..n)
         .map(|i| {
-            if !dim[i] {
+            if !dim[i] || arcs.get(i).is_some_and(Option::is_some) {
                 return None;
             }
             let (a, c) = (corners[i], corners[(i + 1) % n]);
@@ -221,6 +238,29 @@ fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) ->
             let model = b.next_model_param_name();
             b.param(Param::model(&model, &user));
             Some(model)
+        })
+        .collect()
+}
+
+/// The parameters of an arc side: user parameters placing its centre, and — when the side drives —
+/// a user parameter `arc_<i>_d` plus the model parameter driving the arc's `Diameter` constraint.
+fn arc_side_params(b: &mut DesignBuilder, corners: &[[f64; 2]], arcs: &[Option<ArcSide>], dim: &[bool]) -> Vec<Option<ArcDims>> {
+    let n = corners.len();
+    (0..n)
+        .map(|i| {
+            let arc = arcs.get(i).copied().flatten()?;
+            let prefix = format!("arc_{}", i + 1);
+            b.param(Param::user(format!("{prefix}_cx"), snap_mm(arc.centre[0])));
+            b.param(Param::user(format!("{prefix}_cy"), snap_mm(arc.centre[1])));
+            let diameter = if dim[i] {
+                b.param(Param::user(format!("{prefix}_d"), snap_dim(2.0 * arc.r)));
+                let model = b.next_model_param_name();
+                b.param(Param::model(&model, format!("{prefix}_d")));
+                Some(model)
+            } else {
+                None
+            };
+            Some(ArcDims { centre_x: format!("{prefix}_cx"), centre_y: format!("{prefix}_cy"), diameter })
         })
         .collect()
 }
@@ -286,8 +326,11 @@ fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3, a
         return;
     }
     let sketched: Vec<Vec<[f64; 2]>> = cutouts.iter().map(|c| c.iter().map(|p| axis.sketch_point(at, *p).map(snap_mm)).collect()).collect();
-    let lens: Vec<Vec<Option<String>>> =
-        sketched.iter().enumerate().map(|(k, poly)| side_len_params(b, &format!("cutout_{}", k + 1), poly)).collect();
+    let lens: Vec<Vec<Option<String>>> = sketched
+        .iter()
+        .enumerate()
+        .map(|(k, poly)| side_len_params(b, &format!("cutout_{}", k + 1), poly, &vec![None; poly.len()], &dimensioned_sides(poly)))
+        .collect();
     let sketch = b.feature(
         "CutoutsSketch",
         vec![],
@@ -477,7 +520,7 @@ fn block_features(
         let p = format!("pocket_{n}");
         b.param(Param::user(format!("{p}_depth"), s.depth));
         let poly: Vec<[f64; 2]> = s.corners.iter().map(|c| axis.sketch_point(at, *c).map(snap_mm)).collect();
-        let lens = side_len_params(b, &p, &poly);
+        let lens = side_len_params(b, &p, &poly, &vec![None; poly.len()], &dimensioned_sides(&poly));
         let sketch = b.feature(
             format!("Pocket{n}Sketch"),
             vec![],

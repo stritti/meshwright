@@ -4,6 +4,7 @@
 |---|---|---|
 | A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY), `Extrude1` and `Move1` (to where the plate is) | `base_x`, `base_y`, `base_t`; the centre `base_cx`, `base_cy` and the bottom `base_z0` |
 | A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical, every side a `Length` dimension), `Extrude1` and `Move1` | `extrude_len` (thickness), `extrude_0` (bottom), `outline_<i>_len` per side |
+| An outline with circular arc sides (a bulge, a stadium's round end) | `Sketch1` (the outline on XY, each arc side an `arc` curve with a `Diameter` dimension, each straight side a `Length` dimension), `Extrude1` and `Move1` | `extrude_len`, `extrude_0`, `outline_<i>_len` per straight side, `arc_<i>_d` per arc side and its centre `arc_<i>_cx`, `arc_<i>_cy` |
 | Round vertical through holes (8 or more facets going evenly round the circle) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y` (where the hole is in the file), `hole_<n>_d` |
 | A counterbored through hole, its counterbore on the top or the bottom face | `Hole<n>` of type counterbore (drilled from that face) | `hole_<n>_d`, `hole_<n>_cbore_d`, `hole_<n>_cbore_depth` (from that face) |
 | A countersunk through hole, on the top or the bottom face | `Hole<n>` of type countersink | `hole_<n>_d`, `hole_<n>_csk_d` (at the face), `hole_<n>_csk_angle` (the cone's full angle) |
@@ -37,7 +38,8 @@ report notes how much the volume changed because round facets became true circle
 
 These are kept as a mesh, with the reason in the report:
 
-- curved sides and round outlines
+- curved sides that are not circular arcs, and round outlines
+- rounded corners mixed with arc sides in one outline
 - corners with different radii, or only some corners rounded
 - D-shaped and other curved cut-outs, blind or slanted slots
 - corners rounded almost all the way along their sides

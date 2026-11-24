@@ -66,6 +66,7 @@ fn bracket() -> ProfileSpec {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(2.0),
+        arcs: Vec::new(),
     }
 }
 
@@ -110,6 +111,7 @@ fn inside_hole() -> ProfileSpec {
         slots: vec![],
         outline_fillet_r: Some(5.0),
         outline_pockets: Vec::new(),
+        arcs: Vec::new(),
         ..bracket()
     }
 }

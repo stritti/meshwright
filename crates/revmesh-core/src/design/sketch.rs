@@ -417,6 +417,90 @@ fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Opt
     }
 }
 
+/// What drives an arc side's sketch: the user parameters placing its centre, and the model
+/// parameter driving its `Diameter` constraint when the arc side drives.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArcDims {
+    /// The user parameter placing the arc centre's X.
+    pub centre_x: String,
+    /// The user parameter placing the arc centre's Y.
+    pub centre_y: String,
+    /// The model parameter driving the arc's `Diameter` constraint, if the side drives.
+    pub diameter: Option<String>,
+}
+
+/// A closed polygon through `corners` (counter-clockwise) where side `i` is the arc about
+/// `arcs[i].0` with radius `arcs[i].1` when `Some`, else a straight line — like
+/// [`polygon_sketch_dimensioned`], with a `Length` constraint on each driving line side
+/// (`lens[i]`) and a `Diameter` constraint on each driving arc side, each arc's centre placed by
+/// its [`ArcDims`] parameters. `arcs` and `arc_dims` are parallel to `corners`.
+///
+/// # Panics
+///
+/// If an arc side has no entry in `arc_dims`.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn polygon_sketch_arcs(
+    corners: &[[f64; 2]],
+    arcs: &[Option<([f64; 2], f64)>],
+    lens: &[Option<String>],
+    arc_dims: &[Option<ArcDims>],
+) -> Sketch {
+    let n = corners.len();
+    let mut points = vec![SketchPoint::new("origin", [0.0, 0.0], true)];
+    points.extend(corners.iter().enumerate().map(|(i, c)| SketchPoint::new(format!("p{}", i + 1), *c, false)));
+    let mut centre_of = vec![None; n];
+    for (i, arc) in arcs.iter().enumerate() {
+        if let Some((centre, _)) = arc {
+            let mut p = SketchPoint::new(format!("p{}", points.len()), *centre, true);
+            let dims = arc_dims[i].as_ref().expect("an arc side has dims");
+            p.exprs = Some(PointExprs { x: dims.centre_x.clone(), y: dims.centre_y.clone() });
+            centre_of[i] = Some(points.len());
+            points.push(p);
+        }
+    }
+    let mut curves: Vec<SketchCurve> = Vec::new();
+    let mut constraints = Vec::new();
+    let mut n_lines = 0;
+    let mut n_arcs = 0;
+    for i in 0..n {
+        let (a, b) = (corners[i], corners[(i + 1) % n]);
+        if let (Some((_, r)), Some(ci)) = (arcs[i], centre_of[i]) {
+            n_arcs += 1;
+            let curve = curves.len();
+            curves.push(SketchCurve::Arc { id: format!("a{n_arcs}"), c: ci, a: i + 1, b: (i + 1) % n + 1, construction: false });
+            if let Some(param) = arc_dims[i].as_ref().and_then(|d| d.diameter.clone()) {
+                constraints.push(Constraint::Diameter {
+                    id: format!("k{}", constraints.len() + 1),
+                    c: curve,
+                    value: snap_dim(2.0 * r),
+                    param,
+                });
+            }
+        } else {
+            n_lines += 1;
+            let line = curves.len();
+            curves.push(SketchCurve::Line { id: format!("l{n_lines}"), a: i + 1, b: (i + 1) % n + 1, construction: false, link: None });
+            if (a[1] - b[1]).abs() < 1e-9 {
+                constraints.push(Constraint::Horizontal { id: format!("k{}", constraints.len() + 1), l: line });
+            } else if (a[0] - b[0]).abs() < 1e-9 {
+                constraints.push(Constraint::Vertical { id: format!("k{}", constraints.len() + 1), l: line });
+            }
+            if let Some(param) = lens.get(i).and_then(|l| l.as_ref()) {
+                constraints.push(Constraint::Length {
+                    id: format!("k{}", constraints.len() + 1),
+                    l: line,
+                    value: snap_dim((a[0] - b[0]).hypot(a[1] - b[1])),
+                    param: param.clone(),
+                    text: None,
+                });
+            }
+        }
+    }
+    let counters = Counters { a: n_arcs, j: 0, k: constraints.len(), l: n_lines, p: points.len() - 1 };
+    Sketch { points, curves, constraints, links: vec![], counters }
+}
+
 /// What drives a slot's sketch: model parameters for the distance between the end centres,
 /// the width and the long axis's angle from X, and expressions for where the middle lies.
 #[derive(Debug, Clone, PartialEq)]

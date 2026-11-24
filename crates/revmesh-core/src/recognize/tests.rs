@@ -1,4 +1,4 @@
-use super::spec::{BossSpec, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+use super::spec::{ArcSide, BossSpec, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 use super::{Axis, Recognition, recognize};
 
 use crate::design::{Design, dimensioned_sides, fmt_number};
@@ -184,6 +184,7 @@ fn cut_outs_are_cut_after_the_fillet() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![vec![[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]]],
+        arcs: Vec::new(),
         outline_fillet_r: Some(5.0),
     };
     let json: serde_json::Value = serde_json::from_str(&ell.to_design("").to_json()).expect("valid");
@@ -207,6 +208,7 @@ fn outline_and_cutout_sides_are_dimensioned() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
+        arcs: Vec::new(),
         outline_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -268,6 +270,7 @@ fn orthogonal_outline_skips_the_dependent_sides() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -307,6 +310,7 @@ fn thin_triangle_keeps_slanted_length_precision() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -322,6 +326,7 @@ fn thin_triangle_keeps_slanted_length_precision() {
 #[test]
 fn outline_pockets_get_their_own_sketch_and_cut() {
     let spec = ProfileSpec {
+        arcs: vec![],
         corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
         z: 6.0,
         holes: vec![],
@@ -354,6 +359,62 @@ fn outline_pockets_get_their_own_sketch_and_cut() {
     assert_eq!(cut["operation"].as_str(), Some("cut"));
     assert_eq!(cut["extent"]["distance"].as_str(), Some("pocket_2_depth"));
     assert_eq!(cut["extent"]["start_offset"].as_str(), Some("extrude_0 + extrude_len - pocket_2_depth"), "cut from the top face down");
+}
+
+/// Roadmap 5.2: an arc side of the outline becomes a sketch arc `a<n>` with a `Diameter`
+/// constraint driven by its own model parameter, which the user parameter `arc_<i>_d` drives,
+/// the arc's centre placed by the user parameters `arc_<i>_cx`/`arc_<i>_cy`; the straight sides
+/// stay dimensioned lines (the arc side carries no `Length`).
+#[test]
+fn outline_arc_sides_become_sketch_arcs() {
+    let spec = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let param = |name: &str| {
+        params.iter().find(|p| p["name"] == name).map(|p| (p["expr"].as_str().expect("expr"), p["model"].as_bool().expect("model")))
+    };
+    assert_eq!(param("arc_3_cx"), Some(("30 mm", false)));
+    assert_eq!(param("arc_3_cy").map(|(e, _)| e), Some("40 mm"));
+    let (expr, model) = param("arc_3_d").expect("the arc side's diameter user param");
+    assert!(!model, "a user param, not a model param");
+    assert_eq!(expr, "60 mm");
+    let sketch = &json["features"][0]["sketch"];
+    let curves = sketch["curves"].as_array().expect("curves");
+    let arc_curves: Vec<&serde_json::Value> = curves.iter().filter(|c| c["type"] == "arc").collect();
+    assert_eq!(arc_curves.len(), 1, "one arc curve; the other three sides stay lines");
+    assert_eq!(arc_curves[0]["id"].as_str().expect("id"), "a1");
+    let constraints = sketch["constraints"].as_array().expect("constraints");
+    let diams: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "diameter").collect();
+    assert_eq!(diams.len(), 1, "one Diameter constraint, on the arc");
+    assert_eq!(diams[0]["value"].as_f64().expect("value"), 60.0);
+    let model = diams[0]["param"].as_str().expect("param");
+    let (expr, is_model) = param(model).expect("model param");
+    assert!(is_model);
+    assert_eq!(expr, "arc_3_d");
+    // The driving line sides (the bottom and the right, sides 1 and 2) keep their Length
+    // constraints; the arc side and the derived left side carry none.
+    let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    assert_eq!(lengths, [0, 1]);
+    for &l in &lengths {
+        assert_eq!(curves[l as usize]["type"], "line", "a Length only on a line side");
+    }
+    // The arc's centre is a sketch point placed by the centre parameters.
+    let points = sketch["points"].as_array().expect("points");
+    let centre = points.iter().find(|p| p["exprs"]["x"] == "arc_3_cx").expect("the arc's centre point");
+    assert_eq!(centre["exprs"]["y"].as_str().expect("y"), "arc_3_cy");
+    assert!(centre["fixed"].as_bool().expect("fixed"));
 }
 
 /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face
@@ -447,6 +508,7 @@ fn describes_profiles() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: Some(2.0),
     };
     assert_eq!(spec.describe(), "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 2 mm rounded corners");
@@ -472,6 +534,7 @@ fn profile_volume_counts_inside_and_outside_corners() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: Some(2.0),
     };
     let corner = (4.0 - std::f64::consts::PI) / 4.0 * 4.0;
@@ -493,6 +556,7 @@ fn profile_fillet_comes_before_the_holes() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: Some(5.0),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -578,6 +642,7 @@ fn y_extruded_profile_uses_the_xz_plane() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: Some(2.0),
     };
     let mesh = Axis::Y.unrotate_mesh(&synth::profile(&spec, 32, [3.0, 7.0, 11.0]));
@@ -703,6 +768,7 @@ fn y_extrusion_negates_the_second_profile_coordinate_in_expressions() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![SlotSpec { x: 10.0, y: 8.0, len: 16.0, w: 5.0, angle: 30.0 }],
+        arcs: Vec::new(),
         outline_fillet_r: None,
     };
     let at = [3.0, 11.0, -7.0];

@@ -33,8 +33,11 @@
       `Length` constraint per side with its own parameter (`outline_<i>_len`,
       `cutout_<n>_<i>_len`) in `polygon_sketch_dimensioned`/`polygons_sketch_dimensioned`
       (`crates/revmesh-core/src/design/sketch.rs`); an `Angle` per slanted side still to do
-   2. arcs in outlines and cut-outs (`SketchCurve::Arc` with a `Diameter` parameter) instead of
-      only fillet features — round outlines and D-shaped cut-outs, today a mesh
+   2. (done for outlines; cut-outs follow) arc sides in outlines as `SketchCurve::Arc` with a
+      `Diameter` constraint driven by `arc_<i>_d`, the centre placed by `arc_<i>_cx`/`arc_<i>_cy`
+      (`polygon_sketch_arcs`, `crates/revmesh-core/src/design/sketch.rs`; recognised as
+      `ProfileSpec::arcs` in `plate/outline.rs::outline_shape`) — round outlines and D-shaped
+      cut-outs stay a mesh
    3. (done for pockets of any straight-sided outline, one level deep, from the top or the
       bottom face; steps, several levels and the combined extrusions' sketches follow) one
       sketch per face level: generalise `split_faces` beyond bottom and top — arbitrary pockets

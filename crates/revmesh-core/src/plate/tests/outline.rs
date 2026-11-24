@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 
 use crate::plate::P2;
 use crate::plate::geometry::distance;
-use crate::recognize::{HoleSpec, PlateSpec, ProfileSpec, recognize};
+use crate::recognize::{ArcSide, HoleSpec, PlateSpec, ProfileSpec, recognize};
 use crate::synth;
 
 use super::{banded, ell, found, found_profile, reason, spec};
@@ -61,11 +61,76 @@ fn recognises_slanted_sides() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: Some(3.0),
     };
     let mesh = synth::profile(&expected, 64, [0.0; 3]);
     let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
     assert_eq!(found_profile(&reread).0, expected);
+}
+
+/// Roadmap 5.2: a side of the outline that is a circular arc is recognised as an arc side —
+/// here the top of a 60 x 40 mm plate bulging out as a semicircle of radius 30 about its middle.
+#[test]
+fn recognises_an_arc_side_in_the_outline() {
+    let expected = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
+        outline_fillet_r: None,
+    };
+    for segments in [4, 32] {
+        let mesh = synth::profile(&expected, segments, [0.0; 3]);
+        let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+        let (profile, offset) = found_profile(&reread);
+        assert_eq!(profile, expected, "{segments} segments");
+        assert_eq!(offset, [0.0; 3]);
+    }
+}
+
+/// A stadium outline — two straight sides and a semicircle arc side at each end — is
+/// recognised as a profile of four corners with two arc sides (the profile sits in its
+/// bounding box's frame, so the left bulge to x = -10 puts the origin at [-10, 10, 0]).
+#[test]
+fn recognises_a_stadium_outline_as_two_arc_sides() {
+    let shape = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 10.0], [40.0, 10.0], [40.0, 30.0], [0.0, 30.0]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, Some(ArcSide { centre: [40.0, 20.0], r: 10.0 }), None, Some(ArcSide { centre: [0.0, 20.0], r: 10.0 })],
+        outline_fillet_r: None,
+    };
+    let mesh = synth::profile(&shape, 16, [0.0; 3]);
+    let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+    let (profile, offset) = found_profile(&reread);
+    assert_eq!(offset, [-10.0, 10.0, 0.0]);
+    let expected = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[10.0, 0.0], [50.0, 0.0], [50.0, 20.0], [10.0, 20.0]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, Some(ArcSide { centre: [50.0, 10.0], r: 10.0 }), None, Some(ArcSide { centre: [10.0, 10.0], r: 10.0 })],
+        outline_fillet_r: None,
+    };
+    assert_eq!(profile, expected);
 }
 
 #[test]
@@ -85,6 +150,7 @@ fn chamfered_corners_make_an_eight_sided_outline() {
             outline_pockets: Vec::new(),
             bosses: vec![],
             slots: vec![],
+            arcs: Vec::new(),
             outline_fillet_r: None
         }
     );
@@ -93,7 +159,7 @@ fn chamfered_corners_make_an_eight_sided_outline() {
 #[test]
 fn round_outline_is_not_a_polygon() {
     let circle: Vec<P2> = (0..64).map(|i| f64::from(i) * PI / 32.0).map(|a| [30.0 + 30.0 * a.cos(), 30.0 + 30.0 * a.sin()]).collect();
-    assert!(reason(&synth::prism(&circle, &[], 5.0, [0.0; 3])).contains("curved sides"));
+    assert!(reason(&synth::prism(&circle, &[], 5.0, [0.0; 3])).contains("round all the way round"));
 }
 
 /// An outline that is one long curve must be refused quickly, however finely it is faceted.
@@ -105,13 +171,14 @@ fn long_curves_are_refused_quickly() {
             .map(|i| 2.0 * PI * f64::from(i) / f64::from(corners))
             .map(|a| [50.0 + 50.0 * a.cos(), 25.0 + 25.0 * a.sin()])
             .collect();
-        assert!(reason(&synth::prism(&ellipse, &[], 5.0, [0.0; 3])).contains("curved sides"), "{corners} corners");
+        assert!(reason(&synth::prism(&ellipse, &[], 5.0, [0.0; 3])).contains("not a circular arc"), "{corners} corners");
     }
     assert!(started.elapsed().as_secs_f64() < 5.0, "took {:?}", started.elapsed());
 }
 
 /// Arcs that stop 0.045 radians short of their sides meet them at a kink too small for the
-/// angle check next to long sides, but their circles miss the sides by about 0.02 mm.
+/// angle check next to long sides, and their circles miss the sides by about 0.02 mm, so they
+/// are no fillets — but as arc sides with sharp corners between them they are recognised.
 #[test]
 fn arcs_short_of_their_sides_are_no_fillets() {
     let (x, y, r, gap, facets) = (80.0, 50.0, 20.0, 0.045, 128);
@@ -124,7 +191,13 @@ fn arcs_short_of_their_sides_are_no_fillets() {
         }
     }
     let mesh = synth::prism(&outline, &[], 5.0, [0.0; 3]);
-    reason(&mesh);
+    let (profile, _) = found_profile(&mesh);
+    // Not fillets (no corner radius), but arc sides with sharp corners between them.
+    assert_eq!(profile.outline_fillet_r, None);
+    assert_eq!(profile.corners.len(), 8);
+    let arcs: Vec<ArcSide> = profile.arc_sides().iter().flatten().copied().collect();
+    assert_eq!(arcs.len(), 4);
+    assert!(arcs.iter().all(|a| (a.r - r).abs() < 0.001), "{arcs:?}");
 }
 
 /// Small rounds of many facets next to long sides, in single precision.
@@ -209,7 +282,7 @@ fn uneven_round_outlines_are_refused_quickly() {
         .collect();
     let started = std::time::Instant::now();
     let why = reason(&synth::prism(&circle, &[], 5.0, [0.0; 3]));
-    assert!(why.contains("curved sides"), "{why}");
+    assert!(why.contains("round all the way round"), "{why}");
     assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
 }
 
