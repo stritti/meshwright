@@ -123,10 +123,11 @@ fn rounded_box_moves_an_offset_to_the_origin() {
     assert_eq!(offset, [10.0, 20.0, 3.0]);
 }
 
-/// A box with all twelve edges rounded and a through hole along Z clear of the rounds,
-/// tessellated the way an exporter does it: the caps are the inner rectangle with the hole's
-/// circle, the rim as in [`synth::rounded_box`], the bore's wall vertical.
-fn rounded_box_with_hole(x: f64, y: f64, z: f64, r: f64, hole: (f64, f64, f64), segments: usize) -> Mesh {
+/// A box with all twelve edges rounded and through openings along Z clear of the rounds,
+/// tessellated the way an exporter does it: the caps are the inner rectangle with the openings'
+/// loops, the rim as in [`synth::rounded_box`], the openings' walls vertical. Each opening is a
+/// counter-clockwise loop (a hole's circle, a cut-out's polygon).
+fn rounded_box_with_openings(x: f64, y: f64, z: f64, r: f64, openings: &[Vec<P2>], segments: usize) -> Mesh {
     let n = segments.max(1);
     let corners = [[r, r], [x - r, r], [x - r, y - r], [r, y - r]];
     let mut ring: Vec<P2> = Vec::with_capacity(4 * n);
@@ -137,24 +138,28 @@ fn rounded_box_with_hole(x: f64, y: f64, z: f64, r: f64, hole: (f64, f64, f64), 
             ring.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]);
         }
     }
-    let (hx, hy, hd) = hole;
-    let hole_ring: Vec<P2> =
-        (0..segments).map(|i| 2.0 * PI * i as f64 / segments as f64).map(|a| [hx + hd / 2.0 * a.cos(), hy + hd / 2.0 * a.sin()]).collect();
     let mut mesh = synth::rounded_box(x, y, z, r, segments, [0.0; 3]);
     // The top and bottom caps come first in rounded_box's triangles; replace them with holed ones.
     mesh.triangles.drain(..2 * (4 * n - 2));
-    for [a, b, c] in synth::triangulate(&ring, std::slice::from_ref(&hole_ring)) {
+    for [a, b, c] in synth::triangulate(&ring, openings) {
         mesh.triangles.push([[a[0], a[1], z], [b[0], b[1], z], [c[0], c[1], z]]);
         mesh.triangles.push([[a[0], a[1], 0.0], [c[0], c[1], 0.0], [b[0], b[1], 0.0]]);
     }
-    // The bore's wall, wound as prism() winds a hole's.
-    let rev: Vec<P2> = hole_ring.iter().rev().copied().collect();
-    for i in 0..rev.len() {
-        let (a, b) = (rev[i], rev[(i + 1) % rev.len()]);
-        mesh.triangles.push([[a[0], a[1], 0.0], [b[0], b[1], 0.0], [b[0], b[1], z]]);
-        mesh.triangles.push([[a[0], a[1], 0.0], [b[0], b[1], z], [a[0], a[1], z]]);
+    // Each opening's wall, wound as prism() winds a hole's.
+    for opening in openings {
+        let rev: Vec<P2> = opening.iter().rev().copied().collect();
+        for i in 0..rev.len() {
+            let (a, b) = (rev[i], rev[(i + 1) % rev.len()]);
+            mesh.triangles.push([[a[0], a[1], 0.0], [b[0], b[1], 0.0], [b[0], b[1], z]]);
+            mesh.triangles.push([[a[0], a[1], 0.0], [b[0], b[1], z], [a[0], a[1], z]]);
+        }
     }
     mesh
+}
+
+/// A round opening's loop: `segments` corners on the circle about `(x, y)` of diameter `d`.
+fn circle_loop(x: f64, y: f64, d: f64, segments: usize) -> Vec<P2> {
+    (0..segments).map(|i| 2.0 * PI * i as f64 / segments as f64).map(|a| [x + d / 2.0 * a.cos(), y + d / 2.0 * a.sin()]).collect()
 }
 
 /// A rounded box with a through hole clear of the rounds is the box with `edge_fillet_r` and the
@@ -174,9 +179,39 @@ fn rounded_box_with_a_hole_is_recognised() {
         outline_fillet_r: None,
         edge_fillet_r: Some(5.0),
     };
-    let (plate, offset) = found(&rounded_box_with_hole(60.0, 40.0, 30.0, 5.0, (30.0, 20.0, 8.0), 32));
+    let (plate, offset) = found(&rounded_box_with_openings(60.0, 40.0, 30.0, 5.0, &[circle_loop(30.0, 20.0, 8.0, 32)], 32));
     assert_eq!(plate, expected);
     assert_eq!(offset, [0.0; 3]);
+}
+
+/// A finely tessellated rounded box still reads its rim radius exactly: the near-tangent rim
+/// facets that leak into the top cap bulge the outline out by their arcs' radius, which the
+/// detection adds back.
+#[test]
+fn finely_tessellated_rounded_box_is_recognised() {
+    let (plate, _) = found(&synth::rounded_box(60.0, 40.0, 30.0, 5.0, 128, [0.0; 3]));
+    assert_eq!((plate.x, plate.y, plate.z, plate.outline_fillet_r, plate.edge_fillet_r), (60.0, 40.0, 30.0, None, Some(5.0)));
+    let (plate, _) = found(&synth::rounded_box(60.0, 40.0, 30.0, 5.0, 256, [0.0; 3]));
+    assert_eq!(plate.edge_fillet_r, Some(5.0));
+}
+
+/// A dent whose corner projects onto the inner rectangle must not pass as a rim wall: the inset
+/// outline's segments are no walls of the rounded box.
+#[test]
+fn dent_projecting_onto_the_inner_outline_is_not_recognised() {
+    let mut mesh = synth::rounded_box(60.0, 40.0, 30.0, 1.0, 16, [0.0; 3]);
+    let t = mesh.triangles.iter_mut().find(|t| t.iter().all(|p| p[0] == 0.0)).expect("a flat side face");
+    t[0] = [1.0, 1.0, 15.0];
+    reason(&mesh);
+}
+
+/// A rounded box with a polygonal cut-out is not recognised: the profile branch has no
+/// `edge_fillet_r`, so the rim must not be silently dropped.
+#[test]
+fn rounded_box_with_a_cutout_is_not_recognised() {
+    let cutout = vec![[250.0, 150.0], [350.0, 150.0], [300.0, 250.0]];
+    let mesh = rounded_box_with_openings(600.0, 400.0, 30.0, 0.5, std::slice::from_ref(&cutout), 32);
+    reason(&mesh);
 }
 
 /// A dent in the rounded rim is no rounded box: the corner between the faces lies off the

@@ -29,7 +29,7 @@ pub(super) fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     let faces = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
     let face_loops = face_outlines(&faces, tol)?;
     let (corners, radius) = outline_shape(&face_loops.outline, tol)?;
-    let rim = rim_fillet(&corners, size, tol);
+    let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
     let cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
     check_prism(&faces, mesh_volume, size[2], &cutouts.stepped, &cutouts.blinds, rim.as_ref())?;
     check_walls(&faces, &corners, radius, &cutouts, scale, tol, rim.as_ref())?;
@@ -75,29 +75,33 @@ impl Rim {
 
 /// The rim's rounding when the outline is the rectangle inset by one radius on every side: a box
 /// rounded all over has its flat top and bottom faces inset by the radius, so the top face's
-/// outline is that inner rectangle, sharp-cornered.
-pub(super) fn rim_fillet(corners: &[P2], size: Vec3, tol: f64) -> Option<Rim> {
+/// outline is that inner rectangle. Finely tessellated rims leak near-tangent facets into the cap
+/// (their corners lie within the tolerance of its plane), which bulges the outline out by the
+/// corner arcs' radius `radius`; the true inset is the bounding box's inset plus that radius.
+pub(super) fn rim_fillet(outline: &[P2], corners: &[P2], radius: Option<f64>, size: Vec3, tol: f64) -> Option<Rim> {
     if corners.len() != 4 {
         return None;
     }
     let (mut x0, mut x1) = (f64::INFINITY, f64::NEG_INFINITY);
     let (mut y0, mut y1) = (f64::INFINITY, f64::NEG_INFINITY);
-    for c in corners {
-        x0 = x0.min(c[0]);
-        x1 = x1.max(c[0]);
-        y0 = y0.min(c[1]);
-        y1 = y1.max(c[1]);
+    for p in outline {
+        x0 = x0.min(p[0]);
+        x1 = x1.max(p[0]);
+        y0 = y0.min(p[1]);
+        y1 = y1.max(p[1]);
     }
-    // The four corners must be the rectangle's corners, axis-aligned.
-    if !corners
-        .iter()
-        .all(|c| ((c[0] - x0).abs() <= tol || (c[0] - x1).abs() <= tol) && ((c[1] - y0).abs() <= tol || (c[1] - y1).abs() <= tol))
-    {
+    // The four corners must be the bounding box's corners, axis-aligned.
+    let at = |v: f64, lo: f64, hi: f64| (v - lo).abs() <= tol || (v - hi).abs() <= tol;
+    if !corners.iter().all(|c| at(c[0], x0, x1) && at(c[1], y0, y1)) {
         return None;
     }
     let insets = [x0, y0, size[0] - x1, size[1] - y1];
-    let r = insets.iter().copied().fold(f64::INFINITY, f64::min);
-    if insets.iter().any(|&d| (d - r).abs() > tol) || r <= tol {
+    let inset = insets.iter().sum::<f64>() / 4.0;
+    if insets.iter().any(|&d| (d - inset).abs() > tol) || inset <= tol {
+        return None;
+    }
+    let r = inset + radius.unwrap_or(0.0);
+    if 2.0 * r >= size[0].min(size[1]).min(size[2]) {
         return None;
     }
     Some(Rim { r, size })
@@ -487,7 +491,12 @@ pub(super) fn check_walls(
     }) {
         return Err(NOT_FLAT.into());
     }
-    let walls = Walls::new(corners, radius, &cutouts.circles, &cutouts.slot_arcs, &cutouts.wall_loops, scale, tol);
+    // On a rounded rim the top outline is the inner rectangle, which lies inside the rounded
+    // box: its segments must not count as walls, or an off-surface corner projecting onto them
+    // would pass. Only the cut-outs' walls stay; the rim's own corners are checked in 3D.
+    let (wall_corners, wall_radius, wall_loops): (&[P2], Option<f64>, &[Vec<P2>]) =
+        if rim.is_some() { (&[], None, &cutouts.wall_loops[1..]) } else { (corners, radius, &cutouts.wall_loops[..]) };
+    let walls = Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, wall_loops, scale, tol);
     let in_step = |p: Vec3| cutouts.stepped.iter().any(|s| s.holds(p, tol)) || cutouts.blinds.iter().any(|b| b.holds(p, tol));
     if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p) && !on_rim(*p, 0.0)) {
         return Err(NOT_FLAT.into());
@@ -508,7 +517,11 @@ pub(super) fn check_walls(
         }
     };
     let on_blind_wall = |p: &P2| cutouts.blinds.iter().any(|b| b.foot.on_wall(*p, &b.ring, tol));
-    if faces.rim.iter().any(|p| !walls.holds(*p) && !in_step([p[0], p[1], 0.0]) && !on_blind_wall(p)) || !faces.chords.iter().all(follows) {
+    // A wall's bottom corner on a rounded rim lies on the bottom cap, which is part of the
+    // rounded surface (at z = 0 every point of the inner rectangle is at distance `r`).
+    if faces.rim.iter().any(|p| !walls.holds(*p) && !on_rim([p[0], p[1], 0.0], 0.0) && !in_step([p[0], p[1], 0.0]) && !on_blind_wall(p))
+        || !faces.chords.iter().all(follows)
+    {
         return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
     }
     Ok(())
@@ -527,18 +540,20 @@ pub(super) fn recognition(
     rim: Option<&Rim>,
 ) -> Result<Recognition, String> {
     let tol = tolerance(size[0].max(size[1]).max(size[2]));
-    let (z, outline_fillet_r) = (snap_mm(size[2]), radius.map(snap_mm));
+    // On a rounded rim the outline's own corner arcs are the leaked rim facets, not a fillet.
+    let (z, outline_fillet_r) = (snap_mm(size[2]), if rim.is_some() { None } else { radius.map(snap_mm) });
     let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
     let PlateCutouts { holes, slots, cutouts, pockets, .. } = cutouts;
     // A rectangle with cut-outs is an outline, as mesh2cad writes it (`extrude_len`, the
     // outline's corners and each cut-out's). The rectangle is the box itself, or — when the rim is
-    // rounded — the top face's inner rectangle inset by the radius.
-    let inner_corners =
-        rim.map(|rim| [[rim.r, rim.r], [size[0] - rim.r, rim.r], [size[0] - rim.r, size[1] - rim.r], [rim.r, size[1] - rim.r]]);
+    // rounded — the top face's inner rectangle inset by the radius (rim_fillet checked the shape).
     let matches = |want: &[[f64; 2]; 4]| {
         corners.len() == 4 && want.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol))
     };
-    let rectangle = cutouts.is_empty() && (matches(&box_corners) || inner_corners.is_some_and(|c| matches(&c)));
+    let rectangle = cutouts.is_empty() && corners.len() == 4 && (matches(&box_corners) || rim.is_some());
+    if rim.is_some() && !rectangle {
+        return Err("a box with all edges rounded and cut-outs is not recognised yet".into());
+    }
     let (found, volume) = if rectangle {
         let plate = PlateSpec {
             x: snap_mm(size[0]),
