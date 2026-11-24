@@ -385,6 +385,46 @@ pub(super) fn floor_mouths(
     Ok(())
 }
 
+/// Whether the mouth of the stepped hole `s` (its corners between the faces `mine`) is a round of
+/// its rim: a quarter circle about (mouth radius, as deep as the mouth is wider than the bore),
+/// meshed in steps along it no coarser than a round hole's (a round in one step has no corners
+/// between the face and the bore: it is a 90° countersink, which looks the same). Every corner
+/// between lies on it, or off it by no more than its facets do (a corner an exporter added
+/// within one): that allowance, the sagitta of its largest step along the quarter circle and
+/// of the loops' facets round the axis, is returned.
+fn rounded_rim(s: &Stepped, mine: &[Vec3], tol: f64) -> Option<(f64, f64)> {
+    let depth = |p: &Vec3| (p[2] - s.face_z) * s.inward;
+    let r = |p: &Vec3| distance([p[0], p[1]], s.centre);
+    let between: Vec<&Vec3> =
+        mine.iter().filter(|p| depth(p) > tol && depth(p) < s.head_r - s.bore_r + tol && r(p) > s.bore_r + tol).collect();
+    // The round's radius from its corners: one `a` out from the bore and `d` down from the face
+    // lies on the quarter circle of radius `a + d + sqrt(2ad)`.
+    let samples: Vec<f64> = between.iter().map(|p| (r(p) - s.bore_r, depth(p))).map(|(a, d)| a + d + (2.0 * a * d).sqrt()).collect();
+    if samples.is_empty() {
+        return None;
+    }
+    let f = samples.iter().sum::<f64>() / samples.len() as f64;
+    let head_r = s.bore_r + f;
+    if (head_r - s.head_r).abs() > f / 2.0 || f > s.head_r - s.bore_r + f / 2.0 {
+        return None;
+    }
+    let off = |p: &Vec3| ((r(p) - head_r).hypot(depth(p) - f) - f).abs();
+    // The steps along the quarter circle between its own corners (those on it), from the face
+    // (at -90° about its centre) to the bore (at 180°).
+    let along = |p: &Vec3| (depth(p) - f).atan2(r(p) - head_r).rem_euclid(2.0 * std::f64::consts::PI);
+    let mut angles: Vec<f64> = between.iter().filter(|p| off(p) <= tol).map(|p| along(p)).collect();
+    angles.extend([1.5 * std::f64::consts::PI, std::f64::consts::PI]);
+    angles.sort_by(f64::total_cmp);
+    let step = angles.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
+    if between.is_empty() || step > super::MAX_HOLE_STEP + 1e-9 {
+        return None;
+    }
+    let round_the_axis =
+        (super::geometry::sagitta(&s.mouth, s.head_r) / s.head_r).max(super::geometry::sagitta(&s.bore, s.bore_r) / s.bore_r);
+    let slack = f * (1.0 - (step / 2.0).cos()) + head_r * round_the_axis;
+    between.iter().all(|p| off(p) <= slack + tol).then_some((f, slack))
+}
+
 /// A hole whose top and bottom circles differ in radius: the wider one is the mouth of a
 /// counterbore or a countersink, told apart by the corners between the faces.
 pub(super) fn stepped_hole(
@@ -402,7 +442,8 @@ pub(super) fn stepped_hole(
     let (head_r, bore_r) = if on_top { (top_r, bottom_r) } else { (bottom_r, top_r) };
     let (face_z, inward) = if on_top { (height, -1.0) } else { (0.0, 1.0) };
     let (mouth, bore) = if on_top { (loops.0.to_vec(), loops.1.to_vec()) } else { (loops.1.to_vec(), loops.0.to_vec()) };
-    let mut s = Stepped { centre, bore_r, head_r, bore, mouth, face_z, inward, depth: 0.0, counterbore: false, rounded: false };
+    let mut s =
+        Stepped { centre, bore_r, head_r, bore, mouth, face_z, inward, depth: 0.0, counterbore: false, rounded: false, round_slack: 0.0 };
     // Its corners between the faces tell the kind: a counterbore has some on its wide wall,
     // down to its floor; a countersink's cone meets the bore at the bore's corners nearest
     // the face.
@@ -414,6 +455,14 @@ pub(super) fn stepped_hole(
     if let Some(floor) = mine.iter().filter(|p| (r(p) - head_r).abs() <= tol).map(depth).reduce(f64::max) {
         s.counterbore = true;
         s.depth = floor;
+    } else if let Some((f, slack)) = rounded_rim(&s, &mine, tol) {
+        // A round of the rim of radius `f`, as deep: the mouth is the bore widened by it (its
+        // first, nearly flat facets may lie within the tolerance of the face, the face's loop a
+        // little narrower).
+        s.rounded = true;
+        s.round_slack = slack;
+        s.head_r = bore_r + f;
+        s.depth = f;
     } else {
         s.depth = mine
             .iter()
@@ -424,17 +473,6 @@ pub(super) fn stepped_hole(
     }
     if s.depth <= tol || s.depth >= height - tol {
         return Err("a hole's counterbore or countersink is as deep as the plate (stepped holes are not recognised yet)".into());
-    }
-    // A mouth as deep as it is wide may be a round of the rim: its corners between the face and
-    // the bore lie on a quarter circle, not on the cone (a round in one step is a 90°
-    // countersink, which looks the same).
-    if !s.counterbore && (s.depth - (head_r - bore_r)).abs() <= tol {
-        let f = head_r - bore_r;
-        let between: Vec<&Vec3> = mine.iter().filter(|p| depth(p) > tol && depth(p) < s.depth - tol && r(p) > bore_r + tol).collect();
-        let on_round = |p: &&Vec3| ((r(p) - head_r).hypot(depth(p) - f) - f).abs() <= tol;
-        if !between.is_empty() && between.iter().all(on_round) {
-            s.rounded = true;
-        }
     }
     let spec = HoleSpec { x: snap_mm(centre[0]), y: snap_mm(centre[1]), d: snap_mm(2.0 * bore_r), head: Some(s.head()), blind: None };
     Ok((spec, s))

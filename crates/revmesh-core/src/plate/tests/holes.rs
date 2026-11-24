@@ -504,3 +504,23 @@ fn coarse_rounded_hole_rims() {
     let (plate, _) = super::found(&rounded_rim_plate(1.0, 16, 8));
     assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.0, bottom: false }));
 }
+
+/// A rounded rim of 64 bands along the round, its last rings within the tolerance of the bore;
+/// and a facet of the fixture's round split into three at its centroid.
+#[test]
+fn fine_and_split_rounded_hole_rims() {
+    let (plate, _) = super::found(&rounded_rim_plate(1.0, 128, 64));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.0, bottom: false }));
+    let mut mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/hole-rims.stl")).expect("parses");
+    // A facet of the top rim's round, its corners between the face (Z = 8) and the bore.
+    let k = mesh
+        .triangles
+        .iter()
+        .position(|t| t.iter().all(|p| p[2] > 6.5 - 1e-6 && p[2] < 8.0 - 1e-6 && (p[0] - 20.0).hypot(p[1] - 20.0) > 4.0 + 1e-3))
+        .expect("a facet of the round");
+    let [a, b, c] = mesh.triangles.swap_remove(k);
+    let m = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0];
+    mesh.triangles.extend([[a, b, m], [b, c, m], [c, a, m]]);
+    let (plate, _) = super::found(&mesh);
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.5, bottom: false }));
+}

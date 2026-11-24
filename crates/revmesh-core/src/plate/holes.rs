@@ -80,8 +80,10 @@ pub(super) struct Stepped {
     /// the bore.
     pub(super) depth: f64,
     pub(super) counterbore: bool,
-    /// A round of the rim (its radius `head_r - bore_r`, as deep), not a countersink's cone.
+    /// A round of the rim (its radius `head_r - bore_r`, as deep), not a countersink's cone, and
+    /// how far off it its facets lie at most.
     pub(super) rounded: bool,
+    pub(super) round_slack: f64,
 }
 
 /// What a blind hole, a pocket, a boss or a pad stands on, seen from above: a circle, or a
@@ -243,16 +245,12 @@ impl Stepped {
                     && r <= self.head_r + tol)
         } else if self.rounded {
             // On the quarter circle about (mouth radius, the round's depth), or off it by no more
-            // than a facet of the coarsest round allowed (50° along it, the loops' facets round
-            // the axis) lies.
+            // than its facets lie.
             let f = self.head_r - self.bore_r;
             let off = ((r - self.head_r).hypot(depth - f) - f).abs();
-            let round_the_axis = (sagitta(&self.mouth, self.head_r) / self.head_r).max(sagitta(&self.bore, self.bore_r) / self.bore_r);
             // (Facets round the axis bow inward: a point may lie inside the bore by its loop's
             // sagitta.)
-            r >= self.bore_r - sagitta(&self.bore, self.bore_r) - tol
-                && r <= self.head_r + tol
-                && off <= f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + r * round_the_axis + tol
+            r >= self.bore_r - sagitta(&self.bore, self.bore_r) - tol && r <= self.head_r + tol && off <= self.round_slack + tol
         } else {
             // The cone's facets run between the mouth's and the bore's loops and come inside the
             // cone as their chords come inside the circles; a corner an exporter adds within a
@@ -271,6 +269,25 @@ impl Stepped {
         let depth = |p: &Vec3| (p[2] - self.face_z) * self.inward;
         let centroid = [(cap[0][0] + cap[1][0] + cap[2][0]) / 3.0, (cap[0][1] + cap[1][1] + cap[2][1]) / 3.0];
         let r = distance(centroid, self.centre);
+        if self.rounded {
+            // Its corners on the round as the mesh's corners are; the middles of its edges and its
+            // centroid within a facet's reach of it (50° along the round at most, the loops'
+            // facets round the axis) and in the round's depth range.
+            let f = self.head_r - self.bore_r;
+            let round_the_axis = (sagitta(&self.mouth, self.head_r) / self.head_r).max(sagitta(&self.bore, self.bore_r) / self.bore_r);
+            let reach = f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + self.head_r * round_the_axis;
+            let near = |p: &Vec3| {
+                let r = distance([p[0], p[1]], self.centre);
+                let d = depth(p);
+                d >= -tol && d <= f + tol && r <= self.head_r + tol && ((r - self.head_r).hypot(d - f) - f).abs() <= reach + tol
+            };
+            let middle = |a: &Vec3, b: &Vec3| [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), f64::midpoint(a[2], b[2])];
+            let centroid3 = [centroid[0], centroid[1], (cap[0][2] + cap[1][2] + cap[2][2]) / 3.0];
+            let inner = [middle(&cap[0], &cap[1]), middle(&cap[1], &cap[2]), middle(&cap[2], &cap[0]), centroid3];
+            // (Its facets near the face may be flatter than the tolerance: they lie on the round all
+            // the same, and a disk across the bore does not.)
+            return cap.iter().all(|p| self.holds(*p, tol)) && inner.iter().all(near);
+        }
         if self.counterbore {
             // Outside the bore's meshed loop, whose chords come within their sagitta of the
             // centre: a facet of the floor lies there, a disk across the bore does not.
