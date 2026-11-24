@@ -39,7 +39,7 @@ inside SolidCraft") is the source of truth; the manifest declares what the plugi
 4. **Write coordinates as f32** in large designs; keep recognition tolerances explicit
    (1 µm or 1e-5 of the part's size, whichever is larger).
 5. **Budget the expansion**: binary STL is 50 bytes/triangle on disk, 72 bytes once expanded —
-   plus face/wall indexes in recognition. Reference measurement (SolidCraft 0.47, 128 MiB):
+   plus face/wall indexes in recognition. Reference measurement (SolidCraft 0.48, 128 MiB):
    a 1.5 M-triangle STL (75 MB) imports as a mesh in ~8 s; 2 M triangles exceed the memory.
 6. **Be deterministic**: no threads, network, subprocesses or system randomness exist in the
    sandbox — seed randomized algorithms (e.g. RANSAC) with a fixed value.
