@@ -7,7 +7,7 @@ use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
     dimensioned_sides, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
 };
-use crate::mesh::{Vec3, snap_mm};
+use crate::mesh::{Vec3, snap_dim, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
 
 /// The expressions for a point's world coordinates: along the extrusion axis the face's
@@ -215,7 +215,7 @@ fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) ->
                 return None;
             }
             let (a, c) = (corners[i], corners[(i + 1) % n]);
-            let len = snap_mm((a[0] - c[0]).hypot(a[1] - c[1]));
+            let len = snap_dim((a[0] - c[0]).hypot(a[1] - c[1]));
             let user = format!("{prefix}_{}_len", i + 1);
             b.param(Param::user(&user, len));
             let model = b.next_model_param_name();

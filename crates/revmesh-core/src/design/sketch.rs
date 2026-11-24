@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::mesh::snap_mm;
+use crate::mesh::snap_dim;
 
 /// A sketch: points, curves between them, and constraints on both.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -280,11 +280,13 @@ pub fn polygon_sketch_dimensioned(corners: &[[f64; 2]], lens: &[Option<String>])
     polygon_sketch_sized(corners, lens)
 }
 
-/// Which sides of a closed polygon may get a driving `Length` constraint. Loop closure makes some
-/// lengths dependent on the others, and driving a dependent one too would leave no solution when
-/// one parameter changes: in a fully axis-aligned polygon the longest horizontal and the longest
-/// vertical side (each a sum of the others in its direction), and in a polygon with exactly one
-/// slanted side that slanted side (the axis-aligned sides determine its length).
+/// Which sides of a closed polygon may get a driving `Length` constraint. Sides are grouped by
+/// line direction; within a group of two or more parallel sides, loop closure makes one length
+/// dependent on the others (for axis-aligned sides, a sum in their direction; for parallel
+/// slanted sides, as in a parallelogram, an equality), and driving a dependent one too would
+/// leave no solution when one parameter changes. So the longest side of every such group does
+/// not drive.
+#[allow(clippy::many_single_char_names)] // points a, b, directions d, u, as in the geometry
 #[must_use]
 pub fn dimensioned_sides(corners: &[[f64; 2]]) -> Vec<bool> {
     let n = corners.len();
@@ -293,30 +295,25 @@ pub fn dimensioned_sides(corners: &[[f64; 2]]) -> Vec<bool> {
         let (a, b) = side(i);
         (a[0] - b[0]).hypot(a[1] - b[1])
     };
-    let axis = |i: usize| {
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for i in 0..n {
         let (a, b) = side(i);
-        if (a[1] - b[1]).abs() < 1e-9 {
-            Some(true)
-        } else if (a[0] - b[0]).abs() < 1e-9 {
-            Some(false)
-        } else {
-            None
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let group = groups.iter_mut().find(|g| {
+            let (c, e) = side(g[0]);
+            let u = [e[0] - c[0], e[1] - c[1]];
+            (d[0] * u[1] - d[1] * u[0]).abs() <= 1e-9 * len(i) * len(g[0])
+        });
+        match group {
+            Some(g) => g.push(i),
+            None => groups.push(vec![i]),
         }
-    };
+    }
     let mut dim = vec![true; n];
-    let slanted: Vec<usize> = (0..n).filter(|&i| axis(i).is_none()).collect();
-    match slanted.len() {
-        0 => {
-            let longest = |horizontal: bool| (0..n).filter(|&i| axis(i) == Some(horizontal)).max_by(|&a, &b| len(a).total_cmp(&len(b)));
-            if let Some(i) = longest(true) {
-                dim[i] = false;
-            }
-            if let Some(i) = longest(false) {
-                dim[i] = false;
-            }
+    for g in &groups {
+        if let Some(&longest) = g.iter().filter(|_| g.len() >= 2).max_by(|&&a, &&b| len(a).total_cmp(&len(b))) {
+            dim[longest] = false;
         }
-        1 => dim[slanted[0]] = false,
-        _ => {}
     }
     dim
 }
@@ -340,7 +337,7 @@ fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[Option<String>]) -> Sketch
             constraints.push(Constraint::Length {
                 id: format!("k{}", constraints.len() + 1),
                 l: i,
-                value: snap_mm((a[0] - b[0]).hypot(a[1] - b[1])),
+                value: snap_dim((a[0] - b[0]).hypot(a[1] - b[1])),
                 param: param.clone(),
                 text: None,
             });
@@ -408,7 +405,7 @@ fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Opt
                 sketch.constraints.push(Constraint::Length {
                     id: format!("k{}", sketch.counters.k + 1),
                     l: line,
-                    value: snap_mm((a[0] - b[0]).hypot(a[1] - b[1])),
+                    value: snap_dim((a[0] - b[0]).hypot(a[1] - b[1])),
                     param: param.clone(),
                     text: None,
                 });

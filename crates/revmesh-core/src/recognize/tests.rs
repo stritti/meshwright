@@ -1,7 +1,7 @@
 use super::spec::{BossSpec, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 use super::{Axis, Recognition, recognize};
 
-use crate::design::{Design, fmt_number};
+use crate::design::{Design, dimensioned_sides, fmt_number};
 use crate::mesh::Mesh;
 use crate::mesh::tests::tetrahedron;
 use crate::synth;
@@ -212,20 +212,22 @@ fn outline_and_cutout_sides_are_dimensioned() {
     let param = |name: &str| {
         params.iter().find(|p| p["name"] == name).map(|p| (p["expr"].as_str().expect("expr"), p["model"].as_bool().expect("model")))
     };
-    // One user parameter per driving side with the side's length; the single slanted side (side 3,
-    // the diagonal) is dependent on the axis-aligned ones and gets none.
-    let sides: [(usize, f64); 4] = [(0, 60.0), (1, 15.0), (3, 30.0), (4, 40.0)];
+    // One user parameter per driving side with the side's length. Sides group by line direction:
+    // the horizontal sides 1 and 4 (60 and 30 mm) and the vertical sides 2 and 5 (15 and 40 mm)
+    // each form a parallel group, so the longest of each (sides 1 and 5) is derived; the slanted
+    // diagonal (side 3) drives.
+    let sides: [(usize, f64); 3] = [(1, 15.0), (2, (30.0f64).hypot(25.0)), (3, 30.0)];
     for (i, len) in sides {
-        let snapped = (len * 1000.0).round() / 1000.0;
+        let snapped = (len * 1e4).round() / 1e4;
         let (expr, model) = param(&format!("outline_{}_len", i + 1)).expect("user param");
         assert!(!model);
         assert_eq!(expr, format!("{} mm", fmt_number(snapped)));
     }
-    assert!(param("outline_3_len").is_none(), "the diagonal's length is derived");
+    assert!(param("outline_1_len").is_none() && param("outline_5_len").is_none(), "the longest side per parallel group is derived");
     let sketch = &json["features"][0]["sketch"];
     let constraints = sketch["constraints"].as_array().expect("constraints");
     let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
-    assert_eq!(lengths, [0, 1, 3, 4], "one Length per driving side, none on the diagonal");
+    assert_eq!(lengths, [1, 2, 3], "one Length per driving side, none on the derived ones");
     // The four axis-aligned sides keep their horizontal/vertical constraints.
     assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 4);
     for c in lengths.iter().enumerate() {
@@ -278,6 +280,36 @@ fn orthogonal_outline_skips_the_dependent_sides() {
     assert_eq!(lengths, [1, 2, 3, 4], "one Length per driving side, none on the derived ones");
     // All six sides keep their horizontal/vertical constraints.
     assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 6);
+}
+
+/// A parallelogram's two horizontal and two parallel slanted sides each form a group, so one
+/// side per group is derived and only two of the four lengths drive.
+#[test]
+fn parallelogram_skips_one_side_per_parallel_group() {
+    let corners = vec![[0.0, 0.0], [60.0, 0.0], [70.0, 30.0], [10.0, 30.0]];
+    assert_eq!(dimensioned_sides(&corners), [true, true, false, false]);
+}
+
+/// A thin profile keeps its slanted lengths' precision (0.1 µm snap): a 0.1 mm high triangle's
+/// slanted sides stay 50.0001 mm, so the dimensioned sketch does not collapse to zero area.
+#[test]
+fn thin_triangle_keeps_slanted_length_precision() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [100.0, 0.0], [50.0, 0.1]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"));
+    assert_eq!(expr("outline_1_len"), Some("100 mm"));
+    assert_eq!(expr("outline_2_len"), Some("50.0001 mm"), "the slanted side keeps 0.1 µm precision");
 }
 
 /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face
