@@ -189,6 +189,8 @@ fn rounded_feet_coarse_coned_and_split() {
     let (plate, _) = found(&layered_boss(&rings, 16));
     assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
     reason(&layered_boss(&[(6.0, 0.0), (2.0, 4.1)], 48));
+    // A 45° chamfer in four bands, on a coarse boss of 8 facets round, is no 1 mm round.
+    reason(&layered_boss(&[(6.0, 0.0), (5.75, 0.25), (5.5, 0.5), (5.25, 0.75), (5.0, 1.0), (5.0, 8.0)], 8));
     let mut split = layered_boss(&rings, 48);
     // The wall's first facet above the round: corners at Z = 6 + 2 and 6 + 8 on the cylinder.
     let k = split
@@ -207,4 +209,26 @@ fn rounded_feet_coarse_coned_and_split() {
     split.triangles.extend([[p, m, o], [m, q, o]]);
     let (plate, _) = found(&split);
     assert_eq!(plate.bosses[0].fillet, Some(2.0));
+}
+
+/// A rounded boss whose top is a fan from its middle, each facet split by a corner at 98% of
+/// the way to its rim edge's middle: corners inside the top near its rim are no rim.
+#[test]
+fn rounded_boss_tops_with_corners_near_the_rim() {
+    let (r, f, n) = (5.0, 2.0, 48);
+    let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+    rings.push((r, 8.0));
+    let mut mesh = layered_boss(&rings, n);
+    let top = 14.0;
+    mesh.triangles.retain(|t| !t.iter().all(|p| (p[2] - top).abs() < 1e-9));
+    let rim = circle([20.0, 20.0], r, n);
+    let c = [20.0, 20.0, top];
+    for i in 0..n {
+        let (a, b) = (rim[i], rim[(i + 1) % n]);
+        let q = [20.0 + 0.98 * (f64::midpoint(a[0], b[0]) - 20.0), 20.0 + 0.98 * (f64::midpoint(a[1], b[1]) - 20.0), top];
+        let (a, b) = ([a[0], a[1], top], [b[0], b[1], top]);
+        mesh.triangles.extend([[c, a, q], [a, b, q], [b, c, q]]);
+    }
+    let (plate, _) = found(&mesh);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
 }
