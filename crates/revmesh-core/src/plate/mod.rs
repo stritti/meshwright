@@ -56,12 +56,17 @@ use prism::recognize_prism;
 use crate::mesh::{Mesh, snap_mm};
 use crate::recognize::{BossChamfer, BossSpec, PadSpec, Recognition};
 
-/// An angle in radians as a parameter in degrees: a whole degree when that moves a point
-/// `reach` away by no more than a micrometre, else a hundredth of one.
-fn snap_angle(angle: f64, reach: f64) -> f64 {
-    let degrees = angle.to_degrees();
-    let whole = degrees.round();
-    if ((whole - degrees).to_radians() * reach).abs() <= 1e-3 { whole } else { (degrees * 100.0).round() / 100.0 }
+/// The draft of a boss `h` high narrowing from radius `foot` to `top`, in degrees as a
+/// parameter: a whole degree, else a hundredth of one, as long as the top's radius it gives
+/// (`foot - h * tan(angle)`) moves by no more than a micrometre and stays positive; else the
+/// angle as it is.
+fn draft_angle(foot: f64, top: f64, h: f64) -> f64 {
+    let degrees = (foot - top).atan2(h).to_degrees();
+    let top_at = |d: f64| foot - h * d.to_radians().tan();
+    [degrees.round(), (degrees * 100.0).round() / 100.0]
+        .into_iter()
+        .find(|d| (top_at(*d) - top).abs() <= 1e-3 && top_at(*d) > 0.0)
+        .unwrap_or(degrees)
 }
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
@@ -177,7 +182,7 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
                     Shape::Straight => {}
                     // A round foot widens the footprint by its radius beyond the cylinder.
                     Shape::Fillet => (boss.d, boss.fillet) = (snap_mm(2.0 * b.wall_r), Some(snap_mm(b.fillet))),
-                    Shape::Draft => boss.draft_deg = Some(snap_angle((r - b.wall_r).atan2(b.top - top), b.top - top)),
+                    Shape::Draft => boss.draft_deg = Some(draft_angle(r, b.wall_r, b.top - top)),
                     Shape::Chamfer { w, h: down } => boss.chamfer = Some(BossChamfer { w: snap_mm(w), h: snap_mm(down) }),
                 }
                 bosses.push(boss);
@@ -203,4 +208,17 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         return Err(format!("the rebuilt plate would differ from the mesh by {:.1}% in volume", error.abs() * 100.0));
     }
     Ok(recognised)
+}
+
+#[cfg(test)]
+mod draft_tests {
+    /// A short, steep draft keeps the precision that keeps its top where it is: a whole degree
+    /// would move a 0.1 mm boss's top radius from 1 mm to below zero.
+    #[test]
+    fn steep_drafts_keep_their_top() {
+        let angle = super::draft_angle(5.0, 1.0, 0.1);
+        let top = 5.0 - 0.1 * angle.to_radians().tan();
+        assert!((top - 1.0).abs() <= 1e-3, "{angle} gives {top}");
+        assert_eq!(super::draft_angle(6.0, 6.0 - 8.0 * 5.0_f64.to_radians().tan(), 8.0), 5.0);
+    }
 }
