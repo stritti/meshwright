@@ -112,7 +112,9 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
     }
     let area: f64 = mesh.triangles.iter().map(|t| length(cross(sub(t[1], t[0]), sub(t[2], t[0]))) / 2.0).sum();
     let (found, measured) = (spec.volume(), mesh.volume());
-    if (found - measured).abs() > tol * area {
+    // Within a skin of the tolerance over the surface, and, for a thin part whose skin is much of
+    // it, within the 1% every recognised part's volume keeps.
+    if (found - measured).abs() > tol * area || (found - measured).abs() > crate::plate::MAX_VOLUME_ERROR * measured.abs() {
         return Err(format!(
             "it is not a combination of extrusions: the outlines' intersection holds {found:.1} mm³, the mesh {measured:.1} mm³"
         ));

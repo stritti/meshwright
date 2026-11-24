@@ -62,6 +62,15 @@ fn keeps_where_the_part_is() {
     assert_eq!(spec.extrusions.len(), 2);
 }
 
+/// A part so thin that rounding its sizes to micrometres changes its volume by more than 1% is
+/// refused, though the change lies within the tolerance over its surface.
+#[test]
+fn a_thin_part_keeps_its_volume() {
+    let thin = Mesh::new(combined().triangles.iter().map(|t| t.map(|p| [p[0], p[1], p[2] * 0.0104 / 30.0])).collect());
+    let why = recognize_combined(&thin).expect_err("refused");
+    assert!(why.contains("the outlines' intersection holds"), "{why}");
+}
+
 /// A pocket in the top leaves the silhouettes as they were, but its faces lie inside them.
 #[test]
 fn a_pocket_is_no_combination() {
