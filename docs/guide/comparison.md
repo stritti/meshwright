@@ -124,6 +124,58 @@ GPU.
 | Organic shapes | ~ | ✓ T-spline path via the Form workspace | ~ plug-ins such as RhinoResurf |
 | Feature history from the mesh | – | – | – |
 
+## Research and literature
+
+Papers on reconstructing CAD from meshes/point clouds and on evaluating that — grouped by how
+close they are to revmesh's approach. The neural methods need a GPU and Python, so they cannot
+run in SolidCraft's WebAssembly sandbox; the classical ones (RANSAC shape detection, STL feature
+recognition, closed-form extrusion fitting) are the directly portable building blocks, and the
+datasets at the end are the standard test corpora (tessellated to STL, they exercise a
+recogniser the way revmesh is exercised).
+
+### Surveys and reviews
+
+| Paper | Venue | Links | Relevance |
+|---|---|---|---|
+| A Survey on Deep Learning in 3D CAD Reconstruction (Lin et al.) | Appl. Sci. 15(12):6681, 2025 | [DOI](https://doi.org/10.3390/app15126681) | Entry point for DL-based CAD reconstruction from scans, meshes, point clouds |
+| Integrating Reverse Engineering for Digital Model Reconstruction and Remanufacturing of Mechanical Components: A Systematic Review | Metrology 5(4):66, 2025 | [DOI](https://doi.org/10.3390/metrology5040066) | Systematic review of reverse engineering of mechanical parts from 3D scans, 2005–2025 — the industrial side of this page |
+| Machine learning in feature recognition for manufacturing: taxonomy, analytical review, comparisons, trends, challenges, and outlook | Int. J. Manuf. Res., 2026 | [DOI](https://doi.org/10.1080/00207543.2026.2675460) | Taxonomy of (ML-based) feature recognition from CAD models — holes, slots, pockets |
+
+### Mesh / point cloud to parametric CAD
+
+| Paper | Venue | Links | Relevance |
+|---|---|---|---|
+| Point2Cyl: Reverse Engineering 3D Objects from Point Clouds to Extrusion Cylinders (Uy et al.) | CVPR 2022 | [arXiv](https://arxiv.org/abs/2112.09329), [project](https://point2cyl.github.io/), [code](https://github.com/mikacuy/point2cyl) | Decomposes a point cloud into extrusion cylinders (2D sketch + axis + extent) with closed-form differentiable fitting — the closest learning-based analogue of revmesh's prism recognition |
+| ComplexGen: CAD Reconstruction by B-Rep Chain Complex Generation (Guo et al.) | SIGGRAPH 2022, ACM TOG 41(4) | [arXiv](https://arxiv.org/abs/2205.14573), [code](https://github.com/guohaoxiang/ComplexGen) | Reconstructs a full B-rep with explicit topology; its global consistency constraints (closed face loops, cylinder perpendicularity) are ideas for validating recognised parts |
+| Point2CAD (Liu et al.) | CVPR 2024 | [arXiv](https://arxiv.org/abs/2312.04962), [code](https://github.com/prs-eth/point2cad) | Listed in the tables above: point cloud → CAD with freeform surfaces, edges, corners |
+| CAD-Recode (Rukhovich et al.) | ICCV 2025 | [arXiv](https://arxiv.org/abs/2412.14042), [code](https://github.com/filaPro/cad-recode) | Listed in the tables above: point cloud → CadQuery Python code |
+
+### Primitive and edge detection (building blocks for recognisers)
+
+| Paper | Venue | Links | Relevance |
+|---|---|---|---|
+| Efficient RANSAC for Point-Cloud Shape Detection (Schnabel, Wahl, Klein) | CGF 26(2):214–226, 2007 | [DOI](https://doi.org/10.1111/j.1467-8659.2007.01016.x) | Detects planes, spheres, cylinders, cones, tori in unorganised points — the classical basis of revmesh's fixed-seed deterministic RANSAC (see [Architecture](/architecture)) |
+| SPFN: Supervised Fitting of Geometric Primitives to 3D Point Clouds (Li et al.) | CVPR 2019 | [arXiv](https://arxiv.org/abs/1811.08988), [code](https://github.com/lingxiaoli94/SPFN) | Learned primitive fitting, benchmarked against Efficient RANSAC on mechanical parts |
+| CPFN: Cascaded Primitive Fitting Networks for High-Resolution Point Clouds | 2021 | [arXiv](https://arxiv.org/abs/2109.00113) | SPFN cascaded for 100k+ point scans — small features (holes) at high resolution |
+| ParSeNet: A Parametric Surface Fitting Network for 3D Point Clouds (Sharma et al.) | CVPR 2021 | [arXiv](https://arxiv.org/abs/2003.12181) | Fits parametric patches including B-splines — freeform side of the recognition |
+| HPNet: Deep Primitive Segmentation Using Hybrid Representations (Yan et al.) | ICCV 2021 | [arXiv](https://arxiv.org/abs/2105.10620) | Segments primitives using sharp edges explicitly — relevant for revmesh's wall/face classification |
+| PIE-Net: Parametric Inference of Point Cloud Edges (Wang et al.) | NeurIPS 2020 | [arXiv](https://arxiv.org/abs/2007.04883) | Infers feature edges as parametric curves (lines, circles, B-splines) — the analogue of reading hole rims and outlines from a mesh |
+
+### Feature recognition from STL meshes (classical, closest to revmesh's input)
+
+| Paper | Venue | Links | Relevance |
+|---|---|---|---|
+| Automatic recognition of features from freeform surface CAD models (Sunil, Pande) | Computer-Aided Design 40(4):502–517, 2008 | [record](https://www.semanticscholar.org/paper/Automatic-recognition-of-features-from-freeform-CAD-Sunil-Pande/81a304bfe4043aaa87b1e936942fefe2fe6dcddc) | Segments STL meshes by dihedral angle and curvature, then recognises holes, slots, beads, darts — directly on revmesh's input format |
+| A learning-based approach to feature recognition of Engineering shapes (Muraleedharan, Muthuganapathy) | 2021 | [arXiv](https://arxiv.org/abs/2112.07962) | Classifies holes/slots in CAD meshes (random forest on a discrete Gauss map); neural, but the mesh descriptors are portable |
+
+### Datasets and benchmarks
+
+| Dataset | Paper | Links | Relevance |
+|---|---|---|---|
+| ABC dataset (~1M CAD models, parametric ground truth) | Koch et al., CVPR 2019 | [arXiv](https://arxiv.org/abs/1812.06216), [project](https://deep-geometry.github.io/abc-dataset/) | Benchmark of ParSeNet, HPNet, Point2CAD; tessellated to STL it is a large test corpus for recognisers |
+| DeepCAD (178k Onshape models + construction sequences) | Wu et al., ICCV 2021 | [arXiv](https://arxiv.org/abs/2105.09492), [code](https://github.com/rundiwu/DeepCAD) | CAD sketch-extrude sequences as ground truth for reconstruction; used by CAD-Recode and Point2Cyl |
+| Fusion 360 Gallery (8,625 human sketch-extrude sequences) | Willis et al., SIGGRAPH 2021, ACM TOG 40(4):54 | [arXiv](https://arxiv.org/abs/2010.02392), [DOI](https://doi.org/10.1145/3450626.3459818), [data](https://github.com/AutodeskAILab/Fusion360GalleryDataset) | Defines "CAD reconstruction" — recovering a CAD program from target geometry — the same task revmesh solves for STL input |
+
 ## Where revmesh fits
 
 The open-source recognisers above all run on a desktop with Python and OpenCascade. revmesh
