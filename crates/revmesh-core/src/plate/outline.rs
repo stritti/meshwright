@@ -130,7 +130,12 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
     // a non-circular curve, and a run all the way round a round outline; both are refused.
     // Length only decides whether a run carries on: a curve's first facet may follow a much
     // longer straight side.
-    let curving = |j: usize| !on_arc[j % n] && !on_arc[(j + 1) % n] && turn(j).abs() <= MAX_CURVE_TURN && turn(j) * turn((j + 1) % n) > 0.0;
+    // A facet curves when a corner at either of its ends turns gently: a run may start right
+    // after a sharp junction and end right before one (an arc joined to a slanted side at more
+    // than MAX_CURVE_TURN, or closing onto a reflex corner, still spans all its facets).
+    // Whether the run really is one circle is the fit below; its lengths carry it on.
+    let curving =
+        |j: usize| !on_arc[j % n] && !on_arc[(j + 1) % n] && (turn(j).abs() <= MAX_CURVE_TURN || turn((j + 1) % n).abs() <= MAX_CURVE_TURN);
     let carries_curve = |from: usize, to: usize| {
         carries_on(from, to) || (len(to) <= GENTLE_LEN_SPREAD * len(from) && len(from) <= GENTLE_LEN_SPREAD * len(to))
     };
@@ -199,7 +204,9 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
             k += 1;
         }
     }
-    if corners.len() < 3 {
+    // Two corners with an arc side between them close a valid outline (a chord and its arc);
+    // fewer corners, or two straight sides, are degenerate.
+    if corners.len() < 2 || corners.len() == 2 && arc_sides.is_empty() {
         return Err("the outline is degenerate".into());
     }
     let arc_of = |src: usize| {

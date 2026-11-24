@@ -305,3 +305,106 @@ fn short_sides_between_large_rounds() {
     };
     assert_eq!(found(&synth::plate(&expected, 32, [0.0; 3])).0, expected);
 }
+
+/// An arc side joined to a slanted side at a turn greater than the curve limit still spans all
+/// its facets: the semicircular top here meets its right side at about 37 degrees, and the
+/// outline keeps its four corners (codex finding on #68).
+#[test]
+fn arc_run_starts_after_a_sharp_junction() {
+    let expected = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [90.0, 40.0], [30.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, None, Some(ArcSide { centre: [60.0, 40.0], r: 30.0 }), None],
+        outline_fillet_r: None,
+    };
+    let mesh = synth::profile(&expected, 16, [0.0; 3]);
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile, expected);
+}
+
+/// A chord and its quarter-circle arc close a valid two-corner outline (a quarter pie). The
+/// chord's ends touch the bounding box's lowest corner, so the profile sits in a frame at
+/// [20, 20, 0].
+#[test]
+fn chord_and_arc_close_a_two_corner_outline() {
+    let (cx, cy, r) = (20.0, 20.0, 20.0);
+    let shape = ProfileSpec {
+        corners: vec![[cx + r, cy], [cx, cy + r]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![Some(ArcSide { centre: [cx, cy], r }), None],
+        outline_fillet_r: None,
+    };
+    let mesh = synth::profile(&shape, 16, [0.0; 3]);
+    let (profile, offset) = found_profile(&mesh);
+    assert_eq!(offset, [cx, cy, 0.0]);
+    let expected = ProfileSpec {
+        corners: vec![[r, 0.0], [0.0, r]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![Some(ArcSide { centre: [0.0, 0.0], r }), None],
+        outline_fillet_r: None,
+    };
+    assert_eq!(profile, expected);
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
+}
+
+/// A banded arc wall (its facets split at mid-height, corners between the faces on the fitted
+/// circle) passes the wall checks through the arc side's fitted circle.
+#[test]
+fn banded_arc_walls_pass_the_wall_checks() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
+        outline_fillet_r: None,
+    };
+    let mesh = banded(&synth::profile(&spec, 8, [0.0; 3]), 0.0, [30.0, 20.0]);
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile, spec);
+}
+
+/// Snapping can shave an arc's radius below half the distance of its snapped endpoints, which
+/// would leave the sketch's Diameter constraint unsolvable; the radius is kept large enough.
+#[test]
+fn arc_radius_covers_its_snapped_chord() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0008, 0.0], [60.0008, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, None, Some(ArcSide { centre: [30.0004, 40.0], r: 30.0004 }), None],
+        outline_fillet_r: None,
+    };
+    let mesh = synth::profile(&spec, 32, [0.0; 3]);
+    let (profile, _) = found_profile(&mesh);
+    let arc = profile.arc_sides()[2].expect("arc side");
+    let chord = distance(profile.corners[2], profile.corners[3]);
+    assert!(2.0 * arc.r >= chord - 1e-9, "diameter {} < chord {chord}", 2.0 * arc.r);
+}
