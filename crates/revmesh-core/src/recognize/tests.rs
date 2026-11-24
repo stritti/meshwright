@@ -256,7 +256,7 @@ fn outline_and_cutout_sides_are_dimensioned() {
     let (expr, model) = param("outline_3_angle").expect("user angle param");
     assert!(!model);
     let deg: f64 = expr.strip_suffix(" deg").expect("deg").parse().expect("number");
-    let want = (40.0_f64 - 15.0).atan2(30.0 - 60.0).to_degrees().rem_euclid(180.0);
+    let want = (40.0_f64 - 15.0).atan2(30.0 - 60.0).to_degrees().rem_euclid(360.0);
     assert!((deg - want).abs() < 1e-9, "{deg} vs {want}");
     let angles: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "angle").collect();
     assert_eq!(angles.len(), 1, "one Angle per outline, on its longest slanted side");
@@ -325,6 +325,32 @@ fn dimensioned_angle_picks_the_longest_slanted_side() {
     assert_eq!(dimensioned_angle(&[[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]]), None);
     // A triangle's three slanted sides are three directions; the longest drives the angle.
     assert_eq!(dimensioned_angle(&[[0.0, 0.0], [100.0, 0.0], [50.0, 0.1]]), Some(2), "the two long slanted sides tie; the last wins");
+}
+
+/// A slanted side pointing below the X axis keeps its own direction in [0, 360) degrees: the
+/// `Angle` constraint turns the line as drawn, so collapsing the angle to [0, 180) would mirror
+/// the side and change the part.
+#[test]
+fn slanted_side_below_the_x_axis_keeps_its_direction() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [40.0, 30.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr").to_owned());
+    // Side 3 ([40, 30] to [0, 0]) is the longest slanted side; its direction is 216.87 deg, not 36.87.
+    let deg: f64 = expr("outline_3_angle").expect("angle param").strip_suffix(" deg").expect("deg").parse().expect("number");
+    let want = (0.0_f64 - 30.0).atan2(0.0 - 40.0).to_degrees().rem_euclid(360.0);
+    assert!((deg - want).abs() < 1e-9, "{deg} vs {want}");
+    assert!(deg > 180.0, "the side points below the X axis: {deg}");
 }
 
 /// A parallelogram's two horizontal and two parallel slanted sides each form a group, so one

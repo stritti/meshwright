@@ -210,8 +210,10 @@ impl ProfileSpec {
 fn side_angle_param(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Option<PolygonAngle> {
     let side = dimensioned_angle(corners)?;
     let (a, c) = (corners[side], corners[(side + 1) % corners.len()]);
-    // A line has no direction: the angle from the X axis is in [0, 180) degrees.
-    let degrees = (c[1] - a[1]).atan2(c[0] - a[0]).to_degrees().rem_euclid(180.0);
+    // The side's own direction, as drawn: the angle from the X axis in [0, 360) degrees (the
+    // `Angle` constraint turns line `b` as drawn, so collapsing to [0, 180) would mirror a
+    // side pointing below the X axis).
+    let degrees = (c[1] - a[1]).atan2(c[0] - a[0]).to_degrees().rem_euclid(360.0);
     let user = format!("{prefix}_{}_angle", side + 1);
     b.param(Param::angle(&user, degrees));
     let model = b.next_model_param_name();

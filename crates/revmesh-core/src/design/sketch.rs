@@ -284,7 +284,7 @@ pub fn polygon_sketch_dimensioned(corners: &[[f64; 2]], lens: &[Option<String>],
 }
 
 /// What drives a polygon's angle: the side the `Angle` constraint sits on, the angle now (in
-/// degrees, from the sketch's X axis, in [0, 180) as a line has no direction) and the model
+/// degrees, the side's own direction from the sketch's X axis, in [0, 360)) and the model
 /// parameter driving it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PolygonAngle {
