@@ -3,7 +3,9 @@
 use super::axis::Axis;
 
 use crate::Locale;
-use crate::design::{Design, DesignBuilder, Extent, FeatureKind, Operation, Param, Plane, Profiles, fmt_number, polygon_sketch};
+use crate::design::{
+    Design, DesignBuilder, Extent, FeatureKind, Operation, Param, Plane, Profiles, fmt_number, polygon_sketch, polygons_sketch,
+};
 use crate::mesh::{Vec3, snap_mm};
 
 /// An outline extruded right across the part along `axis`.
@@ -15,6 +17,20 @@ pub struct Extrusion {
     /// with the part's bounding box's lowest corner at the origin: the sketch coordinates on the
     /// axis's plane ([`Axis::plane`]). Along Y the second coordinate is −Z.
     pub outline: Vec<[f64; 2]>,
+    /// Openings of straight sides right through it, each its corners counter-clockwise, in the
+    /// same coordinates.
+    pub cutouts: Vec<Vec<[f64; 2]>>,
+}
+
+impl Extrusion {
+    /// The outline and its openings as rings with the material on their left: the outline
+    /// counter-clockwise, the openings clockwise.
+    #[must_use]
+    pub fn rings(&self) -> Vec<Vec<[f64; 2]>> {
+        let mut rings = vec![self.outline.clone()];
+        rings.extend(self.cutouts.iter().map(|c| c.iter().rev().copied().collect()));
+        rings
+    }
 }
 
 /// The intersection of two or three outlines, each extruded along its own axis across the
@@ -37,9 +53,11 @@ impl CombinedSpec {
     /// The volume of the part, in mm³: what SolidCraft measures once it has rebuilt the design.
     #[must_use]
     pub fn volume(&self) -> f64 {
+        let rings = |axis: Axis| self.extrusions.iter().find(|e| e.axis == axis).map(Extrusion::rings);
         // Along Y the profile's second coordinate is −Z; the volume takes the outline in (x, z).
-        let front: Option<Vec<[f64; 2]>> = self.outline(Axis::Y).map(|o| o.iter().map(|p| [p[0], -p[1]]).collect());
-        crate::combined::volume::intersection_volume(self.size, self.outline(Axis::Z), self.outline(Axis::X), front.as_deref())
+        let front: Option<Vec<Vec<[f64; 2]>>> =
+            rings(Axis::Y).map(|rs| rs.iter().map(|r| r.iter().map(|p| [p[0], -p[1]]).collect()).collect());
+        crate::combined::volume::intersection_volume(self.size, rings(Axis::Z).as_deref(), rings(Axis::X).as_deref(), front.as_deref())
     }
 
     /// One line describing the part, for the loss report.
@@ -56,7 +74,12 @@ impl CombinedSpec {
         axes.sort();
         let last = axes.pop().unwrap_or_default();
         let axes = if axes.is_empty() { last } else { locale.format("summary.list", &[("rest", &axes.join(", ")), ("last", &last)]) };
-        locale.format("summary.combined", &[("x", &x), ("y", &y), ("z", &z), ("axes", &axes)])
+        let part = locale.format("summary.combined", &[("x", &x), ("y", &y), ("z", &z), ("axes", &axes)]);
+        match self.extrusions.iter().map(|e| e.cutouts.len()).sum::<usize>() {
+            0 => part,
+            1 => locale.format("summary.with", &[("plate", &part), ("parts", &locale.text("summary.cutout.one"))]),
+            n => locale.format("summary.with", &[("plate", &part), ("parts", &locale.format("summary.cutout.other", &[("n", &n)]))]),
+        }
     }
 
     /// The part as a parametric history, its bounding box's corner at the origin; see
@@ -84,14 +107,28 @@ impl CombinedSpec {
             let sketch = b.feature(
                 format!("Sketch{}", k + 1),
                 vec![],
-                FeatureKind::Sketch { plane: Plane::Origin { name: e.axis.plane() }, sketch: polygon_sketch(&e.outline) },
+                FeatureKind::Sketch {
+                    plane: Plane::Origin { name: e.axis.plane() },
+                    // The openings in the outline's sketch, its lines l1..l<n> first.
+                    sketch: if e.cutouts.is_empty() {
+                        polygon_sketch(&e.outline)
+                    } else {
+                        polygons_sketch(&[vec![e.outline.clone()], e.cutouts.clone()].concat())
+                    },
+                },
             );
             b.feature(
                 format!("Extrude{}", k + 1),
                 if k == 0 { vec!["Body1".into()] } else { vec![] },
                 FeatureKind::Extrude {
                     sketch,
-                    profiles: Profiles::All,
+                    // Every profile would fill the openings too: the outline's loop is the profile,
+                    // and the loops inside it are its holes.
+                    profiles: if e.cutouts.is_empty() {
+                        Profiles::All
+                    } else {
+                        Profiles::Curves { loops: vec![(1..=e.outline.len()).map(|i| format!("l{i}")).collect()] }
+                    },
                     extent: Extent::positive(format!("extrude_{a}_len")),
                     operation: if k == 0 { Operation::NewBody } else { Operation::Intersect },
                 },

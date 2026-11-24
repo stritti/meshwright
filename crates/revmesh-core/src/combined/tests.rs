@@ -94,12 +94,38 @@ fn tilted_faces_are_refused() {
     assert_eq!(recognize_combined(&tetra), Err(super::TILTED.into()));
 }
 
-/// An opening through a silhouette is not recognised yet.
+/// A prism with an opening is one outline with a cut-out, no combination (the prisms find it).
 #[test]
-fn openings_are_refused() {
+fn a_prism_with_an_opening_is_no_combination() {
     let ring = crate::synth::prism(&L, &[vec![[5.0, 5.0], [10.0, 5.0], [10.0, 10.0], [5.0, 10.0]]], 30.0, [0.0; 3]);
     let why = recognize_combined(&ring).expect_err("refused");
-    assert!(why.contains("not one outline"), "{why}");
+    assert!(why.contains("two axes"), "{why}");
+    assert!(matches!(recognize(&ring), Recognition::Profile { .. }));
+}
+
+/// SolidCraft's plate under a ramp with a window through it along Y and one along X: each is an
+/// opening in that axis's outline (the box's side along Y), and where they cross both take it.
+#[test]
+fn recognises_windows_through_the_outlines() {
+    let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-windows.stl"));
+    let (spec, _) = recognize_combined(&mesh).expect("combined");
+    assert_eq!(spec.extrusions.iter().map(|e| e.axis).collect::<Vec<_>>(), [Axis::Z, Axis::X, Axis::Y]);
+    let cutouts =
+        |axis: Axis| spec.extrusions.iter().find(|e| e.axis == axis).map(|e| e.cutouts.iter().map(|c| from_lowest(c)).collect::<Vec<_>>());
+    assert_eq!(cutouts(Axis::Z), Some(vec![]));
+    assert_eq!(cutouts(Axis::X), Some(vec![vec![[5.0, 2.0], [9.0, 2.0], [9.0, 6.0], [5.0, 6.0]]]));
+    // Along Y the sketch's second coordinate is −Z.
+    assert_eq!(cutouts(Axis::Y), Some(vec![vec![[30.0, -8.0], [40.0, -8.0], [40.0, -3.0], [30.0, -3.0]]]));
+    assert_eq!(spec.outline(Axis::Y).map(<[[f64; 2]]>::len), Some(4));
+    assert!((spec.volume() - 35_410.0).abs() < 1e-6, "{}", spec.volume());
+    assert_eq!(spec.describe(), "A 60 x 40 x 30 mm part of outlines extruded along X, Y and Z with 2 cut-outs");
+    // Each opening is drawn in its outline's sketch.
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("json");
+    let lines = |k: usize| json["features"][k]["sketch"]["curves"].as_array().expect("curves").len();
+    assert_eq!([lines(0), lines(2), lines(4)], [6, 5 + 4, 4 + 4]);
+    // ... and its extrusion takes the outline's loop (the openings its holes), not every region.
+    assert_eq!(json["features"][1]["profiles"], serde_json::json!({"type": "all"}));
+    assert_eq!(json["features"][3]["profiles"], serde_json::json!({"type": "curves", "loops": [["l1", "l2", "l3", "l4", "l5"]]}));
 }
 
 /// The design: one sketch and extrusion per outline, the first a new body and the next
@@ -123,7 +149,9 @@ fn writes_an_intersection_of_extrusions() {
 /// The spec's volume follows the outlines it holds.
 #[test]
 fn volume_of_a_spec() {
-    let spec =
-        CombinedSpec { size: [60.0, 40.0, 30.0], extrusions: vec![crate::recognize::Extrusion { axis: Axis::X, outline: RAMP.to_vec() }] };
+    let spec = CombinedSpec {
+        size: [60.0, 40.0, 30.0],
+        extrusions: vec![crate::recognize::Extrusion { axis: Axis::X, outline: RAMP.to_vec(), cutouts: vec![] }],
+    };
     assert!((spec.volume() - 950.0 * 60.0).abs() < 1e-6);
 }

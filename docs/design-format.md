@@ -68,6 +68,12 @@ body to where it is, its translation along each outline's axis `extrude_<a>_0`. 
 `extrude_x_len` from 60 to 50 on `plugin/revmesh/tests/combined.stl` rebuilds to 32,500 mm³, as
 computed, and `extrude_z_0 = 10` lifts the part by 10 mm.
 
+An outline with openings right through it draws them in its sketch after the outline (its lines
+`l1` to `l<n>` first) and extrudes `profiles: {"type": "curves", "loops": [["l1", …, "l<n>"]]}`:
+the profile whose outer loop is the outline, the loops inside it its holes. With `{"type":
+"all"}` SolidCraft extrudes every region, the openings included, and they come back filled
+(`plugin/revmesh/tests/combined-windows.stl` rebuilt to 37,000 instead of 35,410 mm³).
+
 ## Cut-outs
 
 The cut-outs of straight sides are one sketch, `CutoutsSketch`, of closed loops in world
