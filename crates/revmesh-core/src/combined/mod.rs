@@ -65,7 +65,7 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
         })
         .collect();
     // The bores' walls are set aside: an exporter may tilt their facets a little to every axis.
-    let (bores, facets) = holes::find_bores(&all, tol);
+    let (bores, facets, _) = holes::find_bores(&all, tol);
     if facets.iter().any(|(_, n)| n.iter().all(|c| c.abs() > PARALLEL)) {
         return Err(TILTED.into());
     }
@@ -84,8 +84,10 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
     }
     let mut extrusions = Vec::new();
     for axis in Axis::ALL {
-        // The facets facing along the axis, in its profile coordinates.
-        let front: Vec<[P2; 3]> = facets
+        // The facets facing along the axis, in its profile coordinates, and each bore across it as
+        // the rectangle it covers (its wall's facets, nearly edge on at its sides, would fray the
+        // silhouette; along its own axis it covers nothing).
+        let mut front: Vec<[P2; 3]> = facets
             .iter()
             .filter(|(_, n)| axis.rotate(*n)[2] > PARALLEL)
             .map(|(t, _)| {
@@ -95,6 +97,7 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
                 })
             })
             .collect();
+        front.extend(bores.iter().filter(|b| b.axis != axis).flat_map(|b| b.across(axis)));
         // One boundary (counter-clockwise) and the openings through it (clockwise).
         let rings = silhouette::loops(&front, tol)?;
         let (mut outer, openings): (Vec<Vec<P2>>, Vec<Vec<P2>>) = rings.into_iter().partition(|r| area2(r) > 0.0);
@@ -147,7 +150,17 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
              {measured:.1} mm³"
         ));
     }
-    Ok((with_holes(spec, &bores, tol)?, bounds.min.map(snap_mm)))
+    // The holes' true circles hold more than their facets did; a coarsely faceted bore may change
+    // the volume past the 1% every recognised part keeps.
+    let spec = with_holes(spec, &bores, tol)?;
+    let rounded = spec.volume();
+    if (rounded - measured).abs() > crate::plate::MAX_VOLUME_ERROR * measured.abs() {
+        return Err(format!(
+            "it is not a combination of extrusions: with its holes round it holds {rounded:.1} mm³, the mesh {measured:.1} mm³ \
+             (its holes are too coarsely faceted)"
+        ));
+    }
+    Ok((spec, bounds.min.map(snap_mm)))
 }
 
 /// The spec with each bore's round opening or round cut made a hole: a true circle, through the

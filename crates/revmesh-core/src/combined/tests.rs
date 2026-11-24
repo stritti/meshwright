@@ -296,3 +296,75 @@ fn blind_holes_from_the_far_face() {
     assert_eq!(hole["base"][2], "extrude_z_len + 1");
     assert_eq!(hole["axis"], serde_json::json!([0.0, 0.0, -1.0]));
 }
+
+/// A 20 x 20 ramp, 20 high at X = 0 and 10 at X = 20, with a radius-9 bore through it along Z of
+/// `sides` facets.
+fn ramp_with_bore(sides: u32) -> Mesh {
+    use std::f64::consts::TAU;
+    let square = [[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]];
+    let bore: Vec<[f64; 2]> =
+        (0..sides).map(|i| f64::from(i) * TAU / f64::from(sides)).map(|t| [10.0 + 9.0 * t.cos(), 10.0 + 9.0 * t.sin()]).collect();
+    let mut mesh = crate::synth::prism(&square, &[bore], 20.0, [0.0; 3]);
+    for p in mesh.triangles.iter_mut().flatten() {
+        if p[2] > 0.0 {
+            p[2] = 20.0 - p[0] / 2.0;
+        }
+    }
+    mesh
+}
+
+/// A bore ending in the ramp's slope is no round hole yet (seen across it, it covers no
+/// rectangle): it stays the opening its facets make, exactly.
+#[test]
+fn a_bore_into_a_slope_stays_an_opening() {
+    let mesh = ramp_with_bore(12);
+    let (spec, _) = recognize_combined(&mesh).expect("combined");
+    assert_eq!(spec.holes.len(), 0);
+    assert_eq!(spec.outline(Axis::Z).map(<[[f64; 2]]>::len), Some(4));
+    assert_eq!(spec.extrusions.iter().map(|e| e.cutouts.iter().map(Vec::len).sum::<usize>()).sum::<usize>(), 12);
+    // (Its corners rounded to micrometres, as every outline's are.)
+    assert!((spec.volume() - mesh.volume()).abs() < 0.2, "{} vs {}", spec.volume(), mesh.volume());
+}
+
+/// A closed 20 x 20 x 10 box with a radius-9 blind hole of `sides` facets drilled 9 deep into its
+/// top: walls from the floor at Z = 1 up to the top.
+fn box_with_blind_bore(sides: u32) -> Mesh {
+    use std::f64::consts::TAU;
+    let square = [[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]];
+    let bore: Vec<[f64; 2]> =
+        (0..sides).map(|i| f64::from(i) * TAU / f64::from(sides)).map(|t| [10.0 + 9.0 * t.cos(), 10.0 + 9.0 * t.sin()]).collect();
+    let at = |p: [f64; 2], z: f64| [p[0], p[1], z];
+    let mut t = Vec::new();
+    for [a, b, c] in crate::synth::triangulate(&square, std::slice::from_ref(&bore)) {
+        t.push([at(a, 10.0), at(b, 10.0), at(c, 10.0)]);
+    }
+    for [a, b, c] in crate::synth::triangulate(&square, &[]) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (square[i], square[(i + 1) % 4]);
+        t.extend([[at(a, 0.0), at(b, 0.0), at(b, 10.0)], [at(a, 0.0), at(b, 10.0), at(a, 10.0)]]);
+    }
+    for [a, b, c] in crate::synth::triangulate(&bore, &[]) {
+        t.push([at(a, 1.0), at(b, 1.0), at(c, 1.0)]);
+    }
+    let n = bore.len();
+    for i in 0..n {
+        let (p, q) = (bore[(i + 1) % n], bore[i]);
+        t.extend([[at(p, 1.0), at(q, 1.0), at(q, 10.0)], [at(p, 1.0), at(q, 10.0), at(p, 10.0)]]);
+    }
+    Mesh::new(t)
+}
+
+/// A coarsely faceted bore holds less than its true circle: with 12 sides 5.7% less, past the 1%
+/// a recognised part keeps; with 64 sides the hole is recognised.
+#[test]
+fn coarse_bores_keep_the_mesh() {
+    let coarse = box_with_blind_bore(12);
+    assert!(coarse.volume() > 0.0);
+    let why = recognize_combined(&coarse).expect_err("refused");
+    assert!(why.contains("too coarsely faceted"), "{why}");
+    let (spec, _) = recognize_combined(&box_with_blind_bore(64)).expect("combined");
+    let holes: Vec<_> = spec.holes.iter().map(|h| (h.axis, h.centre, h.d, h.from, h.to)).collect();
+    assert_eq!(holes, [(Axis::Z, [10.0, 10.0], 18.0, 1.0, 10.0)]);
+}

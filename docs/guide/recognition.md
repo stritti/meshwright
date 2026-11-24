@@ -41,8 +41,8 @@ These are kept as a mesh, with the reason in the report:
 - steps, pockets other than rectangles, other shapes on the top face, and bosses with a draft, a round or a hole
 - blind holes with a drill point or a counterbore
 - parts rotated off the axes
-- combined extrusions with holes that cross each other or a cut, counterbored or chamfered
-  holes, cuts that touch each other or have islands, and unions of extrusions that do not go
+- combined extrusions with holes that cross each other or a cut, round holes ending in a
+  slanted face (they stay openings of their facets), counterbored or chamfered holes, cuts that touch each other or have islands, and unions of extrusions that do not go
   right across the part
 
 The [roadmap](/guide/roadmap) lists the order in which they are coming.
