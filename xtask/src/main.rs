@@ -117,6 +117,7 @@ fn zip_package(root: &Path, locale: Locale) -> Result<PathBuf, String> {
 
 /// Runs SolidCraft's own plugin test runner on the package folder.
 fn plugin_test(root: &Path) -> Result<(), String> {
+    note_update(root);
     let cli = cli_path();
     let status = Command::new(&cli)
         .current_dir(root.join("plugin"))
@@ -156,6 +157,7 @@ fn default_cli() -> String {
 ///
 /// Fixtures that do not import (the error cases of `plugin test`) are skipped.
 fn check(root: &Path) -> Result<(), String> {
+    note_update(root);
     let cli = cli_path();
     let tests = root.join(PACKAGE_DIR).join("tests");
     let out = root.join("target").join("check");
@@ -244,6 +246,19 @@ fn check(root: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("{} of {checked} rebuilds failed:\n  {}", failures.len(), failures.join("\n  ")))
+    }
+}
+
+/// Prints a note when a newer revmesh release than this tree is out. The import flows this xtask
+/// drives (`plugin-test`, `check`) run the locally built component, whose sandbox cannot ask for
+/// newer releases itself — here, where the network exists, the fresh check happens.
+fn note_update(root: &Path) {
+    let current = manifest(root).ok().and_then(|m| m["version"].as_str().map(str::to_owned)).unwrap_or_default();
+    let latest = latest_release(root);
+    if let (Some(current), Some(latest)) = (revmesh_core::version::Version::parse(&current), revmesh_core::version::Version::parse(&latest))
+        && latest > current
+    {
+        println!("note: revmesh {latest} is out, this tree is {current}; the imports below run with {current}");
     }
 }
 

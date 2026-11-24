@@ -14,7 +14,10 @@
 //! Every import also checks whether a newer release than this build is out and notes it in the
 //! loss report. The sandbox has no network, so the newest release cannot be asked for at import
 //! time: `cargo xtask dist` bakes it into the component as `REVMESH_LATEST_VERSION` (see
-//! [`latest_release`]).
+//! [`latest_release`]). A release published after this component was packaged is therefore not
+//! visible to the plugin — the fresh check runs where the network exists, in `cargo xtask
+//! plugin-test` and `cargo xtask check`; detecting it inside SolidCraft would need a host
+//! interface in `craft:plugin` that does not exist in 0.2.0.
 //!
 //! On any other target the crate is empty: the bindings export symbols a native linker refuses,
 //! and everything worth testing natively lives in `revmesh-core`. Lint it with
