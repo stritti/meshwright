@@ -172,6 +172,7 @@ three). [AGENTS.md](AGENTS.md) is the short orientation for agents working on th
 | [`solidcraft-host-calls`](.agents/skills/solidcraft-host-calls/SKILL.md) | calling host interfaces and mapping errors |
 | [`solidcraft-importer-workflow`](.agents/skills/solidcraft-importer-workflow/SKILL.md) | implementing an importer slot end to end |
 | [`solidcraft-plugin-testing`](.agents/skills/solidcraft-plugin-testing/SKILL.md) | adding unit, golden, eval or plugin-test coverage |
+| [`revmesh-recognition-knowhow`](.agents/skills/revmesh-recognition-knowhow/SKILL.md) | adding or changing a recogniser or sketch writer — the portable building blocks from the literature (RANSAC, loop fits, dihedral segmentation, extrusion cylinders, sketch constraints, validity gates), mapped to this repo's code |
 
 ## Contributing
 
