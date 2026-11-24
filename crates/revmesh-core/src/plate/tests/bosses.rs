@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 
 use crate::mesh::Mesh;
 use crate::plate::P2;
-use crate::recognize::{BossSpec, PadSpec};
+use crate::recognize::{BossChamfer, BossSpec, PadSpec};
 use crate::synth;
 
 use super::{circle, found, reason};
@@ -13,7 +13,7 @@ use super::{circle, found, reason};
 fn recognises_bosses() {
     let mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/bosses.stl")).expect("parses");
     let (plate, _) = found(&mesh);
-    let boss = |x: f64, y: f64, d: f64, h: f64| BossSpec { x, y, d, h, fillet: None };
+    let boss = |x: f64, y: f64, d: f64, h: f64| BossSpec { x, y, d, h, fillet: None, draft_deg: None, chamfer: None };
     assert_eq!(plate.bosses, [boss(20.0, 20.0, 10.0, 5.0), boss(50.0, 25.0, 8.0, 3.0)]);
     assert_eq!((plate.z, plate.holes.len()), (6.0, 1));
     // SolidCraft measured 17,225.686 mm³ for the part it exported.
@@ -56,7 +56,7 @@ fn standing(foot: &[P2], top: &dyn Fn(P2) -> P2, h: f64) -> Mesh {
 fn bosses_must_be_straight_and_round() {
     let foot = circle([20.0, 20.0], 5.0, 32);
     let (plate, _) = found(&standing(&foot, &|p| p, 4.0));
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0, fillet: None }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }]);
     let draft = |p: P2| [20.0 + (p[0] - 20.0) * 0.9, 20.0 + (p[1] - 20.0) * 0.9];
     let (sin, cos) = (PI / 4.0).sin_cos();
     let twist = |p: P2| [20.0 + (p[0] - 20.0) * cos - (p[1] - 20.0) * sin, 20.0 + (p[0] - 20.0) * sin + (p[1] - 20.0) * cos];
@@ -65,9 +65,10 @@ fn bosses_must_be_straight_and_round() {
     assert_eq!(plate.pads, [PadSpec { x: 20.0, y: 20.0, w: 10.0, l: 10.0, h: 4.0 }]);
     let diamond = [[20.0, 14.0], [26.0, 20.0], [20.0, 26.0], [14.0, 20.0]];
     let pad_draft = |p: P2| [20.0 + (p[0] - 20.0) * 0.9, 20.0 + (p[1] - 20.0) * 0.9];
-    for mesh in
-        [standing(&foot, &draft, 4.0), standing(&foot, &twist, 4.0), standing(&diamond, &|p| p, 4.0), standing(&block, &pad_draft, 4.0)]
-    {
+    // A boss narrowing straight up to a top of 0.9 times its radius is drafted, by
+    // atan(0.5 / 4) = 7.13°.
+    assert_eq!(found(&standing(&foot, &draft, 4.0)).0.bosses[0].draft_deg, Some(7.13));
+    for mesh in [standing(&foot, &twist, 4.0), standing(&diamond, &|p| p, 4.0), standing(&block, &pad_draft, 4.0)] {
         reason(&mesh);
     }
 }
@@ -93,7 +94,7 @@ fn bosses_larger_than_the_plate_face() {
     }
     mesh = Mesh::new(t);
     let (plate, _) = found(&mesh);
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 34.0, h: 4.0, fillet: None }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 34.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }]);
 }
 
 #[test]
@@ -104,7 +105,7 @@ fn split_boss_footprints() {
         .flat_map(|i| [foot[i], [f64::midpoint(foot[i][0], foot[(i + 1) % n][0]), f64::midpoint(foot[i][1], foot[(i + 1) % n][1])]])
         .collect();
     let (plate, _) = found(&standing(&split, &|p| p, 4.0));
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0, fillet: None }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }]);
 }
 
 /// A 70 x 40 x 6 plate exported from SolidCraft 0.48 with an Ø10 x 8 boss whose foot is rounded
@@ -113,7 +114,7 @@ fn split_boss_footprints() {
 fn recognises_rounded_boss_feet() {
     let mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/boss-fillet.stl")).expect("parses");
     let (plate, _) = found(&mesh);
-    let boss = |x: f64, y: f64, d: f64, h: f64, fillet: Option<f64>| BossSpec { x, y, d, h, fillet };
+    let boss = |x: f64, y: f64, d: f64, h: f64, fillet: Option<f64>| BossSpec { x, y, d, h, fillet, draft_deg: None, chamfer: None };
     assert_eq!(plate.bosses, [boss(20.0, 20.0, 10.0, 8.0, Some(2.0)), boss(50.0, 22.0, 8.0, 5.0, None)]);
     // SolidCraft measured 17,633.625 mm³ for the part it exported.
     assert!((plate.volume() - 17_633.625).abs() < 0.001, "{}", plate.volume());
@@ -163,7 +164,7 @@ fn rounded_feet_and_chamfered_feet() {
     let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
     rings.push((r, 8.0));
     let (plate, _) = found(&layered_boss(&rings, 48));
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }]);
     reason(&layered_boss(&[(r + f, 0.0), (r, f), (r, 8.0)], 48));
 }
 
@@ -175,7 +176,7 @@ fn rounded_feet_in_two_bands() {
     let mut rings: Vec<(f64, f64)> = [0.0, PI / 4.0, PI / 2.0].iter().map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
     rings.push((r, 8.0));
     let (plate, _) = found(&layered_boss(&rings, 48));
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 20.0, h: 8.0, fillet: Some(2.0) }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 20.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }]);
 }
 
 /// A rounded boss of only 16 facets round, its top a polygon well inside the circle; a cone
@@ -187,8 +188,10 @@ fn rounded_feet_coarse_coned_and_split() {
     let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
     rings.push((r, 8.0));
     let (plate, _) = found(&layered_boss(&rings, 16));
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
-    reason(&layered_boss(&[(6.0, 0.0), (2.0, 4.1)], 48));
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }]);
+    // A cone from the footprint straight up to a smaller top is a drafted boss, no round.
+    let (plate, _) = found(&layered_boss(&[(6.0, 0.0), (2.0, 4.1)], 48));
+    assert_eq!((plate.bosses[0].draft_deg, plate.bosses[0].fillet), (Some(44.29), None));
     // A 45° chamfer in four bands, on a coarse boss of 8 facets round, is no 1 mm round.
     reason(&layered_boss(&[(6.0, 0.0), (5.75, 0.25), (5.5, 0.5), (5.25, 0.75), (5.0, 1.0), (5.0, 8.0)], 8));
     let mut split = layered_boss(&rings, 48);
@@ -230,7 +233,7 @@ fn rounded_boss_tops_with_corners_near_the_rim() {
         mesh.triangles.extend([[c, a, q], [a, b, q], [b, c, q]]);
     }
     let (plate, _) = found(&mesh);
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }]);
 }
 
 /// A round of 60 bands on an Ø10 boss: its first band rises less than the tolerance and lies in
@@ -242,7 +245,7 @@ fn finely_banded_rounds_and_twisted_walls() {
     let mut rings: Vec<(f64, f64)> = (0..=60).map(|k| f64::from(k) * PI / 120.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
     rings.push((r, 8.0));
     let (plate, _) = found(&layered_boss(&rings, 48));
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }]);
     let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
     rings.push((r, 8.0));
     let mesh = layered_boss(&rings, 48);
@@ -278,7 +281,7 @@ fn rounded_feet_fine_round_and_far_away() {
         rings.push((r, 8.0));
         rings
     };
-    let expected = [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }];
+    let expected = [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }];
     assert_eq!(found(&layered_boss(&rings(6), 192)).0.bosses, expected);
     let mesh = layered_boss(&rings(30), 48);
     #[allow(clippy::cast_possible_truncation)] // single precision, as a binary STL stores it
@@ -298,7 +301,10 @@ fn rounded_feet_tiny_round_and_open_top() {
     let (r, f) = (5.0, 0.1);
     let mut rings: Vec<(f64, f64)> = (0..=30).map(|k| f64::from(k) * PI / 60.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
     rings.push((r, 8.0));
-    assert_eq!(found(&layered_boss(&rings, 48)).0.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(0.1) }]);
+    assert_eq!(
+        found(&layered_boss(&rings, 48)).0.bosses,
+        [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(0.1), draft_deg: None, chamfer: None }]
+    );
     let f = 2.0;
     let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
     rings.push((r, 8.0));
@@ -333,5 +339,33 @@ fn split_round_facets() {
     let [a, b, c] = mesh.triangles.swap_remove(k);
     let m = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0];
     mesh.triangles.extend([[a, b, m], [b, c, m], [c, a, m]]);
-    assert_eq!(found(&mesh).0.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
+    assert_eq!(found(&mesh).0.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }]);
+}
+
+/// A 70 x 40 x 6 plate exported from SolidCraft 0.48 with an Ø12 x 8 boss drafted by 5°, an
+/// Ø10 x 6 boss whose top edge is chamfered by 1 mm, and an Ø4 hole.
+#[test]
+fn recognises_drafted_and_chamfered_bosses() {
+    let mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/boss-draft-chamfer.stl")).expect("parses");
+    let (plate, _) = found(&mesh);
+    let boss = |x: f64, y: f64, d: f64, h: f64| BossSpec { x, y, d, h, fillet: None, draft_deg: None, chamfer: None };
+    assert_eq!(
+        plate.bosses,
+        [
+            BossSpec { draft_deg: Some(5.0), ..boss(20.0, 20.0, 12.0, 8.0) },
+            BossSpec { chamfer: Some(BossChamfer { w: 1.0, h: 1.0 }), ..boss(50.0, 22.0, 10.0, 6.0) },
+        ]
+    );
+    // SolidCraft measured 17,984.519 mm³ for the part it exported.
+    assert!((plate.volume() - 17_984.519).abs() < 0.001, "{}", plate.volume());
+}
+
+/// Chamfers of a synthetic boss's top edge, 45° and not, are found; a wall that bends twice on
+/// its way up is neither a draft nor a chamfer.
+#[test]
+fn chamfered_boss_tops() {
+    let chamfer = |rings: &[(f64, f64)]| found(&layered_boss(rings, 48)).0.bosses[0].chamfer;
+    assert_eq!(chamfer(&[(5.0, 0.0), (5.0, 7.0), (4.0, 8.0)]), Some(BossChamfer { w: 1.0, h: 1.0 }));
+    assert_eq!(chamfer(&[(5.0, 0.0), (5.0, 7.5), (3.5, 8.0)]), Some(BossChamfer { w: 1.5, h: 0.5 }));
+    reason(&layered_boss(&[(5.0, 0.0), (5.0, 6.0), (4.6, 7.0), (4.0, 8.0)], 48));
 }

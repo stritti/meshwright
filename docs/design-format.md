@@ -96,6 +96,26 @@ volume SolidCraft measured for the part it exported (the round adds `2π (f² (r
 `base_t = 8` it rebuilt without errors to 23,536.520 mm³, as computed, and exported again it is
 recognised with those values.
 
+## Drafted and chamfered bosses
+
+A drafted boss is a `cone` (`base`, `axis`, `radius`, `top_radius`, `height`, `operation:
+"join"`) whose `top_radius` is `boss_<n>_d / 2 - boss_<n>_h * tan(boss_<n>_draft_deg)`
+(SolidCraft's expressions know `tan` of an angle parameter). A boss with a chamfered top edge is
+the `cylinder`, followed by a `chamfer` (`edge_names: ["F<cylinder>:side|F<cylinder>:top"]`,
+`edges`, `distance`, and `distance2` when the two differ). The first distance runs along the
+face facing up most, the top: `boss_<n>_chamfer_w` in from the side, `distance2` the
+`boss_<n>_chamfer_h` down it; a 45° chamfer is one `boss_<n>_chamfer`, as mesh2cad writes it.
+In the mesh such a boss's top is narrower than its footprint; its wall is checked against the
+profile of each kind in turn (a round at the foot, a straight cone, a cylinder and then the
+chamfer), every corner and edge middle on it round the axis. `boss-draft-chamfer.stl` (exported
+by SolidCraft 0.48: a 70 x 40 x 6 plate with an Ø12 x 8 boss drafted by 5°, an Ø10 x 6 boss
+chamfered by 1 mm at its top and an Ø4 hole) imports to 17,984.519 mm³, the volume SolidCraft
+measured for the part it exported; with `boss_1_draft_deg = 8`, `boss_1_h = 7`,
+`boss_2_chamfer = 1.5`, `boss_2_d = 11` and `base_t = 8` it rebuilt without errors to
+23,503.294 mm³, as computed, and exported again it is recognised with those values. A 1.5 x 0.5
+chamfer (`distance: 1.5 mm, distance2: 0.5 mm`) comes back as `boss_1_chamfer_w = 1.5`,
+`boss_1_chamfer_h = 0.5` and rebuilds to the volume SolidCraft measured.
+
 ## Pads and pockets
 
 A pad is a `box` joined to the plate, its corner at `[pad_<n>_x - pad_<n>_w / 2, pad_<n>_y -

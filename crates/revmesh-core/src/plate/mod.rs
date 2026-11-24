@@ -49,12 +49,20 @@ pub(crate) use outline::{corner_loss, edge_fillet_removed, fillet_loss};
 
 use std::f64::consts::PI;
 
-use bosses::strip_bosses;
+use bosses::{Shape, strip_bosses};
 use holes::Footprint;
 use prism::recognize_prism;
 
 use crate::mesh::{Mesh, snap_mm};
-use crate::recognize::{BossSpec, PadSpec, Recognition};
+use crate::recognize::{BossChamfer, BossSpec, PadSpec, Recognition};
+
+/// An angle in radians as a parameter in degrees: a whole degree when that moves a point
+/// `reach` away by no more than a micrometre, else a hundredth of one.
+fn snap_angle(angle: f64, reach: f64) -> f64 {
+    let degrees = angle.to_degrees();
+    let whole = degrees.round();
+    if ((whole - degrees).to_radians() * reach).abs() <= 1e-3 { whole } else { (degrees * 100.0).round() / 100.0 }
+}
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
 pub const MAX_VOLUME_ERROR: f64 = 0.01;
@@ -164,10 +172,15 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         let h = snap_mm(b.top - top);
         match b.foot {
             Footprint::Round { r, .. } => {
-                // A round foot widens the footprint by its radius beyond the cylinder.
-                let fillet = (b.fillet > 0.0).then(|| snap_mm(b.fillet));
-                let d = if b.fillet > 0.0 { 2.0 * b.wall_r } else { 2.0 * r };
-                bosses.push(BossSpec { x, y, d: snap_mm(d), h, fillet });
+                let mut boss = BossSpec { x, y, d: snap_mm(2.0 * r), h, fillet: None, draft_deg: None, chamfer: None };
+                match b.shape {
+                    Shape::Straight => {}
+                    // A round foot widens the footprint by its radius beyond the cylinder.
+                    Shape::Fillet => (boss.d, boss.fillet) = (snap_mm(2.0 * b.wall_r), Some(snap_mm(b.fillet))),
+                    Shape::Draft => boss.draft_deg = Some(snap_angle((r - b.wall_r).atan2(b.top - top), b.top - top)),
+                    Shape::Chamfer { w, h: down } => boss.chamfer = Some(BossChamfer { w: snap_mm(w), h: snap_mm(down) }),
+                }
+                bosses.push(boss);
             }
             Footprint::Rect { lo, hi } => pads.push(PadSpec { x, y, w: snap_mm(hi[0] - lo[0]), l: snap_mm(hi[1] - lo[1]), h }),
         }

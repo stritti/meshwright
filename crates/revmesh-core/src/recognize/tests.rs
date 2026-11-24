@@ -234,7 +234,7 @@ fn bosses_become_cylinders() {
         cutouts: vec![],
         pads: vec![],
         pockets: vec![],
-        bosses: vec![BossSpec { x: 20.0, y: 15.0, d: 10.0, h: 4.0, fillet: None }],
+        bosses: vec![BossSpec { x: 20.0, y: 15.0, d: 10.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }],
         outline_fillet_r: None,
         edge_fillet_r: None,
     };
@@ -579,4 +579,49 @@ fn y_extrusion_negates_the_second_profile_coordinate_in_expressions() {
     let p6 = &slot_sketch["sketch"]["points"][8];
     assert_eq!(p6["exprs"]["x"], "slot_1_y");
     assert_eq!(p6["exprs"]["y"], "slot_1_z");
+}
+
+/// A drafted boss is a cone narrowing by its angle; a chamfered one a cylinder and a chamfer of
+/// its top edge, one distance for 45°, two otherwise (along the top first).
+#[test]
+fn drafted_and_chamfered_bosses_in_the_design() {
+    use super::spec::BossChamfer;
+    let boss = |x: f64| BossSpec { x, y: 20.0, d: 10.0, h: 6.0, fillet: None, draft_deg: None, chamfer: None };
+    let spec = PlateSpec {
+        x: 80.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![],
+        slots: vec![],
+        bosses: vec![
+            BossSpec { draft_deg: Some(5.0), ..boss(15.0) },
+            BossSpec { chamfer: Some(BossChamfer { w: 1.0, h: 1.0 }), ..boss(40.0) },
+            BossSpec { chamfer: Some(BossChamfer { w: 1.5, h: 0.5 }), ..boss(65.0) },
+        ],
+        pads: vec![],
+        pockets: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+        edge_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let named = |name: &str| features.iter().find(|f| f["name"] == name).expect(name).clone();
+    assert_eq!(named("Boss1")["type"], "cone");
+    assert_eq!(named("Boss1")["top_radius"], "boss_1_d / 2 - boss_1_h * tan(boss_1_draft_deg)");
+    assert_eq!(named("Boss2Chamfer")["distance"], "boss_2_chamfer");
+    assert_eq!(
+        (named("Boss3Chamfer")["distance"].as_str(), named("Boss3Chamfer")["distance2"].as_str()),
+        (Some("boss_3_chamfer_w"), Some("boss_3_chamfer_h"))
+    );
+    let params: Vec<&str> = json["params"].as_array().expect("params").iter().filter_map(|p| p["name"].as_str()).collect();
+    for name in ["boss_1_draft_deg", "boss_2_chamfer", "boss_3_chamfer_h", "boss_3_chamfer_w"] {
+        assert!(params.contains(&name), "{name}");
+    }
+    let r = 5.0_f64;
+    let top = r - 6.0 * 5.0_f64.to_radians().tan();
+    let cone = std::f64::consts::PI * 6.0 / 3.0 * (r * r + r * top + top * top);
+    let cylinder = std::f64::consts::PI * 25.0 * 6.0;
+    let cut = |w: f64, h: f64| 2.0 * std::f64::consts::PI * (r - w / 3.0) * w * h / 2.0;
+    assert!((spec.volume() - (80.0 * 40.0 * 6.0 + cone + 2.0 * cylinder - cut(1.0, 1.0) - cut(1.5, 0.5))).abs() < 1e-9);
 }

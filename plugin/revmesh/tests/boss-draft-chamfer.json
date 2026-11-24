@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "boss-draft-chamfer.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 7, "loss_report": {"summary": "A 70 x 40 x 6 mm plate with 1 hole and 2 bosses"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 17984.518706}},
+    "tolerance": 1e-4
+  }
+}

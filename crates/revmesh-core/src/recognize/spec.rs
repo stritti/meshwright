@@ -78,6 +78,20 @@ pub struct BossSpec {
     pub h: f64,
     /// The radius of the round where the boss meets the top face, if it has one.
     pub fillet: Option<f64>,
+    /// The taper of a drafted boss (a cone narrowing upwards), degrees from the axis: `d` is
+    /// then its diameter at the top face.
+    pub draft_deg: Option<f64>,
+    /// A chamfer of the boss's top edge: `w` in from the side, `h` down from the top.
+    pub chamfer: Option<BossChamfer>,
+}
+
+/// A chamfer of a boss's top edge.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BossChamfer {
+    /// How far in from the side it reaches on the top.
+    pub w: f64,
+    /// How far down from the top it reaches on the side.
+    pub h: f64,
 }
 
 impl BossSpec {
@@ -89,7 +103,14 @@ impl BossSpec {
         use std::f64::consts::PI;
         let r = self.d / 2.0;
         let ring = self.fillet.map_or(0.0, |f| 2.0 * PI * (f * f * (r + f / 2.0) - PI * f * f / 4.0 * (r + f) + f.powi(3) / 3.0));
-        PI * r * r * self.h + ring
+        if let Some(draft) = self.draft_deg {
+            // A frustum from the full radius at the face to the top's.
+            let top = r - self.h * draft.to_radians().tan();
+            return PI * self.h / 3.0 * (r * r + r * top + top * top) + ring;
+        }
+        // A chamfer takes off the triangle `w` x `h` swept about the axis at its centroid.
+        let chamfer = self.chamfer.map_or(0.0, |c| 2.0 * PI * (r - c.w / 3.0) * c.w * c.h / 2.0);
+        PI * r * r * self.h + ring - chamfer
     }
 }
 
