@@ -480,4 +480,41 @@ mod tests {
     fn rejects_garbage() {
         assert_eq!(parse(b"hello"), Err(StlError::TooShort));
     }
+
+    #[test]
+    fn errors_say_what_is_wrong() {
+        let cases = [
+            (StlError::TooShort, "too short"),
+            (StlError::Truncated { expected: 4, actual: 90 }, "announces 4 triangles"),
+            (StlError::Syntax { line: 4, reason: "bad".into() }, "line 4"),
+            (StlError::NonFinite { triangle: 2 }, "triangle 2"),
+            (StlError::OutOfRange { triangle: 3 }, "triangle 3"),
+            (StlError::SizeLimit { size: 9, max_bytes: 8 }, "at most 8 bytes"),
+            (StlError::Allocation, "not enough memory"),
+            (StlError::Empty, "no triangles"),
+        ];
+        for (error, fragment) in cases {
+            assert!(error.to_string().contains(fragment), "{error}");
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_ascii_loops() {
+        let wrap = |body: &str| format!("solid t\nfacet normal 0 0 1\nouter loop\n{body}\nendloop\nendfacet\nendsolid t\n");
+        // A fourth vertex in one loop.
+        let text = wrap("vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nvertex 1 1 0");
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("three vertices")));
+        // A coordinate that is not a number.
+        let text = wrap("vertex 0 x 0\nvertex 1 0 0\nvertex 0 1 0");
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("bad coordinate")));
+        // A fourth coordinate.
+        let text = wrap("vertex 0 0 0 0\nvertex 1 0 0\nvertex 0 1 0");
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("three coordinates")));
+        // A loop closed with two vertices.
+        let text = wrap("vertex 0 0 0\nvertex 1 0 0");
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("this one has 2")));
+        // A keyword where it does not belong.
+        let text = "solid t\nfacet normal 0 0 1\nouter loop\nfacet normal 0 0 1\nendloop\nendfacet\nendsolid t\n";
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("unexpected facet")));
+    }
 }

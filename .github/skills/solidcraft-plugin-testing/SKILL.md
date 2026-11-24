@@ -55,19 +55,20 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy -p revmesh-plugin -p revmesh-core --target wasm32-unknown-unknown -- -D warnings
 cargo test --workspace
 cargo deny check          # cargo install cargo-deny
-cargo llvm-cov -p revmesh-core --fail-under-lines 80   # coverage gate >= 80% (llvm-tools-preview + cargo-llvm-cov)
+cargo llvm-cov --workspace --fail-under-lines 80   # coverage gate >= 80% lines, whole workspace (llvm-tools-preview + cargo-llvm-cov)
 cargo xtask dist          # component build + 64 MiB size gate
 cargo xtask plugin-test   # if you have SolidCraft
 ```
 
-## Coverage gate: at least 80% lines on revmesh-core
+## Coverage gate: at least 80% lines, whole workspace
 
 The CI `coverage` job (`.github/workflows/ci.yml`) is a required check (`ci-ok` needs it) and
-fails below 80% total line coverage: `cargo llvm-cov -p revmesh-core --lcov --fail-under-lines 80`
-(exit 1 under the threshold). Run it locally with `llvm-tools-preview` and `cargo-llvm-cov`
-installed. Current coverage is about 97%; when the gate trips, the `coverage-lcov` artifact has
-per-file line numbers. New code must come with tests that keep coverage >= 80%. Only
-`revmesh-core` is measured — the plugin crate is empty on native targets.
+fails below 80% total line coverage: `cargo llvm-cov --workspace --lcov --fail-under-lines 80`
+(exit 1 under the threshold). The lcov is also uploaded to Codecov (badge in the README). Run it
+locally with `llvm-tools-preview` and `cargo-llvm-cov` installed. Current coverage is about 95%;
+when the gate trips, the `coverage-lcov` artifact has per-file line numbers. New code must come
+with tests that keep coverage >= 80%. The whole workspace is measured, no source excluded — the
+plugin crate is empty on native targets, so effectively `revmesh-core` plus `xtask` count.
 
 CI also runs tests on Windows and macOS, an MSRV job (`rust-version` in the root `Cargo.toml`),
 and `cargo doc -p revmesh-core --no-deps` with `-D warnings` on rustdoc.

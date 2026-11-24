@@ -1,6 +1,7 @@
 # revmesh
 
 [![CI](https://github.com/stritti/revmesh/actions/workflows/ci.yml/badge.svg)](https://github.com/stritti/revmesh/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/stritti/revmesh/branch/main/graph/badge.svg)](https://codecov.io/gh/stritti/revmesh)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-stritti.github.io%2Frevmesh-3e7bd6.svg)](https://stritti.github.io/revmesh/)
 

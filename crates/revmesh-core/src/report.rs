@@ -59,3 +59,35 @@ pub struct LossItem {
     /// A stable code for this kind of loss.
     pub code: &'static str,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_serialises_to_the_interface_json() {
+        let mut report = LossReport::new("imported as a mesh body");
+        report.push(LossItem {
+            severity: Severity::Degraded,
+            title: "The outline was kept as a mesh".into(),
+            subject: "the outline".into(),
+            message: "no single radius fits every corner".into(),
+            code: "outline_fillet",
+        });
+        let json: serde_json::Value = serde_json::from_str(&report.to_json()).expect("valid JSON");
+        assert_eq!(json["summary"], "imported as a mesh body");
+        assert_eq!(json["items"].as_array().expect("items").len(), 1);
+        assert_eq!(json["items"][0]["severity"], "degraded");
+        assert_eq!(json["items"][0]["title"], "The outline was kept as a mesh");
+        assert_eq!(json["items"][0]["code"], "outline_fillet");
+    }
+
+    #[test]
+    fn an_empty_report_carries_nothing_lost() {
+        let report = LossReport::default();
+        assert_eq!(report, LossReport::new(""));
+        let json: serde_json::Value = serde_json::from_str(&report.to_json()).expect("valid JSON");
+        assert_eq!(json["items"], serde_json::json!([]));
+        assert_eq!(serde_json::to_string(&Severity::Info).expect("serialises"), "\"info\"");
+    }
+}
