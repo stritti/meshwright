@@ -230,7 +230,7 @@ fn outline_and_cutout_sides_are_dimensioned() {
     assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 4);
     for c in lengths.iter().enumerate() {
         let (_, i) = c;
-        let length = &constraints.iter().find(|c| c["type"] == "length" && c["l"].as_u64() == Some(*i as u64)).expect("length");
+        let length = &constraints.iter().find(|c| c["type"] == "length" && c["l"].as_u64() == Some(*i)).expect("length");
         let model = length["param"].as_str().expect("param");
         let (expr, is_model) = param(model).expect("model param");
         assert!(is_model);
