@@ -256,6 +256,9 @@ impl PlateSpec {
             FeatureKind::Move {
                 bodies: vec!["Body1".into()],
                 translate: ["base_cx - base_x / 2".into(), "base_cy - base_y / 2".into(), "base_z0".into()],
+                rotate_axis: None,
+                origin: None,
+                angle: None,
             },
         );
         cutout_features(&mut b, &self.cutouts, at);
@@ -304,6 +307,41 @@ impl PlateSpec {
     }
 }
 
+/// The world axis a part is extruded along.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Axis {
+    /// Along X: the outline lies in the YZ plane.
+    X,
+    /// Along Y: the outline lies in the ZX plane.
+    Y,
+    /// Along Z, as a plate lies.
+    #[default]
+    Z,
+}
+
+impl Axis {
+    /// A point of the world in the frame the part is recognised in, where it is extruded along
+    /// Z. The frame's axes are the world's turned (X: frame X, Y, Z are world Y, Z, X; Y: they
+    /// are world Z, X, Y).
+    #[must_use]
+    pub fn to_frame(self, p: Vec3) -> Vec3 {
+        match self {
+            Self::X => [p[1], p[2], p[0]],
+            Self::Y => [p[2], p[0], p[1]],
+            Self::Z => p,
+        }
+    }
+
+    /// The world letters of the frame's X and Y, for parameter names.
+    fn letters(self) -> [&'static str; 2] {
+        match self {
+            Self::X => ["y", "z"],
+            Self::Y => ["z", "x"],
+            Self::Z => ["x", "y"],
+        }
+    }
+}
+
 /// A plate whose outline is any polygon of straight sides (counter-clockwise, in the first
 /// quadrant), extruded up from the XY plane, with vertical through holes.
 #[derive(Debug, Clone, PartialEq)]
@@ -324,6 +362,9 @@ pub struct ProfileSpec {
     pub pockets: Vec<PocketSpec>,
     /// Openings of straight sides through the plate, each its corners counter-clockwise.
     pub cutouts: Vec<Vec<[f64; 2]>>,
+    /// The world axis it is extruded along. Everything else is given in the frame where that
+    /// axis is Z (see [`Axis::to_frame`]).
+    pub axis: Axis,
     /// The radius of every vertical corner edge, inside and outside corners alike, if they are
     /// rounded.
     pub outline_fillet_r: Option<f64>,
@@ -373,7 +414,13 @@ impl ProfileSpec {
         b.feature(
             "Move1",
             vec![],
-            FeatureKind::Move { bodies: vec!["Body1".into()], translate: [fmt_number(at[0]), fmt_number(at[1]), "extrude_0".into()] },
+            FeatureKind::Move {
+                bodies: vec!["Body1".into()],
+                translate: [fmt_number(at[0]), fmt_number(at[1]), "extrude_0".into()],
+                rotate_axis: None,
+                origin: None,
+                angle: None,
+            },
         );
         if self.outline_fillet_r.is_some() {
             let n = self.corners.len();
@@ -393,19 +440,84 @@ impl ProfileSpec {
         slot_features(&mut b, &self.slots, at);
         boss_features(&mut b, &self.bosses, "extrude_0 + extrude_len");
         block_features(&mut b, &self.pads, &self.pockets, "extrude_0 + extrude_len", "extrude_0");
-        b.build()
+        // Built where the axis is Z: turn the body into place, and name positions by the world's
+        // axes (an X-axis part's `hole_1_x` lies along world Y and becomes `hole_1_y`).
+        let angle = match self.axis {
+            Axis::Z => None,
+            Axis::X => Some("120 deg"),
+            Axis::Y => Some("240 deg"),
+        };
+        if let Some(angle) = angle {
+            b.feature(
+                "Turn1",
+                vec![],
+                FeatureKind::Move {
+                    bodies: vec!["Body1".into()],
+                    translate: ["0".into(), "0".into(), "0".into()],
+                    rotate_axis: Some([1.0, 1.0, 1.0]),
+                    origin: Some([0.0; 3]),
+                    angle: Some(angle.into()),
+                },
+            );
+        }
+        let mut design = b.build();
+        if self.axis != Axis::Z {
+            let [x, y] = self.axis.letters();
+            let renames = design
+                .params
+                .iter()
+                .filter(|p| !p.model)
+                .filter_map(|p| {
+                    let name = &p.name;
+                    let renamed = [("_cx", format!("_c{x}")), ("_cy", format!("_c{y}")), ("_x", format!("_{x}")), ("_y", format!("_{y}"))]
+                        .into_iter()
+                        .find_map(|(suffix, new)| name.strip_suffix(suffix).map(|stem| format!("{stem}{new}")))?;
+                    Some((name.clone(), renamed))
+                })
+                .collect();
+            design.rename(renames);
+        }
+        design
     }
 
     /// One line describing the plate, for the loss report.
     #[must_use]
     pub fn describe(&self) -> String {
-        let size = self.size();
-        describe(
-            [size[0], size[1], self.z],
+        // The sizes along the world's X, Y and Z.
+        let [a, b] = self.size();
+        let size = match self.axis {
+            Axis::X => [self.z, a, b],
+            Axis::Y => [b, self.z, a],
+            Axis::Z => [a, b, self.z],
+        };
+        let text = describe(
+            size,
             Some(self.corners.len()),
             [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
             self.outline_fillet_r,
-        )
+        );
+        match self.axis {
+            Axis::Z => text,
+            Axis::X => format!("{text}, extruded along X"),
+            Axis::Y => format!("{text}, extruded along Y"),
+        }
+    }
+
+    /// A plate found in a turned frame as an outline extruded along `axis`.
+    #[must_use]
+    pub fn from_plate(plate: PlateSpec, axis: Axis) -> Self {
+        Self {
+            corners: vec![[0.0, 0.0], [plate.x, 0.0], [plate.x, plate.y], [0.0, plate.y]],
+            z: plate.z,
+            holes: plate.holes,
+            slots: plate.slots,
+            bosses: plate.bosses,
+            pads: plate.pads,
+            pockets: plate.pockets,
+            cutouts: plate.cutouts,
+            axis,
+            outline_fillet_r: plate.outline_fillet_r,
+        }
     }
 
     /// The size of the outline's bounding box along X and Y.
@@ -994,12 +1106,43 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             cutouts: vec![vec![[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]]],
+            axis: Axis::Z,
             outline_fillet_r: Some(5.0),
         };
         let json: serde_json::Value = serde_json::from_str(&ell.to_design("").to_json()).expect("valid");
         let names: Vec<String> =
             json["features"].as_array().expect("features").iter().filter_map(|f| f["name"].as_str().map(String::from)).collect();
         assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Fillet1", "CutoutsSketch", "Cutouts", "Hole1"]);
+    }
+
+    /// An outline extruded along X is built where the axis is Z and turned into place at the end;
+    /// its positions are named by the world's axes.
+    #[test]
+    fn outlines_along_x_are_turned_and_renamed() {
+        let spec = ProfileSpec {
+            corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+            z: 8.0,
+            holes: vec![HoleSpec { x: 20.0, y: 15.0, d: 5.0, head: None, blind: None }],
+            slots: vec![],
+            bosses: vec![],
+            pads: vec![],
+            pockets: vec![],
+            cutouts: vec![],
+            axis: Axis::X,
+            outline_fillet_r: None,
+        };
+        let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+        let names: Vec<&str> =
+            json["params"].as_array().expect("params").iter().filter(|p| p["model"] == false).filter_map(|p| p["name"].as_str()).collect();
+        assert_eq!(names, ["extrude_len", "extrude_0", "hole_1_y", "hole_1_z", "hole_1_d"]);
+        let features = json["features"].as_array().expect("features");
+        let hole = features.iter().find(|f| f["type"] == "hole").expect("hole");
+        assert_eq!(hole["at"], serde_json::json!(["hole_1_y", "hole_1_z", "extrude_0 + extrude_len"]));
+        let turn = features.last().expect("features");
+        assert_eq!((turn["type"].as_str(), turn["angle"].as_str()), (Some("move"), Some("120 deg")));
+        assert_eq!(turn["rotate_axis"], serde_json::json!([1.0, 1.0, 1.0]));
+        assert_eq!(spec.describe(), "A 8 x 60 x 40 mm plate with a 4-sided outline and 1 hole, extruded along X");
+        assert_eq!(Axis::X.to_frame([1.0, 2.0, 3.0]), [2.0, 3.0, 1.0]);
     }
 
     /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face
@@ -1089,6 +1232,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
+            axis: Axis::Z,
             outline_fillet_r: Some(2.0),
         };
         assert_eq!(spec.describe(), "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 2 mm rounded corners");
@@ -1113,6 +1257,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
+            axis: Axis::Z,
             outline_fillet_r: Some(2.0),
         };
         let corner = (4.0 - std::f64::consts::PI) / 4.0 * 4.0;
@@ -1133,6 +1278,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
+            axis: Axis::Z,
             outline_fillet_r: Some(5.0),
         };
         let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");

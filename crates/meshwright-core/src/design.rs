@@ -30,6 +30,9 @@ pub struct Design {
     next_id: u32,
     reserved_body_names: Vec<String>,
     next_component_color_index: u32,
+    /// Names to give identifiers in every name and expression when the design is written.
+    #[serde(skip)]
+    renames: Vec<(String, String)>,
 }
 
 impl Design {
@@ -40,13 +43,43 @@ impl Design {
     /// Never: every field serialises (no maps with non-string keys, no failing `Serialize`).
     #[must_use]
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).expect("a design always serialises")
+        if self.renames.is_empty() { serde_json::to_string(self).expect("a design always serialises") } else { self.renamed().to_string() }
+    }
+
+    /// Renames identifiers: `old` becomes `new` wherever it stands as a whole identifier in a
+    /// parameter's name or expression (at once) or in a feature (when the design is written).
+    pub fn rename(&mut self, renames: Vec<(String, String)>) {
+        for param in &mut self.params {
+            param.name = rename_identifiers(&param.name, &renames);
+            param.expr = rename_identifiers(&param.expr, &renames);
+        }
+        self.renames = renames;
+    }
+
+    /// The design as a JSON value with [`Design::rename`]'s names applied.
+    fn renamed(&self) -> serde_json::Value {
+        fn walk(value: &mut serde_json::Value, renames: &[(String, String)]) {
+            match value {
+                serde_json::Value::String(text) => *text = rename_identifiers(text, renames),
+                serde_json::Value::Array(items) => items.iter_mut().for_each(|v| walk(v, renames)),
+                serde_json::Value::Object(map) => map.values_mut().for_each(|v| walk(v, renames)),
+                _ => {}
+            }
+        }
+        let mut value = serde_json::to_value(self).expect("a design always serialises");
+        // The parameters are renamed already: renaming them again could chain (`_x` to `_y` to `_z`).
+        walk(&mut value["features"], &self.renames);
+        value
     }
 
     /// Writes the design as JSON to `writer` as it is serialised, without building it in memory
     /// first. The plugin writes large mesh designs this way.
     pub fn write_json<W: std::io::Write>(&self, writer: W) -> std::io::Result<()> {
-        serde_json::to_writer(writer, self).map_err(std::io::Error::other)
+        if self.renames.is_empty() {
+            serde_json::to_writer(writer, self).map_err(std::io::Error::other)
+        } else {
+            serde_json::to_writer(writer, &self.renamed()).map_err(std::io::Error::other)
+        }
     }
 
     /// The design as indented JSON, for golden files and reading by eye.
@@ -56,8 +89,32 @@ impl Design {
     /// Never, as [`Design::to_json`].
     #[must_use]
     pub fn to_json_pretty(&self) -> String {
-        serde_json::to_string_pretty(self).expect("a design always serialises")
+        if self.renames.is_empty() {
+            serde_json::to_string_pretty(self).expect("a design always serialises")
+        } else {
+            serde_json::to_string_pretty(&self.renamed()).expect("a value always serialises")
+        }
     }
+}
+
+/// `text` with each whole identifier (letters, digits and `_`) that `renames` names replaced.
+fn rename_identifiers(text: &str, renames: &[(String, String)]) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        out.push_str(renames.iter().find(|(old, _)| old == word).map_or(word.as_str(), |(_, new)| new.as_str()));
+        word.clear();
+    };
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
 }
 
 /// A named parameter.
@@ -202,12 +259,22 @@ pub enum FeatureKind {
         /// What it does to existing bodies.
         operation: Operation,
     },
-    /// A move of whole bodies, by a translation whose three parts are expressions.
+    /// A move of whole bodies, by a translation whose three parts are expressions, after an
+    /// optional turn by `angle` about `rotate_axis` through `origin`.
     Move {
         /// The bodies it moves.
         bodies: Vec<String>,
         /// The translation along X, Y and Z.
         translate: [String; 3],
+        /// The axis of the turn.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rotate_axis: Option<[f64; 3]>,
+        /// A point on that axis.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        origin: Option<[f64; 3]>,
+        /// The angle of the turn (an expression).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        angle: Option<String>,
     },
     /// A constant-radius fillet.
     Fillet {
@@ -678,6 +745,7 @@ impl DesignBuilder {
             next_id,
             reserved_body_names: self.bodies,
             next_component_color_index: 0,
+            renames: Vec::new(),
         }
     }
 }

@@ -41,7 +41,7 @@ to features (sketch dimensions) and are driven by an expression.
 | `fillet` | `edge_names`, `edges` (one point per edge), `radius` | See below. |
 | `box` | `corner` (three expressions: the lowest corner), `length` (X), `width` (Y), `height` (Z), `operation: "join"` or `"cut"` | SolidCraft's box primitive. |
 | `cylinder` | `base` (three expressions: the bottom face's centre), `axis: [0, 0, 1]`, `radius`, `height`, `operation: "join"` | SolidCraft's own cylinder primitive saves `radius` as `"(10 mm) / 2"` when given a diameter; meshwright writes `"boss_<n>_d / 2"`. |
-| `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions) | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
+| `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions); to turn as well, `rotate_axis: [x, y, z]`, `origin: [x, y, z]`, `angle` (an expression), the turn applied before the translation | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
 | `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flat `x,y,z` positions and flat corner indices; `body_names` lists the bodies. |
 
@@ -71,6 +71,22 @@ an Ø5 hole) imports to 17,225.686 mm³, the volume SolidCraft measured for the 
 With `boss_1_d = 12`, `boss_1_h = 8`, `boss_2_x = 40`, `boss_2_h = 4`, `base_t = 9` and
 `base_z0 = 2` it rebuilt without errors to 26,129.126 mm³, as computed; exported again, the
 rebuilt part is recognised with those parameters.
+
+## Parts extruded along X or Y
+
+A part extruded along X or Y is recognised in a turned frame where its axis is Z (for X the
+frame's X, Y and Z are the world's Y, Z and X; for Y, Z, X and Y), built there as any outline,
+and turned into place at the end by a `move` about `(1, 1, 1)` through the origin, `120 deg` for
+X and `240 deg` for Y. Its position parameters are named by the world's axes: the frame's
+`hole_1_x` of a part along X is `hole_1_y`, renamed in every parameter and expression. Sizes
+(`pocket_<n>_w`, `_l`, a slot's angle) stay in the frame. `along-x.stl` (exported by SolidCraft:
+an 8 x 60 x 40 block with an Ø6 and an Ø4 hole drilled from its +X face) imports to
+18,873.274 mm³, as SolidCraft measured, in place; with `hole_1_y = 20`, `hole_1_d = 8`,
+`hole_2_z = 25`, `extrude_len = 10` and `extrude_0 = 2` it rebuilt without errors to
+23,371.681 mm³, as computed, and exported again it is recognised with those values. A part
+along Y (a 60 x 8 x 40 block with a hole and a pocket) rebuilt exactly as well. mesh2cad writes a
+rectangular block along X in its box vocabulary (`base_x`, `base_y`, `base_t` as the world's
+sizes); meshwright writes it as an outline (`extrude_len`, `extrude_0`), the holes named alike.
 
 ## Pads and pockets
 

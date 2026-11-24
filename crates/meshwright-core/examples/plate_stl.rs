@@ -19,7 +19,7 @@
 
 use std::io::Write as _;
 
-use meshwright_core::recognize::{HoleSpec, PlateSpec, ProfileSpec};
+use meshwright_core::recognize::{Axis, HoleSpec, PlateSpec, ProfileSpec};
 use meshwright_core::{stl, synth};
 
 /// The plate in `plate-holes.stl`.
@@ -56,6 +56,7 @@ fn bracket() -> ProfileSpec {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
+        axis: Axis::Z,
         outline_fillet_r: Some(2.0),
     }
 }

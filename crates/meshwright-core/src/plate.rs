@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 
 use crate::mesh::{Mesh, Vec3, cross, length, sub};
-use crate::recognize::{Blind, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
+use crate::recognize::{Axis, Blind, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
 
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
 pub const MAX_VOLUME_ERROR: f64 = 0.01;
@@ -380,9 +380,32 @@ impl Stepped {
     }
 }
 
-/// Looks for a plate in `mesh`, possibly with round bosses on its top face. `Err` carries the
-/// reason in the user's words.
+/// Looks for a plate in `mesh`, extruded along Z, else along X or Y. `Err` carries the reason in
+/// the user's words (why it is no plate along Z).
 pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
+    let why = match recognize_along_z(mesh) {
+        Ok(found) => return Ok(found),
+        Err(why) => why,
+    };
+    for axis in [Axis::X, Axis::Y] {
+        // Turned so that the axis is Z (a turn, so the facets keep facing out).
+        let turned = Mesh::new(mesh.triangles.iter().map(|t| t.map(|p| axis.to_frame(p))).collect());
+        match recognize_along_z(&turned) {
+            Ok(Recognition::Plate { plate, offset }) => {
+                return Ok(Recognition::Profile { profile: ProfileSpec::from_plate(plate, axis), offset });
+            }
+            Ok(Recognition::Profile { mut profile, offset }) => {
+                profile.axis = axis;
+                return Ok(Recognition::Profile { profile, offset });
+            }
+            _ => {}
+        }
+    }
+    Err(why)
+}
+
+/// Looks for a plate extruded along Z in `mesh`, possibly with round bosses on its top face.
+fn recognize_along_z(mesh: &Mesh) -> Result<Recognition, String> {
     let why = match recognize_prism(mesh) {
         Ok(found) => return Ok(found),
         Err(why) => why,
@@ -857,7 +880,8 @@ fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
         corners.rotate_left(first.unwrap_or(0));
-        let profile = ProfileSpec { corners, z, holes, slots, pads: vec![], pockets, bosses: vec![], cutouts, outline_fillet_r };
+        let profile =
+            ProfileSpec { corners, z, holes, slots, pads: vec![], pockets, bosses: vec![], cutouts, axis: Axis::Z, outline_fillet_r };
         let volume = profile.volume();
         (Recognition::Profile { profile, offset }, volume)
     };
@@ -1714,6 +1738,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
+            axis: Axis::Z,
             outline_fillet_r: r,
         }
     }
@@ -1829,6 +1854,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
+            axis: Axis::Z,
             outline_fillet_r: Some(3.0),
         };
         let mesh = synth::profile(&expected, 64, [0.0; 3]);
@@ -1852,6 +1878,7 @@ mod tests {
                 pockets: vec![],
                 bosses: vec![],
                 slots: vec![],
+                axis: Axis::Z,
                 outline_fillet_r: None
             }
         );
@@ -2057,9 +2084,10 @@ mod tests {
         let leaning_hole = sheared(&outline, &ring, 5.0, [0.0; 2], [0.5, 0.0]);
         let why = reason(&leaning_hole);
         assert!(why.contains("not vertical") || why.contains("straight through"), "{why}");
+        // A block leaning along X is a prism along Y: its outline the parallelogram.
         let leaning_block = sheared(&outline, &[], 5.0, [0.5, 0.0], [0.0; 2]);
-        let why = reason(&leaning_block);
-        assert!(why.contains("not vertical") || why.contains("faces differ"), "{why}");
+        let (profile, _) = found_profile(&leaning_block);
+        assert_eq!((profile.axis, profile.corners.len(), profile.z), (Axis::Y, 4, 50.0));
     }
 
     /// A banded wall whose bottom band is shifted: the band corners lie on the wall, the bottom
@@ -2343,6 +2371,41 @@ mod tests {
         assert_eq!(plate.cutouts[1].len(), 6);
         // SolidCraft measured 13,998.356 mm³; the hexagon's corners are rounded to 0.01 mm.
         assert!((plate.volume() - 13_998.356).abs() < 0.05, "{}", plate.volume());
+    }
+
+    /// An 8 x 60 x 40 block exported from SolidCraft 0.45, two holes drilled into it from its
+    /// +X face: an outline extruded along X.
+    #[test]
+    fn recognises_solidcraft_parts_along_x() {
+        let mesh = crate::stl::parse(include_bytes!("../../../plugin/meshwright/tests/along-x.stl")).expect("parses");
+        let (profile, offset) = found_profile(&mesh);
+        assert_eq!((profile.axis, profile.z, offset), (Axis::X, 8.0, [0.0; 3]));
+        let holes: Vec<(f64, f64, f64)> = profile.holes.iter().map(|h| (h.x, h.y, h.d)).collect();
+        assert_eq!(holes, [(15.0, 20.0, 6.0), (45.0, 30.0, 4.0)]);
+        // SolidCraft measured 18,873.274 mm³ for the part it exported.
+        assert!((profile.volume() - 18_873.274).abs() < 0.001, "{}", profile.volume());
+    }
+
+    /// A plate turned so that it is extruded along X, and one along Y, are outlines along that
+    /// axis, their sizes and holes in the frame where the axis is Z.
+    #[test]
+    fn plates_along_x_and_y() {
+        let expected = spec(&[(20.0, 25.0, 8.0), (60.0, 25.0, 6.0)], Some(4.0));
+        let plate = synth::plate(&expected, 32, [10.0, 0.0, 0.0]);
+        for axis in [Axis::X, Axis::Y] {
+            // The inverse of the frame's turn: frame (x, y, z) to the world.
+            let to_world = |p: Vec3| match axis {
+                Axis::X => [p[2], p[0], p[1]],
+                Axis::Y => [p[1], p[2], p[0]],
+                Axis::Z => p,
+            };
+            let mesh = Mesh::new(plate.triangles.iter().map(|t| t.map(to_world)).collect());
+            let (profile, offset) = found_profile(&mesh);
+            assert_eq!(profile.axis, axis);
+            assert_eq!(offset, [10.0, 0.0, 0.0]);
+            assert_eq!((profile.corners.len(), profile.z, profile.holes.len(), profile.outline_fillet_r), (4, 5.0, 2, Some(4.0)));
+            assert!((profile.volume() - expected.volume()).abs() < 1e-9);
+        }
     }
 
     /// A 70 x 40 x 6 plate exported from SolidCraft 0.45 with a 16 x 12 x 4 pad on its top face, a
@@ -3079,13 +3142,13 @@ mod tests {
         assert_eq!((profile.z, profile.outline_fillet_r), (5.0, Some(2.0)));
     }
 
+    /// A plate standing up (its thickness along Y) is a plate extruded along Y.
     #[test]
-    fn standing_plate_is_not_recognised() {
+    fn standing_plate_is_a_plate_along_y() {
         let mesh = synth::plate(&spec(&[(40.0, 25.0, 10.0)], None), 32, [0.0; 3]);
         let turned = Mesh::new(mesh.triangles.iter().map(|t| t.map(|p| [p[0], p[2], -p[1]])).collect());
-        // Seen along Z it is a strip with a hole through its side: no prism over its top face.
-        let why = reason(&turned);
-        assert!(why.contains("not a flat plate") || why.contains("faces differ"), "{why}");
+        let (profile, _) = found_profile(&turned);
+        assert_eq!((profile.axis, profile.z, profile.holes.len()), (Axis::Y, 5.0, 1));
     }
 
     #[test]

@@ -112,6 +112,7 @@ fn body_name(file_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recognize::Axis;
 
     const TETRA: &[u8] = include_bytes!("../tests/data/tetra.stl");
 
@@ -258,6 +259,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
+            axis: Axis::Z,
             outline_fillet_r: None,
         };
         let bytes = stl::write_binary(&crate::synth::profile(&spec, 32, [20.0, 10.0, 3.0]));

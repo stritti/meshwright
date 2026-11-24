@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "along-x.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 6, "loss_report": {"summary": "A 8 x 60 x 40 mm plate with a 4-sided outline and 2 holes, extruded along X"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 18873.274364}},
+    "tolerance": 1e-4
+  }
+}

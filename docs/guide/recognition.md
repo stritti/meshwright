@@ -16,6 +16,7 @@
 | A cut-out of straight sides through the plate (3 to 24 corners, each a real turn) | `CutoutsSketch` (every cut-out, on XY) and `Cutouts` (a cut through everything, after the outline's fillet) | none: its corners are as in the file (mesh2cad writes them as the point list `cutout_<n>`) |
 | A rectangular block (pad) along X and Y standing on the top face | `Pad<n>` (a box joined to the plate) | `pad_<n>_w` (along X), `pad_<n>_l` (along Y), `pad_<n>_h`, the middle `pad_<n>_x`, `pad_<n>_y` |
 | A rectangular blind pocket along X and Y with a flat floor, in the top or the bottom face | `Pocket<n>` (a box cut out of the plate) | `pocket_<n>_w`, `pocket_<n>_l`, `pocket_<n>_depth` (from that face), the middle `pocket_<n>_x`, `pocket_<n>_y` |
+| Any of the above extruded along X or Y instead of Z (a plate standing up) | the same features, built as for Z and turned into place by `Turn1` (a move about (1, 1, 1)) | `extrude_len`, `extrude_0` along that axis; positions named by the world's axes (`hole_<n>_y`, `hole_<n>_z` along X) |
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 
@@ -37,6 +38,6 @@ These are kept as a mesh, with the reason in the report:
 - corners rounded almost all the way along their sides
 - steps, pockets other than rectangles, other shapes on the top face, and bosses with a draft, a round or a hole
 - blind holes with a drill point or a counterbore
-- parts standing upright or rotated
+- parts turned off the X, Y and Z axes
 
 The [roadmap](/guide/roadmap) lists the order in which they are coming.
