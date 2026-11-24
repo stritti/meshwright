@@ -169,8 +169,10 @@ fn cut_outs_are_cut_after_the_fillet() {
     let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
     assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "CutoutsSketch", "Cutouts"]);
     let sketch = &features[3]["sketch"];
-    assert_eq!(sketch["curves"].as_array().map(Vec::len), Some(3));
-    assert_eq!(sketch["points"][1]["pos"], serde_json::json!([15.0, 10.0]));
+    // Three sides plus the construction line along the sketch's X axis for the angle.
+    assert_eq!(sketch["curves"].as_array().map(Vec::len), Some(4));
+    // Points 1 and 2 are the X axis the angle is measured from; the cut-out's corners follow.
+    assert_eq!(sketch["points"][3]["pos"], serde_json::json!([15.0, 10.0]));
     assert_eq!((features[4]["operation"].as_str(), &features[4]["extent"]["through_all"]), (Some("cut"), &serde_json::json!(true)));
     assert!((spec.volume() - (60.0 * 40.0 - 50.0) * 6.0).abs() < 1e-9);
     assert_eq!(spec.describe(), "A 60 x 40 x 6 mm plate with 1 cut-out");
@@ -249,6 +251,34 @@ fn outline_and_cutout_sides_are_dimensioned() {
         assert_eq!(expr, format!("cutout_1_{}_len", i + 1));
     }
     assert_eq!(param("cutout_1_1_len").map(|(e, _)| e), Some("10 mm"));
+    // Roadmap 5.1: the longest slanted side carries an `Angle` from the sketch's X axis, driven
+    // by its own user parameter `outline_<i>_angle` (side 3 here, the only slanted side).
+    let (expr, model) = param("outline_3_angle").expect("user angle param");
+    assert!(!model);
+    let deg: f64 = expr.strip_suffix(" deg").expect("deg").parse().expect("number");
+    let want = (40.0_f64 - 15.0).atan2(30.0 - 60.0).to_degrees().rem_euclid(180.0);
+    assert!((deg - want).abs() < 1e-9, "{deg} vs {want}");
+    let angles: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "angle").collect();
+    assert_eq!(angles.len(), 1, "one Angle per outline, on its longest slanted side");
+    assert_eq!(angles[0]["b"].as_u64(), Some(2), "on side 3 (line index 2)");
+    let (expr, is_model) = param(angles[0]["param"].as_str().expect("param")).expect("model param");
+    assert!(is_model);
+    assert_eq!(expr, "outline_3_angle");
+    let value = angles[0]["value"].as_f64().expect("value");
+    assert!((value - want.to_radians()).abs() < 1e-12, "the constraint's value is in radians");
+    // The X axis is linked in as one construction line, as in the slot's sketch.
+    let links = sketch["links"].as_array().expect("links");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0]["kind"], "project");
+    assert_eq!(links[0]["source"]["type"], "sketch_axis");
+    assert_eq!(links[0]["source"]["name"], "x");
+    assert_eq!(sketch["curves"].as_array().expect("curves").iter().filter(|c| c["construction"] == true).count(), 1);
+    // The cut-out's triangle gets its angle on its longest slanted side, as `cutout_1_3_angle`.
+    let cut_angles: Vec<&serde_json::Value> =
+        cutouts["sketch"]["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "angle").collect();
+    assert_eq!(cut_angles.len(), 1);
+    let (expr, _) = param(cut_angles[0]["param"].as_str().expect("param")).expect("model param");
+    assert_eq!(expr, "cutout_1_3_angle");
 }
 
 /// In a fully axis-aligned outline the longest horizontal and vertical sides are derived through
@@ -280,6 +310,21 @@ fn orthogonal_outline_skips_the_dependent_sides() {
     assert_eq!(lengths, [1, 2, 3, 4], "one Length per driving side, none on the derived ones");
     // All six sides keep their horizontal/vertical constraints.
     assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 6);
+    // No side is slanted, so no angle parameter and no Angle constraint.
+    assert!(!params.iter().any(|p| p["name"].as_str().is_some_and(|n| n.ends_with("_angle"))));
+    assert_eq!(constraints.iter().filter(|c| c["type"] == "angle").count(), 0);
+}
+
+/// The longest slanted side of a polygon is the one that carries the `Angle` constraint; an
+/// axis-aligned polygon has none. Parallel slanted sides share their angle, so only one of them
+/// could drive it anyway.
+#[test]
+fn dimensioned_angle_picks_the_longest_slanted_side() {
+    use crate::design::dimensioned_angle;
+    assert_eq!(dimensioned_angle(&[[0.0, 0.0], [60.0, 0.0], [75.0, 30.0], [10.0, 30.0]]), Some(1));
+    assert_eq!(dimensioned_angle(&[[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]]), None);
+    // A triangle's three slanted sides are three directions; the longest drives the angle.
+    assert_eq!(dimensioned_angle(&[[0.0, 0.0], [100.0, 0.0], [50.0, 0.1]]), Some(2), "the two long slanted sides tie; the last wins");
 }
 
 /// A parallelogram's two horizontal and two parallel slanted sides each form a group, so one

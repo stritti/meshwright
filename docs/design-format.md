@@ -112,7 +112,8 @@ turned, along Y; `extrude_z1_len = 15` rebuilds to 46,296 mm³, the bands above 
 
 The cut-outs of straight sides are one sketch, `CutoutsSketch`, of closed loops in world
 coordinates (sides along X or Y held horizontal or vertical, every side dimensioned by a `Length`
-constraint driven by `cutout_<n>_<i>_len`), and a cut through
+constraint driven by `cutout_<n>_<i>_len`, each polygon's longest slanted side by an `Angle` from
+the sketch's X axis driven by `cutout_<n>_<i>_angle`), and a cut through
 everything both ways from it, `Cutouts`. It comes after the outline's fillet, as the holes do: a
 cut-out may lie in the material an inside corner's rounding adds (an L with 5 mm rounds and a
 triangle in its inside rounding rebuilds to 6,169.124 mm³, as computed). Drawn into the outline's
@@ -248,7 +249,8 @@ warnings.
 
 A polygon outline (`ProfileSpec::to_design`: horizontal and vertical constraints on the
 axis-aligned sides plus a `Length` constraint per side driven by the model parameter behind
-`outline_<i>_len`, a fillet on every corner named `F2:side:l<i>|F2:side:l<i+1>`) works the same
+`outline_<i>_len`, an `Angle` constraint on the longest slanted side driven by `outline_<i>_angle`,
+a fillet on every corner named `F2:side:l<i>|F2:side:l<i+1>`) works the same
 way, inside corners included. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
 in `solidcraft-cli 0.48.1` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to

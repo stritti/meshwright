@@ -269,15 +269,52 @@ pub fn rectangle_sketch(width: f64, height: f64) -> Sketch {
 /// Y are constrained horizontal or vertical; the corners are otherwise free, as drawn.
 #[must_use]
 pub fn polygon_sketch(corners: &[[f64; 2]]) -> Sketch {
-    polygon_sketch_sized(corners, &[])
+    polygon_sketch_sized(corners, &[], None)
 }
 
 /// Like [`polygon_sketch`], but with a `Length` constraint per side driven by the model parameter
 /// `lens[i]`, where `Some`, so the outline re-dimensions in SolidCraft side by side like the
-/// rectangle's do. See [`dimensioned_sides`] for which sides may drive.
+/// rectangle's do, and with an `Angle` constraint on one slanted side when `angle` is `Some`,
+/// measured from the sketch's X axis (linked in as a construction line, as in [`slot_sketch`]),
+/// so a slanted outline re-angles too. See [`dimensioned_sides`] and [`dimensioned_angle`] for
+/// which sides may drive.
 #[must_use]
-pub fn polygon_sketch_dimensioned(corners: &[[f64; 2]], lens: &[Option<String>]) -> Sketch {
-    polygon_sketch_sized(corners, lens)
+pub fn polygon_sketch_dimensioned(corners: &[[f64; 2]], lens: &[Option<String>], angle: Option<&PolygonAngle>) -> Sketch {
+    polygon_sketch_sized(corners, lens, angle)
+}
+
+/// What drives a polygon's angle: the side the `Angle` constraint sits on, the angle now (in
+/// degrees, from the sketch's X axis, in [0, 180) as a line has no direction) and the model
+/// parameter driving it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolygonAngle {
+    /// The side's line index.
+    pub side: usize,
+    /// The angle now, in degrees.
+    pub degrees: f64,
+    /// The model parameter that drives it.
+    pub param: String,
+}
+
+/// Which side of a closed polygon may get the driving `Angle` constraint: the longest side that
+/// is neither horizontal nor vertical. Parallel slanted sides share their angle and a loop's
+/// turns sum to 360°, so one angle per polygon is the independent one; the sides' lengths (see
+/// [`dimensioned_sides`]) fix the shape. `None` when every side is axis-aligned.
+#[must_use]
+pub fn dimensioned_angle(corners: &[[f64; 2]]) -> Option<usize> {
+    let n = corners.len();
+    (0..n)
+        .filter(|&i| {
+            let (a, b) = (corners[i], corners[(i + 1) % n]);
+            (a[1] - b[1]).abs() >= 1e-9 && (a[0] - b[0]).abs() >= 1e-9
+        })
+        .max_by(|&a, &b| {
+            let len = |i: usize| {
+                let (p, q) = (corners[i], corners[(i + 1) % n]);
+                (p[0] - q[0]).hypot(p[1] - q[1])
+            };
+            len(a).total_cmp(&len(b))
+        })
 }
 
 /// Which sides of a closed polygon may get a driving `Length` constraint. Sides are grouped by
@@ -318,11 +355,11 @@ pub fn dimensioned_sides(corners: &[[f64; 2]]) -> Vec<bool> {
     dim
 }
 
-fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[Option<String>]) -> Sketch {
+fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[Option<String>], angle: Option<&PolygonAngle>) -> Sketch {
     let n = corners.len();
     let mut points = vec![SketchPoint::new("origin", [0.0, 0.0], true)];
     points.extend(corners.iter().enumerate().map(|(i, c)| SketchPoint::new(format!("p{}", i + 1), *c, false)));
-    let curves = (0..n)
+    let mut curves: Vec<SketchCurve> = (0..n)
         .map(|i| SketchCurve::Line { id: format!("l{}", i + 1), a: i + 1, b: (i + 1) % n + 1, construction: false, link: None })
         .collect();
     let mut constraints = Vec::new();
@@ -343,8 +380,32 @@ fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[Option<String>]) -> Sketch
             });
         }
     }
-    let counters = Counters { a: 0, j: 0, k: constraints.len(), l: n, p: n };
-    Sketch { points, curves, constraints, links: vec![], counters }
+    let mut links = Vec::new();
+    let axis_line = if let Some(a) = angle {
+        let axis = || Some("j1".to_owned());
+        points.push(SketchPoint { link: axis(), ..SketchPoint::new(format!("p{}", n + 1), [-100.0, 0.0], true) });
+        points.push(SketchPoint { link: axis(), ..SketchPoint::new(format!("p{}", n + 2), [100.0, 0.0], true) });
+        curves.push(SketchCurve::Line { id: format!("l{}", n + 1), a: n + 1, b: n + 2, construction: true, link: axis() });
+        links.push(Link { id: "j1".into(), kind: "project", source: LinkSource { kind: "sketch_axis", name: "x" } });
+        constraints.push(Constraint::Angle {
+            id: format!("k{}", constraints.len() + 1),
+            a: n,
+            b: a.side,
+            value: a.degrees.to_radians(),
+            param: a.param.clone(),
+        });
+        Some(n)
+    } else {
+        None
+    };
+    let counters = Counters {
+        a: 0,
+        j: links.len(),
+        k: constraints.len(),
+        l: if axis_line.is_some() { curves.len() - 1 } else { curves.len() },
+        p: if axis_line.is_some() { points.len() - 3 } else { points.len() - 1 },
+    };
+    Sketch { points, curves, constraints, links, counters }
 }
 
 /// A sketch on the XY plane of closed polygons (each `corners` counter-clockwise or not), drawn as
@@ -352,18 +413,21 @@ fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[Option<String>]) -> Sketch
 /// vertical.
 #[must_use]
 pub fn polygons_sketch(polygons: &[Vec<[f64; 2]>]) -> Sketch {
-    polygons_sketch_sized(polygons, &[])
+    polygons_sketch_sized(polygons, &[], &[])
 }
 
 /// Like [`polygons_sketch`], but with a `Length` constraint per side driven by the model parameter
-/// `lens[polygon][side]`, where `Some`, so every side re-dimensions in SolidCraft. See
-/// [`dimensioned_sides`] for which sides may drive.
+/// `lens[polygon][side]`, where `Some`, and an `Angle` constraint per polygon where
+/// `angles[polygon]` is `Some`, so every side re-dimensions in SolidCraft and slanted polygons
+/// re-angle. The angle is measured from one shared X axis, linked in as a construction line, as
+/// in [`slot_sketch`]. See [`dimensioned_sides`] and [`dimensioned_angle`] for which sides may
+/// drive.
 #[must_use]
-pub fn polygons_sketch_dimensioned(polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>]) -> Sketch {
-    polygons_sketch_sized(polygons, lens)
+pub fn polygons_sketch_dimensioned(polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>], angles: &[Option<PolygonAngle>]) -> Sketch {
+    polygons_sketch_sized(polygons, lens, angles)
 }
 
-fn polygons_sketch_sized(polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>]) -> Sketch {
+fn polygons_sketch_sized(polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>], angles: &[Option<PolygonAngle>]) -> Sketch {
     let mut sketch = Sketch {
         points: vec![SketchPoint::new("origin", [0.0, 0.0], true)],
         curves: vec![],
@@ -371,11 +435,32 @@ fn polygons_sketch_sized(polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>
         links: vec![],
         counters: Counters { a: 0, j: 0, k: 0, l: 0, p: 0 },
     };
-    add_polygons(&mut sketch, polygons, lens);
+    // One construction line along the sketch's X axis, shared by every polygon's angle; its id
+    // follows the polygons' lines and it is not counted in the line counter.
+    let axis_line = if angles.iter().any(Option::is_some) {
+        let total: usize = polygons.iter().map(Vec::len).sum();
+        let axis = || Some("j1".to_owned());
+        sketch.points.push(SketchPoint { link: axis(), ..SketchPoint::new(format!("p{}", total + 1), [-100.0, 0.0], true) });
+        sketch.points.push(SketchPoint { link: axis(), ..SketchPoint::new(format!("p{}", total + 2), [100.0, 0.0], true) });
+        sketch.curves.push(SketchCurve::Line { id: format!("l{}", total + 1), a: 1, b: 2, construction: true, link: axis() });
+        sketch.links.push(Link { id: "j1".into(), kind: "project", source: LinkSource { kind: "sketch_axis", name: "x" } });
+        Some(0)
+    } else {
+        None
+    };
+    add_polygons(&mut sketch, polygons, lens, angles, axis_line);
+    sketch.counters.j = sketch.links.len();
     sketch
 }
 
-fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>]) {
+#[allow(clippy::too_many_arguments)] // one sketch's polygons, their lengths and angles, the axis
+fn add_polygons(
+    sketch: &mut Sketch,
+    polygons: &[Vec<[f64; 2]>],
+    lens: &[Vec<Option<String>>],
+    angles: &[Option<PolygonAngle>],
+    axis_line: Option<usize>,
+) {
     for (pi, corners) in polygons.iter().enumerate() {
         let n = corners.len();
         let first = sketch.points.len();
@@ -411,6 +496,16 @@ fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Opt
                 });
                 sketch.counters.k += 1;
             }
+        }
+        if let (Some(a), Some(axis)) = (angles.get(pi).and_then(|o| o.as_ref()), axis_line) {
+            sketch.constraints.push(Constraint::Angle {
+                id: format!("k{}", sketch.counters.k + 1),
+                a: axis,
+                b: axis + 1 + base_line + a.side,
+                value: a.degrees.to_radians(),
+                param: a.param.clone(),
+            });
+            sketch.counters.k += 1;
         }
         sketch.counters.p += n;
         sketch.counters.l += n;

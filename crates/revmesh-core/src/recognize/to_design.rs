@@ -4,8 +4,8 @@ use super::axis::Axis;
 use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
-    dimensioned_sides, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
+    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, PolygonAngle, Profiles, SlotDimensions,
+    dimensioned_angle, dimensioned_sides, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Vec3, snap_dim, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
@@ -143,7 +143,8 @@ impl ProfileSpec {
     /// The profile as a parametric history with its bounding box's lowest corner at `at`,
     /// extruded along `axis`, as mesh2cad writes an extruded outline: parameters `extrude_len`
     /// (the thickness), `extrude_0` (where it starts along the axis), `outline_<i>_len` per side,
-    /// `hole_<n>_<a>/_<b>/_d` for the profile plane's world axis letters and `outline_fillet_r`;
+    /// `outline_<i>_angle` on the longest slanted side, `hole_<n>_<a>/_<b>/_d` for the profile
+    /// plane's world axis letters and `outline_fillet_r`;
     /// a sketch of the outline on the axis's plane (see [`Axis::plane`]), every side dimensioned
     /// by its own parameter, an extrusion along the plane's normal, a move to where the part is,
     /// a fillet of every corner edge parallel to the axis and a hole per hole. The fillet comes
@@ -161,12 +162,13 @@ impl ProfileSpec {
             b.param(Param::user("outline_fillet_r", r));
         }
         let outline_lens = side_len_params(&mut b, "outline", &self.corners);
+        let outline_angle = side_angle_param(&mut b, "outline", &self.corners);
         let sketch = b.feature(
             "Sketch1",
             vec![],
             FeatureKind::Sketch {
                 plane: Plane::Origin { name: axis.plane() },
-                sketch: polygon_sketch_dimensioned(&self.corners, &outline_lens),
+                sketch: polygon_sketch_dimensioned(&self.corners, &outline_lens, outline_angle.as_ref()),
             },
         );
         let extrude = b.feature(
@@ -200,6 +202,21 @@ impl ProfileSpec {
         block_features(&mut b, &self.pads, &self.pockets, axis, top, "extrude_0");
         b.build()
     }
+}
+
+/// One user parameter `<prefix>_<i>_angle` for the polygon's longest slanted side (see
+/// [`dimensioned_angle`]) and a model parameter driving its `Angle` constraint in the sketch, so
+/// a slanted polygon re-angles in SolidCraft too. `None` when no side is slanted.
+fn side_angle_param(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Option<PolygonAngle> {
+    let side = dimensioned_angle(corners)?;
+    let (a, c) = (corners[side], corners[(side + 1) % corners.len()]);
+    // A line has no direction: the angle from the X axis is in [0, 180) degrees.
+    let degrees = (c[1] - a[1]).atan2(c[0] - a[0]).to_degrees().rem_euclid(180.0);
+    let user = format!("{prefix}_{}_angle", side + 1);
+    b.param(Param::angle(&user, degrees));
+    let model = b.next_model_param_name();
+    b.param(Param::model_angle(&model, &user));
+    Some(PolygonAngle { side, degrees, param: model })
 }
 
 /// One user parameter `<prefix>_<i>_len` per driving side of `corners` (see
@@ -288,10 +305,12 @@ fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3, a
     let sketched: Vec<Vec<[f64; 2]>> = cutouts.iter().map(|c| c.iter().map(|p| axis.sketch_point(at, *p).map(snap_mm)).collect()).collect();
     let lens: Vec<Vec<Option<String>>> =
         sketched.iter().enumerate().map(|(k, poly)| side_len_params(b, &format!("cutout_{}", k + 1), poly)).collect();
+    let angles: Vec<Option<PolygonAngle>> =
+        sketched.iter().enumerate().map(|(k, poly)| side_angle_param(b, &format!("cutout_{}", k + 1), poly)).collect();
     let sketch = b.feature(
         "CutoutsSketch",
         vec![],
-        FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygons_sketch_dimensioned(&sketched, &lens) },
+        FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygons_sketch_dimensioned(&sketched, &lens, &angles) },
     );
     b.feature(
         "Cutouts",
