@@ -26,7 +26,7 @@ use exports::craft::plugin::importer::Guest;
 use revmesh_core::import::Mode;
 use revmesh_core::mesh::Mesh;
 use revmesh_core::stl::StlReader;
-use revmesh_core::{ImportOptions, import_mesh};
+use revmesh_core::{ImportOptions, Locale, import_mesh};
 
 /// Largest read or write the host accepts in one call.
 const CHUNK: usize = 1 << 20;
@@ -41,28 +41,30 @@ struct Importer;
 
 impl Guest for Importer {
     fn import_file(_entry: String, file: source::FileInfo, options: String) -> Result<String, PluginError> {
-        let options = ImportOptions::from_json(&options).map_err(|e| invalid("options", e))?;
+        let locale = built_locale();
+        let mut options = ImportOptions::from_json(&options).map_err(|e| invalid("options", e))?;
+        options.locale = locale;
         let max_bytes = match options.mode {
             Mode::Auto => AUTO_MAX_BYTES,
             Mode::Mesh => MESH_MAX_BYTES,
         };
-        let mesh = read_mesh(&file, max_bytes)?;
-        control::progress(0.5, "Recognising features");
+        let mesh = read_mesh(&file, max_bytes, locale)?;
+        control::progress(0.5, locale.text("progress.recognising"));
         let result = import_mesh(mesh, &file.name, &options);
-        control::progress(0.6, "Writing the design");
+        control::progress(0.6, locale.text("progress.writing"));
         let mut out = HostWriter { buffer: Vec::with_capacity(CHUNK), error: None };
         let written = result.design.write_json(&mut out).and_then(|()| out.flush_buffer());
         if let Some(error) = out.error {
             return Err(error);
         }
         written.map_err(|e| PluginError::Trap(format!("writing the design: {e}")))?;
-        control::progress(1.0, "Done");
+        control::progress(1.0, locale.text("progress.done"));
         Ok(result.report.to_json())
     }
 }
 
 /// Reads and parses the file being imported (path `""`) chunk by chunk.
-fn read_mesh(file: &source::FileInfo, max_bytes: u64) -> Result<Mesh, PluginError> {
+fn read_mesh(file: &source::FileInfo, max_bytes: u64, locale: Locale) -> Result<Mesh, PluginError> {
     let mut offset = 0u64;
     let mut reader: Option<StlReader> = None;
     while offset < file.size {
@@ -76,17 +78,19 @@ fn read_mesh(file: &source::FileInfo, max_bytes: u64) -> Result<Mesh, PluginErro
         let stl = match &mut reader {
             Some(stl) => stl,
             // The first chunk holds the header (1 MiB is far more than `StlReader::HEAD`).
-            None => reader.insert(StlReader::new_with_size_limit(&chunk, file.size, max_bytes).map_err(|e| invalid("file", e))?),
+            None => {
+                reader.insert(StlReader::new_with_size_limit(&chunk, file.size, max_bytes).map_err(|e| invalid("file", e.message(locale)))?)
+            }
         };
-        stl.push(&chunk).map_err(|e| invalid("file", e))?;
+        stl.push(&chunk).map_err(|e| invalid("file", e.message(locale)))?;
         offset += chunk.len() as u64;
-        control::progress(0.4 * offset as f32 / file.size.max(1) as f32, "Reading STL");
+        control::progress(0.4 * offset as f32 / file.size.max(1) as f32, locale.text("progress.reading"));
     }
     let reader = match reader {
         Some(reader) => reader,
-        None => StlReader::new(&[], 0).map_err(|e| invalid("file", e))?,
+        None => StlReader::new(&[], 0).map_err(|e| invalid("file", e.message(locale)))?,
     };
-    reader.finish().map_err(|e| invalid("file", e))
+    reader.finish().map_err(|e| invalid("file", e.message(locale)))
 }
 
 /// Buffers the serialised design and hands it to `design::write` 1 MiB at a time. A host error
@@ -132,6 +136,12 @@ impl std::io::Write for HostWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         self.flush_buffer()
     }
+}
+
+/// The language this component was built for: `REVMESH_LOCALE` at compile time (`cargo xtask
+/// dist` sets it per package), English when unset.
+fn built_locale() -> Locale {
+    option_env!("REVMESH_LOCALE").and_then(Locale::from_code).unwrap_or_default()
 }
 
 fn invalid(field: &str, reason: impl ToString) -> PluginError {

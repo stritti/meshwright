@@ -7,8 +7,8 @@ Conventional Commit messages on `main`:
    bumps the version in `Cargo.toml`, `plugin/revmesh/plugin.json` and `CHANGELOG.md`; a
    second job brings `Cargo.lock` in step.
 2. Merging that pull request tags `vx.y.z` and creates the GitHub release.
-3. The `publish-plugin` job builds the plugin and attaches `revmesh-x.y.z.zip` and
-   `SHA256SUMS.txt` to the release.
+3. The `publish-plugin` job builds the plugin and attaches `revmesh-x.y.z.zip` (English),
+   `revmesh-x.y.z-de.zip` (German) and `SHA256SUMS.txt` to the release.
 
 ## One-time setup: the release token
 
