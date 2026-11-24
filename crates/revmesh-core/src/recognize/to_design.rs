@@ -105,7 +105,7 @@ impl PlateSpec {
         cutout_features(&mut b, &self.cutouts, at, axis);
         hole_features(&mut b, &self.holes, at, axis, "base_z0 + base_t", "base_z0", self.z);
         slot_features(&mut b, &self.slots, at, axis);
-        boss_features(&mut b, &self.bosses, axis, "base_z0 + base_t");
+        boss_features(&mut b, &self.bosses, at, self.z, axis, "base_z0 + base_t", extrude);
         block_features(&mut b, &self.pads, &self.pockets, axis, "base_z0 + base_t", "base_z0");
         if self.outline_fillet_r.is_some() {
             let mid = at[2] + self.z / 2.0;
@@ -192,7 +192,7 @@ impl ProfileSpec {
         cutout_features(&mut b, &self.cutouts, at, axis);
         hole_features(&mut b, &self.holes, at, axis, top, "extrude_0", self.z);
         slot_features(&mut b, &self.slots, at, axis);
-        boss_features(&mut b, &self.bosses, axis, top);
+        boss_features(&mut b, &self.bosses, at, self.z, axis, top, extrude);
         block_features(&mut b, &self.pads, &self.pockets, axis, top, "extrude_0");
         b.build()
     }
@@ -272,22 +272,28 @@ fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3, a
 }
 
 /// The bosses' parameters, as mesh2cad names them: `boss_<n>_d`, `_h` (above the face the boss
-/// stands on) and the centre's two profile-plane coordinates (in world coordinates).
+/// stands on), `_fillet` (the round at its foot, if it has one) and the centre's two
+/// profile-plane coordinates (in world coordinates).
 fn boss_params(b: &mut DesignBuilder, bosses: &[BossSpec], at: Vec3, axis: Axis) {
     for (i, s) in bosses.iter().enumerate() {
         let p = format!("boss_{}", i + 1);
         b.param(Param::user(format!("{p}_d"), s.d)).param(Param::user(format!("{p}_h"), s.h));
+        if let Some(f) = s.fillet {
+            b.param(Param::user(format!("{p}_fillet"), f));
+        }
         pos_params(b, &p, axis, at, [s.x, s.y]);
     }
 }
 
 /// A cylinder joined to the part per boss, standing on the face at height `top` (its
-/// expression) along the axis.
-fn boss_features(b: &mut DesignBuilder, bosses: &[BossSpec], axis: Axis, top: &str) {
-    for i in 1..=bosses.len() {
-        let p = format!("boss_{i}");
-        b.feature(
-            format!("Boss{i}"),
+/// expression) along the axis, and a fillet of its foot where it has one: the edge between the
+/// extrusion `extrude`'s top face and the cylinder's side, picked at the boss's +X side on a
+/// part `z` thick whose corner is at `at`.
+fn boss_features(b: &mut DesignBuilder, bosses: &[BossSpec], at: Vec3, z: f64, axis: Axis, top: &str, extrude: u32) {
+    for (i, s) in bosses.iter().enumerate() {
+        let p = format!("boss_{}", i + 1);
+        let cylinder = b.feature(
+            format!("Boss{}", i + 1),
             vec![],
             FeatureKind::Cylinder {
                 base: world_exprs(&p, axis, top),
@@ -297,6 +303,17 @@ fn boss_features(b: &mut DesignBuilder, bosses: &[BossSpec], axis: Axis, top: &s
                 operation: Operation::Join,
             },
         );
+        if s.fillet.is_some() {
+            b.feature(
+                format!("Boss{}Fillet", i + 1),
+                vec![],
+                FeatureKind::Fillet {
+                    edge_names: vec![format!("F{extrude}:top|F{cylinder}:side")],
+                    edges: vec![axis.world(at, s.x + s.d / 2.0, s.y, z)],
+                    radius: format!("{p}_fillet"),
+                },
+            );
+        }
     }
 }
 

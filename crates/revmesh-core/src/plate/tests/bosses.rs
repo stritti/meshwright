@@ -13,7 +13,7 @@ use super::{circle, found, reason};
 fn recognises_bosses() {
     let mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/bosses.stl")).expect("parses");
     let (plate, _) = found(&mesh);
-    let boss = |x: f64, y: f64, d: f64, h: f64| BossSpec { x, y, d, h };
+    let boss = |x: f64, y: f64, d: f64, h: f64| BossSpec { x, y, d, h, fillet: None };
     assert_eq!(plate.bosses, [boss(20.0, 20.0, 10.0, 5.0), boss(50.0, 25.0, 8.0, 3.0)]);
     assert_eq!((plate.z, plate.holes.len()), (6.0, 1));
     // SolidCraft measured 17,225.686 mm³ for the part it exported.
@@ -56,7 +56,7 @@ fn standing(foot: &[P2], top: &dyn Fn(P2) -> P2, h: f64) -> Mesh {
 fn bosses_must_be_straight_and_round() {
     let foot = circle([20.0, 20.0], 5.0, 32);
     let (plate, _) = found(&standing(&foot, &|p| p, 4.0));
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0 }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0, fillet: None }]);
     let draft = |p: P2| [20.0 + (p[0] - 20.0) * 0.9, 20.0 + (p[1] - 20.0) * 0.9];
     let (sin, cos) = (PI / 4.0).sin_cos();
     let twist = |p: P2| [20.0 + (p[0] - 20.0) * cos - (p[1] - 20.0) * sin, 20.0 + (p[0] - 20.0) * sin + (p[1] - 20.0) * cos];
@@ -93,7 +93,7 @@ fn bosses_larger_than_the_plate_face() {
     }
     mesh = Mesh::new(t);
     let (plate, _) = found(&mesh);
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 34.0, h: 4.0 }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 34.0, h: 4.0, fillet: None }]);
 }
 
 #[test]
@@ -104,5 +104,65 @@ fn split_boss_footprints() {
         .flat_map(|i| [foot[i], [f64::midpoint(foot[i][0], foot[(i + 1) % n][0]), f64::midpoint(foot[i][1], foot[(i + 1) % n][1])]])
         .collect();
     let (plate, _) = found(&standing(&split, &|p| p, 4.0));
-    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0 }]);
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0, fillet: None }]);
+}
+
+/// A 70 x 40 x 6 plate exported from SolidCraft 0.48 with an Ø10 x 8 boss whose foot is rounded
+/// with 2 mm, an Ø8 x 5 boss and an Ø4 hole.
+#[test]
+fn recognises_rounded_boss_feet() {
+    let mesh = crate::stl::parse(include_bytes!("../../../../../plugin/revmesh/tests/boss-fillet.stl")).expect("parses");
+    let (plate, _) = found(&mesh);
+    let boss = |x: f64, y: f64, d: f64, h: f64, fillet: Option<f64>| BossSpec { x, y, d, h, fillet };
+    assert_eq!(plate.bosses, [boss(20.0, 20.0, 10.0, 8.0, Some(2.0)), boss(50.0, 22.0, 8.0, 5.0, None)]);
+    // SolidCraft measured 17,633.625 mm³ for the part it exported.
+    assert!((plate.volume() - 17_633.625).abs() < 0.001, "{}", plate.volume());
+}
+
+/// A 60 x 40 x 6 plate with a boss at (20, 20) of `n` facets round, its wall a stack of
+/// `rings` (radius, height above the plate) from the footprint up, and a flat top.
+fn layered_boss(rings: &[(f64, f64)], n: usize) -> Mesh {
+    let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+    let at = |p: P2, z: f64| [p[0], p[1], z];
+    let ring = |r: f64| circle([20.0, 20.0], r, n);
+    let foot = ring(rings[0].0);
+    let mut t = Vec::new();
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&foot)) {
+        t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+    }
+    for [a, b, c] in synth::triangulate(&outline, &[]) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (outline[i], outline[(i + 1) % 4]);
+        t.extend([[at(a, 0.0), at(b, 0.0), at(b, 6.0)], [at(a, 0.0), at(b, 6.0), at(a, 6.0)]]);
+    }
+    for pair in rings.windows(2) {
+        let ((r0, z0), (r1, z1)) = (pair[0], pair[1]);
+        let (lo, hi) = (ring(r0), ring(r1));
+        for i in 0..n {
+            let j = (i + 1) % n;
+            t.extend([
+                [at(lo[i], 6.0 + z0), at(lo[j], 6.0 + z0), at(hi[j], 6.0 + z1)],
+                [at(lo[i], 6.0 + z0), at(hi[j], 6.0 + z1), at(hi[i], 6.0 + z1)],
+            ]);
+        }
+    }
+    let (r, z) = rings[rings.len() - 1];
+    for [a, b, c] in synth::triangulate(&ring(r), &[]) {
+        t.push([at(a, 6.0 + z), at(b, 6.0 + z), at(c, 6.0 + z)]);
+    }
+    Mesh::new(t)
+}
+
+/// A boss of 48 facets with a 2 mm round at its foot, the round in 6 bands, is recognised; one
+/// with a 2 mm 45° chamfer there instead is refused.
+#[test]
+fn rounded_feet_and_chamfered_feet() {
+    let (r, f) = (5.0, 2.0);
+    let mut rings: Vec<(f64, f64)> = (0..=6).map(|k| f64::from(k) * PI / 12.0).map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+    rings.push((r, 8.0));
+    let (plate, _) = found(&layered_boss(&rings, 48));
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
+    reason(&layered_boss(&[(r + f, 0.0), (r, f), (r, 8.0)], 48));
 }

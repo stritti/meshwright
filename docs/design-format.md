@@ -82,6 +82,20 @@ With `boss_1_d = 12`, `boss_1_h = 8`, `boss_2_x = 40`, `boss_2_h = 4`, `base_t =
 `base_z0 = 2` it rebuilt without errors to 26,129.126 mm³, as computed; exported again, the
 rebuilt part is recognised with those parameters.
 
+## Rounded boss feet
+
+A boss whose foot is rounded is the same `cylinder`, followed by a `fillet` of the edge between
+the plate's top face and the cylinder's side: `edge_names: ["F<extrude>:top|F<cylinder>:side"]`
+(SolidCraft names that edge `F1:+z|F2:side` on a box primitive), radius `boss_<n>_fillet`. In
+the mesh the round widens the boss's footprint in the top face by its radius; it must be meshed
+in steps of at most 50° of its quarter circle (in one step it is a 45° chamfer, which looks the
+same). `boss-fillet.stl` (exported by SolidCraft 0.48: a 70 x 40 x 6 plate with an Ø10 x 8 boss
+rounded at its foot with 2 mm, an Ø8 x 5 boss and an Ø4 hole) imports to 17,633.625 mm³, the
+volume SolidCraft measured for the part it exported (the round adds `2π (f² (r + f/2) −
+π f²/4 (r + f) + f³/3)`); with `boss_1_fillet = 3`, `boss_1_d = 12`, `boss_1_x = 22` and
+`base_t = 8` it rebuilt without errors to 23,536.520 mm³, as computed, and exported again it is
+recognised with those values.
+
 ## Pads and pockets
 
 A pad is a `box` joined to the plate, its corner at `[pad_<n>_x - pad_<n>_w / 2, pad_<n>_y -

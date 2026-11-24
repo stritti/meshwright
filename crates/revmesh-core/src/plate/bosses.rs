@@ -13,6 +13,9 @@ use super::holes::Footprint;
 pub(super) struct FoundBoss {
     pub(super) foot: Footprint,
     pub(super) top: f64,
+    /// The radius of the round at its foot, 0 without one: the footprint is the cylinder
+    /// widened by it.
+    pub(super) fillet: f64,
     pub(super) footprint: Vec<P2>,
     pub(super) ring: Vec<P2>,
 }
@@ -64,6 +67,47 @@ pub(super) fn level(t: &crate::mesh::Triangle, tol: f64) -> Option<f64> {
     (hi - lo <= tol).then_some(f64::midpoint(lo, hi))
 }
 
+/// Whether the facet `t` lies on the filleted round boss `b` standing on the top face at
+/// `top_z`: every corner and every edge's middle on its cylinder (above the round), its round (a
+/// quarter circle's outside swept about the axis) or its flat top, the middles within their own
+/// chord's sagitta.
+fn filleted_boss_holds(b: &FoundBoss, t: &crate::mesh::Triangle, top_z: f64, tol: f64) -> bool {
+    let Footprint::Round { centre, r: foot } = b.foot else { return false };
+    let (f, r) = (b.fillet, foot - b.fillet);
+    let off = |p: Vec3, slack: f64| {
+        let rho = super::geometry::distance([p[0], p[1]], centre);
+        let z = p[2];
+        let wall = if z >= top_z + f - slack && z <= b.top + slack { (rho - r).abs() } else { f64::INFINITY };
+        let round =
+            if rho >= r - slack && z <= top_z + f + slack { ((rho - (r + f)).hypot(z - (top_z + f)) - f).abs() } else { f64::INFINITY };
+        let lid = if rho <= r + slack { (z - b.top).abs() } else { f64::INFINITY };
+        wall.min(round).min(lid) <= slack
+    };
+    let corners = t.iter().all(|p| off(*p, tol));
+    // An edge along the round (both ends no higher than its top) bows like a chord of its
+    // quarter circle, and spans no more of it than a round hole's facet may of its circle (a
+    // quarter in one step is a chamfer); any other edge bows like a chord of the cylinder round
+    // the axis (a straight edge up the wall not at all).
+    let middles = (0..3).all(|i| {
+        let (p, q) = (t[i], t[(i + 1) % 3]);
+        let across = (p[0] - q[0]).hypot(p[1] - q[1]);
+        let on_round = p[2].max(q[2]) <= top_z + f + tol;
+        let (radial, rise) =
+            (super::geometry::distance([p[0], p[1]], centre) - super::geometry::distance([q[0], q[1]], centre), p[2] - q[2]);
+        let along = radial.hypot(rise);
+        let bow = if on_round {
+            if along > 2.0 * f * (super::MAX_HOLE_STEP / 2.0).sin() + tol {
+                return false;
+            }
+            along * along / (8.0 * f) + across * across / (8.0 * r)
+        } else {
+            across * across / (8.0 * r)
+        };
+        off([f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])], tol + bow)
+    });
+    corners && middles
+}
+
 /// [`strip_bosses`] with the top face at `top_z`: a boss's footprint is a round loop in that
 /// face, its wall stands straight on that loop (within the facets' sagitta), and its top is one
 /// flat face.
@@ -90,7 +134,21 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
         let on = |p: &Vec3| foot.contains(flat(p), tol);
         if let Some(top) = upper.iter().flat_map(|t| t.iter()).filter(|p| on(p)).map(|p| p[2]).reduce(f64::max) {
             // Its walls follow the loop's chords as meshed, before any exporter split them.
-            bosses.push(FoundBoss { foot, top, footprint: ring.clone(), ring: drop_collinear(ring, tol) });
+            // A round foot: the top's rim lies closer to the axis than the footprint, by the
+            // round's radius.
+            let fillet = match foot {
+                Footprint::Round { centre, r } => {
+                    let rim = upper
+                        .iter()
+                        .flat_map(|t| t.iter())
+                        .filter(|p| on(p) && (p[2] - top).abs() <= tol)
+                        .map(|p| super::geometry::distance(flat(p), centre))
+                        .fold(0.0, f64::max);
+                    if r - rim > tol { r - rim } else { 0.0 }
+                }
+                Footprint::Rect { .. } => 0.0,
+            };
+            bosses.push(FoundBoss { foot, top, fillet, footprint: ring.clone(), ring: drop_collinear(ring, tol) });
         }
     }
     if bosses.is_empty() {
@@ -103,6 +161,15 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
         let k = bosses.iter().position(|b| t.iter().all(|p| b.foot.contains(flat(p), tol))).ok_or(NO_BOSS)?;
         let b = &bosses[k];
         let (len, nz) = facing(t);
+        if b.fillet > 0.0 {
+            if !filleted_boss_holds(b, t, top_z, tol) {
+                return Err(NO_BOSS.into());
+            }
+            if t.iter().all(|p| (p[2] - b.top).abs() <= tol) {
+                tops[k] += len / 2.0;
+            }
+            continue;
+        }
         if nz > 0.5 {
             if t.iter().any(|p| (p[2] - b.top).abs() > tol) {
                 return Err(NO_BOSS.into());
@@ -123,9 +190,17 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
             }
         }
     }
-    // Each top covers its footprint (the two may be meshed apart, with their own corners).
+    // Each top covers its footprint (the two may be meshed apart, with their own corners); a
+    // filleted boss's top is the cylinder's, a polygon of its facets just inside the circle.
     for (b, area) in bosses.iter().zip(&tops) {
-        if b.top - top_z <= tol || (area - b.foot.area(&b.ring)).abs() > 1e-3 * area.max(tol) {
+        let covers = match b.foot {
+            Footprint::Round { r, .. } if b.fillet > 0.0 => {
+                let disk = std::f64::consts::PI * (r - b.fillet).powi(2);
+                *area <= disk * (1.0 + 1e-3) && *area >= disk * 0.98
+            }
+            _ => (area - b.foot.area(&b.ring)).abs() <= 1e-3 * area.max(tol),
+        };
+        if b.top - top_z <= tol + b.fillet || !covers {
             return Err(NO_BOSS.into());
         }
     }

@@ -234,7 +234,7 @@ fn bosses_become_cylinders() {
         cutouts: vec![],
         pads: vec![],
         pockets: vec![],
-        bosses: vec![BossSpec { x: 20.0, y: 15.0, d: 10.0, h: 4.0 }],
+        bosses: vec![BossSpec { x: 20.0, y: 15.0, d: 10.0, h: 4.0, fillet: None }],
         outline_fillet_r: None,
         edge_fillet_r: None,
     };

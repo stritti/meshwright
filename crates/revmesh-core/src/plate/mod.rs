@@ -163,7 +163,11 @@ pub(crate) fn recognize_plate(mesh: &Mesh) -> Result<Recognition, String> {
         let [x, y] = [snap_mm(b.foot.middle()[0] - offset[0]), snap_mm(b.foot.middle()[1] - offset[1])];
         let h = snap_mm(b.top - top);
         match b.foot {
-            Footprint::Round { r, .. } => bosses.push(BossSpec { x, y, d: snap_mm(2.0 * r), h }),
+            Footprint::Round { r, .. } => {
+                // A round foot widens the footprint by its radius beyond the cylinder.
+                let fillet = (b.fillet > 0.0).then(|| snap_mm(b.fillet));
+                bosses.push(BossSpec { x, y, d: snap_mm(2.0 * (r - b.fillet)), h, fillet });
+            }
             Footprint::Rect { lo, hi } => pads.push(PadSpec { x, y, w: snap_mm(hi[0] - lo[0]), l: snap_mm(hi[1] - lo[1]), h }),
         }
     }
