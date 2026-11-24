@@ -188,3 +188,51 @@ If you already work in Fusion 360, SOLIDWORKS or Rhino, the mesh-to-B-rep conver
 are the pragmatic route to an editable solid, without a feature history. For 3D scan data
 with organic shapes, the commercial suites (Geomagic Design X, ZEISS REVERSE ENGINEERING,
 PolyWorks\|Modeler, …) remain the most complete, at enterprise prices.
+
+## Concepts from the list, applied to revmesh
+
+The sandbox decides which concepts are adoptable: no GPU, no Python, no network (see
+[Architecture](/architecture)), so the neural fitters and reconstructors (SPFN, CPFN, HPNet,
+ParSeNet, Point2CAD, CAD-Recode, MeshWright's AI assistant) cannot run in the plugin. Portable
+are their *output representation* — parametric sketches with constraints, extrusion cylinders,
+parametric edges — and the classical deterministic building blocks: fixed-seed RANSAC
+primitives, edge-based mesh segmentation, topology checks. Measure-the-features-first, then
+build the history (as MeshWright does with an AI assistant, mesh2cad with a script) is already
+revmesh's approach, minus the AI.
+
+| Concept | Comes from | revmesh today | Concrete next step |
+|---|---|---|---|
+| Cross-sections become constrained sketches | Geomagic Auto-Sketch, PolyWorks Modeler, QUICKSURFACE, EXModel (Pro), Detessellate, ZEISS | `plate::faces::split_faces` (`crates/revmesh-core/src/plate/faces.rs:33`) takes exactly two face levels, bottom and top; steps and non-rectangular pockets are refused | generalise to every face level: slice the mesh at each level, take `boundary_loops` (`plate/geometry.rs`) per level, write one sketch + extrude/cut per level — arbitrary pockets and steps, where today only `box` features are written (`to_design.rs:343`) |
+| Sketch-extrude with constraints as the CAD representation | DeepCAD, Fusion 360 Gallery, ABC dataset | sketch writers in `crates/revmesh-core/src/design/sketch.rs`: `rectangle_sketch` (line 239) fully dimensioned, `slot_sketch` (line 364) fully constrained, but `polygon_sketch`/`add_polygons` (lines 269, 308) write free points with only `Horizontal`/`Vertical` — the outline (`to_design.rs:166`) and cut-outs (`to_design.rs:265`) carry no dimensions | in `polygon_sketch`/`add_polygons` add a `Length` or `Angle` constraint per side (or `DistanceX`/`DistanceY` per corner), each naming its own model parameter; the recogniser already measures every side (`plate/outline.rs`), so any outline re-dimensions like `base_x` does |
+| Extrusion cylinders: 2D profile + axis + extent | Point2Cyl | one prism, the axis tried along X, Y and Z (`plate/prism.rs`) | decompose into several extrusion cylinders, each its own sketch + extrude (combined extrusions); closed-form fitting keeps it deterministic |
+| Parametric edges read from the mesh | PIE-Net (neural); classically, circle fits on rim loops | holes and bosses are circles fitted to their rim loops (`fit_circle` in `plate/geometry.rs`, used from `plate/holes.rs` and `plate/bosses.rs`); outlines stay polylines; `SketchCurve::Arc` (`sketch.rs:69`) is used only by `slot_sketch` | read curved sides, round outlines and D-shaped cut-outs as `Arc`s with a `Diameter` parameter in the outline sketch — today they stay a mesh ([not recognised yet](/guide/recognition#not-recognised-yet)) |
+| Segmentation by sharp edges / dihedral angle | Sunil & Pande 2008, Muraleedharan & Muthuganapathy 2021, HPNet's explicit edges | `faces.rs`/`walls.rs` classify faces and walls; facet corners are checked against the walls, not facet normals | more feature classes from the same segmentation: chamfers, drafts, beads, blind and slanted slots |
+| Primitive detection including tori | Efficient RANSAC (Schnabel et al. 2007) | fixed-seed RANSAC for planes and cylinders; a boss foot's round is measured band by band (`round_foot` in `plate/bosses.rs`) | analytic torus detection, so rounds at hole rims and boss feet become measured surfaces instead of per-band fits |
+| Topology as a validity gate | ComplexGen (closed face loops, cylinder perpendicularity) | exact-or-nothing (tolerance `max(1 µm, 10⁻⁵ · size)`), volume within `MAX_VOLUME_ERROR = 1%` (`plate/mod.rs`) | add ComplexGen-style checks — recognised faces close into loops, walls meet their face at 90° — to reject twisted or banded fakes before the volume gate |
+| Deviation against the mesh as a report | Geomagic Accuracy Analyser, PolyWorks, mesh2cad's Hausdorff/RMS | volume within 1% at import; Hausdorff only in `cargo xtask check` (`check.rs`) | compute the per-face surface deviation in the sandbox and put it in the import report |
+
+### Towards reworkable sketches, concretely
+
+A SolidCraft sketch is points + `Line`/`Arc` curves + constraints, and the constraints `Length`,
+`Diameter`, `DistanceX`, `DistanceY` and `Angle` are driven by model parameters (`Constraint` in
+`crates/revmesh-core/src/design/sketch.rs:102`; see [The SolidCraft design format](/design-format)).
+What revmesh's sketch writers produce today:
+
+| Sketch | Written by | Constraints | Reworkable? |
+|---|---|---|---|
+| Plate rectangle | `rectangle_sketch` (`sketch.rs:239`, used at `to_design.rs:70`) | horizontal/vertical, coincident, two `Length` driven by model params `d1`/`d2` (`to_design.rs:67`), whose expressions are `base_x`/`base_y` | yes |
+| General outline | `polygon_sketch` (`sketch.rs:269`, used at `to_design.rs:166`) | free corners, `Horizontal`/`Vertical` on axis-aligned sides only | no — the shape lives in the points |
+| Cut-outs | `polygons_sketch` (`sketch.rs:294`, used at `to_design.rs:265`) | same as the outline | no |
+| Slot | `slot_sketch` (`sketch.rs:364`, used at `to_design.rs:244`) | tangent ×4, equal, midpoint, `Length`, `Diameter`, coincident position, `Angle` — all parameter-driven | yes |
+
+The gap to the vision of reworkable sketches is exactly the outline and cut-out sketches. The
+steps are [item 5 of the roadmap](/guide/roadmap): dimension every outline side with its own model
+parameter in `polygon_sketch`/`add_polygons` (no new constraint type is needed — `Length`,
+`Angle`, `DistanceX`/`DistanceY` all exist in the `Constraint` enum and SolidCraft reads them, and
+the recogniser already measures every side in `plate/outline.rs`), write rounded-corner runs as
+`SketchCurve::Arc` with a `Diameter` parameter (`outline_shape` already fits one circle per
+corner, `CircleSums` at `plate/outline.rs:165`), generalise `split_faces` to one sketch + extrude
+or cut per face level, and report the per-face deviation in the import report — all within the
+deterministic gates (exact-or-nothing, volume within 1%, ComplexGen-style topology checks; the
+neural reconstructors stay out of the sandbox: their representation is the target, their compute
+is not).
