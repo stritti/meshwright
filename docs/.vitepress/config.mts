@@ -29,6 +29,7 @@ export default defineConfig({
           { text: 'What auto recognises', link: '/guide/recognition' },
           { text: 'Roadmap', link: '/guide/roadmap' },
           { text: 'Origin and license', link: '/guide/about' },
+          { text: 'Comparable tools', link: '/guide/comparison' },
         ],
       },
       {

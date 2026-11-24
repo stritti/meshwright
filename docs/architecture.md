@@ -64,7 +64,9 @@ xtask/                 component wrapping, packaging, plugin tests
   normal, and arcs and holes are read from where their corners lie, not from equal facets.
   `plugin/revmesh/tests/solidcraft-l-bracket.stl` is such an export.
 - **Deterministic numerics.** No threads and no system randomness in the sandbox: algorithms
-  such as RANSAC use a fixed seed.
+  such as RANSAC use a fixed seed. The literature behind the recognition approach — RANSAC shape
+  detection, feature recognition from STL meshes, extrusion-cylinder decomposition — is listed
+  under [Research and literature](/guide/comparison#research-and-literature).
 - **One pipeline, three axes.** Like mesh2cad, which tries a prism along X, Y and Z, `recognize`
   tries each axis in turn: the mesh is rotated by a proper rotation (so volumes and windings
   survive) into a frame where the axis is +Z, the Z pipeline runs unchanged, and the result is
