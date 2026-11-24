@@ -95,13 +95,15 @@ fn filleted_boss_holds(b: &FoundBoss, t: &crate::mesh::Triangle, top_z: f64, tol
         let (radial, rise) =
             (super::geometry::distance([p[0], p[1]], centre) - super::geometry::distance([q[0], q[1]], centre), p[2] - q[2]);
         let along = radial.hypot(rise);
+        // How far the middle of a chord `c` long lies inside a circle of radius `radius`.
+        let sagitta = |c: f64, radius: f64| radius - (radius * radius - (c * c / 4.0).min(radius * radius)).sqrt();
         let bow = if on_round {
             if along > 2.0 * f * (super::MAX_HOLE_STEP / 2.0).sin() + tol {
                 return false;
             }
-            along * along / (8.0 * f) + across * across / (8.0 * r)
+            sagitta(along, f) + sagitta(across, r)
         } else {
-            across * across / (8.0 * r)
+            sagitta(across, r)
         };
         off([f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])], tol + bow)
     });

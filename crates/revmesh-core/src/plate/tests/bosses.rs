@@ -166,3 +166,14 @@ fn rounded_feet_and_chamfered_feet() {
     assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0) }]);
     reason(&layered_boss(&[(r + f, 0.0), (r, f), (r, 8.0)], 48));
 }
+
+/// A round at the foot of an Ø20 boss in two bands of 45° each, the coarsest allowed: the middle
+/// of each band's edge lies its exact sagitta inside the round.
+#[test]
+fn rounded_feet_in_two_bands() {
+    let (r, f) = (10.0, 2.0);
+    let mut rings: Vec<(f64, f64)> = [0.0, PI / 4.0, PI / 2.0].iter().map(|a| (r + f - f * a.sin(), f - f * a.cos())).collect();
+    rings.push((r, 8.0));
+    let (plate, _) = found(&layered_boss(&rings, 48));
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 20.0, h: 8.0, fillet: Some(2.0) }]);
+}
