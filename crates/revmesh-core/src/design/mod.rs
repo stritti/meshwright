@@ -376,6 +376,8 @@ pub enum Operation {
     Cut,
     /// Adds to an existing body.
     Join,
+    /// Keeps only what the profile's extrusion and the existing bodies have in common.
+    Intersect,
 }
 
 /// Where a pattern puts its copies. Counts, spacings and the origin are expressions.

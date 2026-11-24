@@ -40,6 +40,16 @@ impl Axis {
         }
     }
 
+    /// The axis's letter: `'X'`, `'Y'` or `'Z'`.
+    #[must_use]
+    pub fn letter(self) -> char {
+        match self {
+            Axis::X => 'X',
+            Axis::Y => 'Y',
+            Axis::Z => 'Z',
+        }
+    }
+
     /// The origin plane a sketch of the profile lies on: `YZ` for X, `XZ` for Y, `XY` for Z.
     #[must_use]
     pub fn plane(self) -> &'static str {

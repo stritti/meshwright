@@ -68,9 +68,14 @@ fn bosses_must_be_straight_and_round() {
     // A boss narrowing straight up to a top of 0.9 times its radius is drafted, by
     // atan(0.5 / 4) = 7.13°.
     assert_eq!(found(&standing(&foot, &draft, 4.0)).0.bosses[0].draft_deg, Some(7.13));
-    for mesh in [standing(&foot, &twist, 4.0), standing(&diamond, &|p| p, 4.0), standing(&block, &pad_draft, 4.0)] {
+    for mesh in [standing(&foot, &twist, 4.0), standing(&diamond, &|p| p, 4.0)] {
         reason(&mesh);
     }
+    // A square pad narrowing straight up is no plate's pad; it is the intersection of two
+    // trapezoids extruded along X and Y, a combined extrusion.
+    let tapered = standing(&block, &pad_draft, 4.0);
+    assert!(crate::plate::recognize_plate(&tapered).is_err());
+    assert!(matches!(crate::recognize::recognize(&tapered), crate::recognize::Recognition::Combined { .. }));
 }
 
 /// A boss whose top is larger than what is left of the plate's top face.
