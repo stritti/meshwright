@@ -19,8 +19,8 @@
    10. (done) boxes with every edge rounded (`edge_fillet_r`), with through holes in them;
        bosses on side faces still to do
    11. (done) chamfers, drafts and the rounds at a boss's foot or a hole's rim
-   12. combined extrusions: (done) the intersection of outlines extruded along X, Y and Z;
-       straight cuts, holes and unions of partial extrusions in it still to do
+   12. combined extrusions: (done) the intersection of outlines extruded along X, Y and Z, with
+       openings through them; blind cuts, holes and unions of partial extrusions in it still to do
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate` (volume
    and deviation), as mesh2cad does with CadQuery.
 5. **Reworkable sketches** — beyond parity: every sketch fully dimensioned and constrained, so it

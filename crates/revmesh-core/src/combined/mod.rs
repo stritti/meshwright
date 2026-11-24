@@ -87,21 +87,28 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
                 })
             })
             .collect();
-        let mut rings = silhouette::loops(&front, tol)?;
-        if rings.len() != 1 || area2(&rings[0]) <= 0.0 {
-            return Err(format!(
-                "it is not a combination of extrusions: its silhouette along {} is not one outline (openings through it are not \
-                 recognised yet)",
-                axis.letter()
-            ));
+        // One boundary (counter-clockwise) and the openings through it (clockwise).
+        let rings = silhouette::loops(&front, tol)?;
+        let (mut outer, openings): (Vec<Vec<P2>>, Vec<Vec<P2>>) = rings.into_iter().partition(|r| area2(r) > 0.0);
+        if outer.len() != 1 {
+            return Err(format!("it is not a combination of extrusions: its silhouette along {} is not one outline", axis.letter()));
         }
-        let outline: Vec<P2> = rings.remove(0).into_iter().map(|p| p.map(snap_mm)).collect();
+        let outline = outer.remove(0);
+        let snap = |ring: Vec<P2>| -> Vec<P2> { ring.into_iter().map(|p| p.map(snap_mm)).collect() };
+        let outline = snap(outline);
+        let cutouts: Vec<Vec<P2>> = openings
+            .into_iter()
+            .map(|mut r| {
+                r.reverse();
+                snap(r)
+            })
+            .collect();
         let [u, v] = axis.profile_axes();
         let box_side = size[u] * size[v];
-        if outline.len() == 4 && (area2(&outline) / 2.0 - box_side).abs() <= tol * (size[u] + size[v]) {
+        if cutouts.is_empty() && outline.len() == 4 && (area2(&outline) / 2.0 - box_side).abs() <= tol * (size[u] + size[v]) {
             continue;
         }
-        extrusions.push(Extrusion { axis, outline });
+        extrusions.push(Extrusion { axis, outline, cutouts });
     }
     if extrusions.len() < 2 {
         return Err("it is not a combination of extrusions: it is not bounded by outlines along two axes".into());
@@ -138,9 +145,9 @@ fn on_boundary(spec: &CombinedSpec, t: &[Vec3; 3], n: Vec3, tol: f64) -> bool {
             if m[2].abs() > PARALLEL {
                 return false;
             }
-            let k = e.outline.len();
-            (0..k).any(|i| {
-                let (a, b) = (e.outline[i], e.outline[(i + 1) % k]);
+            // Each side with the material on its left: the outline's and the openings' (wound the
+            // other way).
+            e.rings().iter().flat_map(|r| (0..r.len()).map(move |i| (r[i], r[(i + 1) % r.len()]))).any(|(a, b)| {
                 let d = [b[0] - a[0], b[1] - a[1]];
                 let len = d[0].hypot(d[1]);
                 let outward = [d[1] / len, -d[0] / len];
