@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "printables/tiny-calibration-block.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 4, "loss_report": {"summary": "A 30 x 20 x 10 mm plate with 1 pocket"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 4600}},
+    "tolerance": 1e-4
+  }
+}

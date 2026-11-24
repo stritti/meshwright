@@ -224,7 +224,7 @@ a blind cut and a pocket, each `Cut<n>Sketch` and `Cut<n>` (`cut_<n>_len`, `cut_
 
 Parts other people designed and shared on [Printables](https://www.printables.com), exported by
 their tools (OpenSCAD, FreeCAD, SketchUp, …) rather than generated here. They are test files in
-[`crates/revmesh-core/tests/printables/`](https://github.com/stritti/revmesh/tree/main/crates/revmesh-core/tests/printables),
+[`plugin/revmesh/tests/printables/`](https://github.com/stritti/revmesh/tree/main/plugin/revmesh/tests/printables),
 each under its author's licence (CC0 or CC BY 4.0, listed there). Where the author published
 the design's source, the test checks revmesh's parameters against it.
 
@@ -292,7 +292,7 @@ The everyday parts are generated, so they are exact and reproducible:
 cargo run -q -p revmesh-core --example examples_stl -- examples   # writes examples/*.stl
 pip install numpy pillow
 python3 scripts/render-stl.py --out docs/public/examples examples/*.stl
-python3 scripts/render-stl.py --out docs/public/examples/printables crates/revmesh-core/tests/printables/*.stl
+python3 scripts/render-stl.py --out docs/public/examples/printables plugin/revmesh/tests/printables/*.stl
 cargo test -p revmesh-core --test examples --test printables      # each imports as described here
 ```
 

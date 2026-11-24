@@ -1,4 +1,5 @@
-//! Real STL files from Printables (`tests/printables/`, licences and sources in its README):
+//! Real STL files from Printables (`plugin/revmesh/tests/printables/`, licences and sources in
+//! its README; the `printables-*.json` cases beside it run them in SolidCraft):
 //! parts other people designed and exported, not generated here. Where the author published the
 //! source (a DXF or an OpenSCAD file), the expected parameters are that source's numbers, so the
 //! test checks revmesh against the design, not against itself.
@@ -11,7 +12,7 @@ use revmesh_core::{ImportOptions, import};
 /// Imports `tests/printables/<name>.stl`: the summary, the feature names, the user parameters as
 /// `name expression` and the report's item messages.
 fn imported(name: &str) -> (String, Vec<String>, Vec<String>, Vec<String>) {
-    let path = format!("{}/tests/printables/{name}.stl", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../plugin/revmesh/tests/printables/{name}.stl", env!("CARGO_MANIFEST_DIR"));
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let result = import(&bytes, &format!("{name}.stl"), &ImportOptions::default()).expect("imports");
     let json: serde_json::Value = serde_json::from_str(&result.design.to_json_pretty()).expect("design JSON");

@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "printables/flat-mending-plate-4x20x60.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 1, "loss_report": {"summary": "A mesh of 1248 triangles"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 4461.760648}},
+    "tolerance": 1e-4
+  }
+}

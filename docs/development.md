@@ -80,8 +80,11 @@ SolidCraft should measure after rebuilding. Each fixture in `plugin/revmesh/test
 `.json` case that `cargo xtask plugin-test` runs in SolidCraft.
 
 Real STL files from Printables, under CC0 or CC BY and used unchanged, are in
-`crates/revmesh-core/tests/printables/` (authors and licences in its README);
-`tests/printables.rs` checks them against the authors' published sources where there are any.
+`plugin/revmesh/tests/printables/` (authors and licences in its README);
+`crates/revmesh-core/tests/printables.rs` checks them against the authors' published sources
+where there are any, and the `printables-*.json` cases import each in SolidCraft. For any STL,
+`cargo run -q -p revmesh-core --example params -- part.stl` ends with the feature count and the
+volume a plugin test case expects.
 
 The example parts in `examples/` (shown in the docs' [examples](/guide/examples) gallery) are
 generated the same way, by `crates/revmesh-core/examples/examples_stl.rs`;

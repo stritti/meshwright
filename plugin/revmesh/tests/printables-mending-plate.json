@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "printables/mending-plate.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 1, "loss_report": {"summary": "A mesh of 1052 triangles"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 3852.726217}},
+    "tolerance": 1e-4
+  }
+}

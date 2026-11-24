@@ -1,8 +1,10 @@
 # Real STL files from Printables
 
 Parts other people designed and shared on [Printables](https://www.printables.com), used
-unchanged (only renamed) as test files for `tests/printables.rs` and shown in the docs'
-[examples](https://stritti.github.io/revmesh/guide/examples#real-files-from-printables). They are
+unchanged (only renamed) as test files: the plugin tests `../printables-*.json` import each in
+SolidCraft (`cargo xtask plugin-test`), `crates/revmesh-core/tests/printables.rs` checks the
+recognised parameters natively, and the docs'
+[examples](https://stritti.github.io/revmesh/guide/examples#real-files-from-printables) show them. They are
 not covered by revmesh's MIT licence: each keeps its author's licence below. Only files under
 CC0 or CC BY are taken, so they may be redistributed here.
 
@@ -20,5 +22,7 @@ They were chosen because they can be checked: where the author published the des
 | `flat-mending-plate-4x20x60.stl` (`4x20x60 3.stl`) | [Heavy Duty Flat Mending Plates, 20x4mm (M4)](https://www.printables.com/model/1549159-heavy-duty-flat-mending-plates-20x4mm-m4) | [Mateusz Tokarz](https://www.printables.com/@MateuszTokarz) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | not recognised yet |
 
 The files are stored as downloaded; never edit them. To add one, take a model under CC0 or
-CC BY (not NC, ND or SA), add a row here with the original file name, and a test in
-`tests/printables.rs`.
+CC BY (not NC, ND or SA), add a row here with the original file name, a test in
+`crates/revmesh-core/tests/printables.rs`, and a case `../printables-<name>.json`: its
+`features`, `summary` and `volume_mm3` are what
+`cargo run -q -p revmesh-core --example params -- <file>` prints on its last lines.
