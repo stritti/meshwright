@@ -13,6 +13,8 @@
   "report.smoothed.message": "Bohrungen und verrundete Ecken werden als echte Kreise neu aufgebaut, daher ändert sich das Volumen gegenüber den Facetten des Netzes um {change} %.",
   "report.unrecognized.title": "Als Netz behalten",
   "report.unrecognized.message": "Es wurden keine parametrischen Features erkannt: {reason}.",
+  "report.update.title": "Eine neuere Version von revmesh ist verfügbar",
+  "report.update.message": "Dieser Import lief mit revmesh {current}, aber {latest} ist erschienen. Installieren Sie sie über https://github.com/stritti/revmesh/releases",
 
   "summary.plate": "Eine {x} x {y} x {z} mm Platte",
   "summary.stack": "Ein {x} x {y} x {z} mm Teil aus {n} gestapelten Konturen entlang {axis}",
