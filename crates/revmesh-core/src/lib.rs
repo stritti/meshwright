@@ -19,6 +19,7 @@
 //! (MIT licensed); see `NOTICE` at the repository root.
 
 pub mod check;
+pub(crate) mod combined;
 pub mod design;
 pub mod i18n;
 pub mod import;

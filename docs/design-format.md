@@ -55,6 +55,19 @@ revmesh writes a part standing along X or Y this way: the recognised profile's c
 exactly the sketch coordinates on that plane, and the part is moved to where it is in the file by
 the `move` after the extrusion, as for a Z plate.
 
+## Combined extrusions
+
+A part that is the intersection of outlines extruded along two or three axes gets one sketch per
+outline on its axis's origin plane (the outline's corners are the sketch coordinates there, the
+part's bounding box's lowest corner at the origin, so on `XZ` the second coordinate is -Z) and
+one extrusion of it, `extent: {distance: "extrude_<a>_len", direction: "positive"}`, right across
+the part. The first extrusion makes the body (`operation: "new_body"`), every further one has
+`operation: "intersect"` with no `body_names` and no targets: SolidCraft intersects the existing
+body, coincident faces included, as `solidcraft-cli 0.48.1` builds it. A `move` then takes the
+body to where it is, its translation along each outline's axis `extrude_<a>_0`. Changing
+`extrude_x_len` from 60 to 50 on `plugin/revmesh/tests/combined.stl` rebuilds to 32,500 mm³, as
+computed, and `extrude_z_0 = 10` lifts the part by 10 mm.
+
 ## Cut-outs
 
 The cut-outs of straight sides are one sketch, `CutoutsSketch`, of closed loops in world

@@ -20,6 +20,7 @@
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
 | A rectangular box with all twelve edges rounded with one radius, with through holes | `Fillet1` on all twelve edges of the extrude (the four `side|side`, the four `side|top`, the four `side|start`), before the holes | `edge_fillet_r` |
+| The intersection of outlines of straight sides extruded right across the part along two or three of X, Y and Z (a plate seen from above cut by a ramp seen from the side; every face flat and parallel to at least one axis) | `Sketch<k>` (each outline on its axis's plane) and `Extrude<k>` (the first a new body, each further one `intersect`), `Move1` | `extrude_<a>_len` (the length along axis `a`), `extrude_<a>_0` (where it starts along it) for each outline's axis; the outlines' corners as in the file (mesh2cad's point lists `outline_<a>`) |
 
 The parameter names are mesh2cad's, and the part stays where it is in the file. A chamfered
 corner is simply one more straight side, so it comes over exactly.
@@ -39,6 +40,8 @@ These are kept as a mesh, with the reason in the report:
 - corners rounded almost all the way along their sides
 - steps, pockets other than rectangles, other shapes on the top face, and bosses with a draft, a round or a hole
 - blind holes with a drill point or a counterbore
-- parts standing upright or rotated
+- parts rotated off the axes
+- combined extrusions with holes, pockets, cuts or openings in them, and unions of extrusions
+  that do not go right across the part
 
 The [roadmap](/guide/roadmap) lists the order in which they are coming.

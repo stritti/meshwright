@@ -12,14 +12,20 @@
 //! is rotated so the axis becomes Z (see [`Axis`]), the Z pipeline runs unchanged, and the result
 //! is rotated back. Z is tried first, so an axis-aligned box keeps the `base_*` plate mesh2cad's
 //! box vocabulary writes for it.
+//!
+//! When no prism fits, a part may still be the intersection of outlines extruded along two or
+//! three axes (a [`CombinedSpec`], see `crate::combined`), as mesh2cad's boolean of extrusions
+//! falls back to.
 
 mod axis;
+mod combined;
 mod spec;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod to_design;
 
 pub use axis::Axis;
+pub use combined::{CombinedSpec, Extrusion};
 pub use spec::{Blind, BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::mesh::{Mesh, Vec3};
@@ -46,6 +52,13 @@ pub enum Recognition {
         /// The axis the outline is extruded along.
         axis: Axis,
     },
+    /// The intersection of outlines extruded along two or three axes.
+    Combined {
+        /// The part, its bounding box's corner at the origin.
+        spec: CombinedSpec,
+        /// Where that corner was in the file; the design puts it at the origin.
+        offset: Vec3,
+    },
     /// Nothing the recognisers know; the mesh is kept as it is.
     Unrecognized {
         /// Why, in the user's words.
@@ -54,7 +67,7 @@ pub enum Recognition {
 }
 
 /// Looks for a part the recognisers know in `mesh`: a prism along Z, then along X, then along Y
-/// (each but the first on the mesh rotated, see [`Axis`]).
+/// (each but the first on the mesh rotated, see [`Axis`]), then an intersection of extrusions.
 #[must_use]
 pub fn recognize(mesh: &Mesh) -> Recognition {
     let mut reason = String::new();
@@ -87,7 +100,7 @@ pub fn recognize(mesh: &Mesh) -> Recognition {
             Ok(Recognition::Profile { profile, offset, .. }) => {
                 return Recognition::Profile { profile, offset: axis.unrotate(offset).map(crate::mesh::snap_mm), axis };
             }
-            Ok(Recognition::Unrecognized { .. }) => unreachable!("recognize_plate errs instead"),
+            Ok(Recognition::Unrecognized { .. } | Recognition::Combined { .. }) => unreachable!("recognize_plate finds prisms or errs"),
             // The first axis's reason is the one reported: Z reads most naturally, and it is the
             // reason every mesh got before X and Y were tried.
             Err(why) => {
@@ -97,5 +110,10 @@ pub fn recognize(mesh: &Mesh) -> Recognition {
             }
         }
     }
-    Recognition::Unrecognized { reason }
+    // The prisms' reason stays the one reported: a part that is no intersection of extrusions
+    // either is most often a prism with something the recognisers do not know yet.
+    match crate::combined::recognize_combined(mesh) {
+        Ok((spec, offset)) => Recognition::Combined { spec, offset },
+        Err(_) => Recognition::Unrecognized { reason },
+    }
 }

@@ -15,6 +15,7 @@
   "report.unrecognized.message": "No parametric features were recognised: {reason}.",
 
   "summary.plate": "A {x} x {y} x {z} mm plate",
+  "summary.combined": "A {x} x {y} x {z} mm part of outlines extruded along {axes}",
   "summary.with": "{plate} with {parts}",
   "summary.list": "{rest} and {last}",
   "summary.outline": "a {n}-sided outline",

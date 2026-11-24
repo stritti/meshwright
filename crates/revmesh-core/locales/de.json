@@ -15,6 +15,7 @@
   "report.unrecognized.message": "Es wurden keine parametrischen Features erkannt: {reason}.",
 
   "summary.plate": "Eine {x} x {y} x {z} mm Platte",
+  "summary.combined": "Ein {x} x {y} x {z} mm Teil aus Konturen, extrudiert entlang {axes}",
   "summary.with": "{plate} mit {parts}",
   "summary.list": "{rest} und {last}",
   "summary.outline": "einer {n}-eckigen Kontur",
