@@ -26,9 +26,10 @@ crates/
                        constants), geometry.rs (2D measurements), faces.rs and walls.rs (face
                        and wall classification), outline.rs (outline, rounded corners), holes.rs
                        (round holes, slots, polygonal cut-outs), bosses.rs, prism.rs (prism
-                       check, face loops, hole pairing), tests/ (the tests, one file per
-                       concern)
-    src/synth.rs       synthetic meshes of known parts, for tests and STL fixtures
+                       check, face loops, hole pairing, the rounded rim of an all-over-rounded
+                       box), tests/ (the tests, one file per concern)
+    src/synth.rs       synthetic meshes of known parts (plates, profiles, all-over-rounded
+                       boxes), for tests and STL fixtures
     src/design/        the SolidCraft document model (the subset revmesh writes):
                        mod.rs (Design, features, DesignBuilder), sketch.rs (sketches and
                        their constructors)

@@ -21,7 +21,11 @@
 //!    differ, the wider one is the mouth of a counterbore (corners on its wide wall down to a
 //!    flat floor) or a countersink (a cone down to where the bore's corners begin); every corner
 //!    and every facet that faces up or down between the faces must then lie on that surface.
-//! 5. The plate rebuilt from those numbers must have the mesh's volume within 1%, the check
+//! 5. A rectangular outline inset from the bounding box by one radius on every side is a box
+//!    rounded all over (mesh2cad's `edge_fillet_r`): its top and bottom faces are the inner
+//!    rectangle, and every corner between the faces must lie on the rounded surface, at that
+//!    radius from the inner box.
+//! 6. The plate rebuilt from those numbers must have the mesh's volume within 1%, the check
 //!    mesh2cad documents for its scripts; otherwise the mesh is kept.
 //!
 //! The module is split by concern: `geometry` (2D helpers), `faces` (top/bottom face and
@@ -41,7 +45,7 @@ mod prism;
 mod tests;
 mod walls;
 
-pub(crate) use outline::{corner_loss, fillet_loss};
+pub(crate) use outline::{corner_loss, edge_fillet_removed, fillet_loss};
 
 use std::f64::consts::PI;
 

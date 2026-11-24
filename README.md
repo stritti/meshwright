@@ -20,7 +20,8 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
 > SolidCraft 0.48. Recognition finds plates: any outline of straight sides (rectangles,
 > L-shapes, brackets, chamfered or slanted sides) extruded along Z — or along X or Y, a part
 > standing upright —, its corners parallel to that axis sharp or all rounded with one radius,
-> with round through holes. Everything else is imported as a mesh body, with the reason in the
+> with round through holes; and boxes with all twelve edges rounded with one radius. Everything
+> else is imported as a mesh body, with the reason in the
 > import report. See the [roadmap](#roadmap).
 
 ## Install
@@ -68,6 +69,7 @@ part that is not recognised arrives as a mesh body, and the report says why. To 
 | Three or more holes of one diameter equally spaced on a circle (a bolt circle) | `HoleCircle<n>` and `HoleCircle<n>Pattern` (a circular pattern about the circle's centre) | `hole_circle_<n>_n`, `_d`, `_r` (centre to hole), `_cx`, `_cy`, `_angle` (first hole, from +X) |
 | The four vertical corners of a rectangular plate rounded with one radius | `Fillet1` | `fillet_r` |
 | Every vertical corner of any other outline rounded with one radius, inside and outside corners alike | `Fillet1` (before the holes, so a hole may lie in an inside corner's rounding) | `outline_fillet_r` |
+| A rectangular box with all twelve edges rounded with one radius, with through holes | `Fillet1` on all twelve edges of the extrude (the four `side|side`, the four `side|top`, the four `side|start`), before the holes — as mesh2cad's `.edges().fillet()` does | `edge_fillet_r` |
 
 The parameter names are mesh2cad's, and the part stays where it is in the file. Like mesh2cad,
 which tries a prism along X, Y and Z, revmesh recognises an outline extruded along any of them:
@@ -138,7 +140,8 @@ cargo xtask check              # checks every rebuild against its source mesh (v
    2. (done) hole rows, grids and bolt circles as SolidCraft patterns;
    3. (done) counterbored and countersunk holes; 4. (done) blind holes; 5. (done) slots; 6. (done) bosses on the top face;
    7. (done) polygonal cut-outs; 8. (done) pads and pockets; 9. (done) extrusions along X and Y;
-   10. boxes with every edge rounded, holes and bosses on side faces; 11. chamfers, drafts
+   10. (done) boxes with every edge rounded (`edge_fillet_r`), with through holes in them;
+   bosses on side faces still to do; 11. chamfers, drafts
    and the rounds at a boss's foot or a hole's rim; 12. combined extrusions.
 4. **Checking** (done): `cargo xtask check` compares the rebuilt part with the mesh through
    SolidCraft's `eval` (feature errors, volume) and an STL re-export (surface deviation,

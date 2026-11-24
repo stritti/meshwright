@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "rounded-box.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 4, "loss_report": {"summary": "A 60 x 40 x 30 mm plate with 5 mm rounded edges"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 69377.580410}},
+    "tolerance": 1e-4
+  }
+}

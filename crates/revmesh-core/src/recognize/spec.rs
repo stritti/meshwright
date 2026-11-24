@@ -25,6 +25,10 @@ pub struct PlateSpec {
     pub cutouts: Vec<Vec<[f64; 2]>>,
     /// The radius of the four vertical corner edges, if they are rounded.
     pub outline_fillet_r: Option<f64>,
+    /// The radius of all twelve edges (the four vertical corner edges and the eight on the top
+    /// and bottom faces), if the box is rounded all over; mesh2cad's `edge_fillet_r`. Never set
+    /// together with `outline_fillet_r`.
+    pub edge_fillet_r: Option<f64>,
 }
 
 /// A rectangular block standing on the top face, its sides along X and Y: `w` along X, `l`
@@ -191,6 +195,8 @@ impl PlateSpec {
             pockets: self.pockets,
             cutouts: self.cutouts,
             outline_fillet_r: self.outline_fillet_r,
+            // A box rounded all over is a Z plate (mesh2cad's box vocabulary is a Z
+            // extrusion's); recognize() tries Z first and never converts it to a profile.
         }
     }
 
@@ -202,6 +208,7 @@ impl PlateSpec {
             None,
             [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
             self.outline_fillet_r,
+            self.edge_fillet_r,
         )
     }
 
@@ -209,12 +216,16 @@ impl PlateSpec {
     /// rebuilt the design.
     #[must_use]
     pub fn volume(&self) -> f64 {
-        let corners = self.outline_fillet_r.map_or(0.0, crate::plate::corner_loss);
+        let base = if let Some(r) = self.edge_fillet_r {
+            self.x * self.y * self.z - crate::plate::edge_fillet_removed(self.x, self.y, self.z, r)
+        } else {
+            (self.x * self.y - self.outline_fillet_r.map_or(0.0, crate::plate::corner_loss)) * self.z
+        };
         let holes: f64 = self.holes.iter().map(|h| h.volume(self.z)).sum();
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
         let bosses: f64 = self.bosses.iter().map(BossSpec::volume).sum();
         let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area(c)).sum();
-        (self.x * self.y - corners - slots - cutouts) * self.z - holes + bosses + blocks(&self.pads, &self.pockets)
+        base - (slots + cutouts) * self.z - holes + bosses + blocks(&self.pads, &self.pockets)
     }
 }
 
@@ -253,6 +264,7 @@ impl ProfileSpec {
             Some(self.corners.len()),
             [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
             self.outline_fillet_r,
+            None,
         )
     }
 
@@ -301,7 +313,7 @@ fn blocks(pads: &[PadSpec], pockets: &[PocketSpec]) -> f64 {
 }
 
 /// `counts` are the holes, the slots, the bosses, the cut-outs, the pads and the pockets.
-fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 6], fillet_r: Option<f64>) -> String {
+fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 6], fillet_r: Option<f64>, edge_r: Option<f64>) -> String {
     let [holes, slots, bosses, cutouts, pads, pockets] = counts;
     let [x, y, z] = size.map(fmt_number);
     let mut parts = Vec::new();
@@ -337,6 +349,9 @@ fn describe(size: [f64; 3], sides: Option<usize>, counts: [usize; 6], fillet_r: 
     }
     if let Some(r) = fillet_r {
         parts.push(format!("{} mm rounded corners", fmt_number(r)));
+    }
+    if let Some(r) = edge_r {
+        parts.push(format!("{} mm rounded edges", fmt_number(r)));
     }
     let mut text = format!("A {x} x {y} x {z} mm plate");
     if let Some((last, rest)) = parts.split_last() {

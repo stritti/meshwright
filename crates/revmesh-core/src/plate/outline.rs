@@ -253,6 +253,13 @@ pub(crate) fn corner_loss(r: f64) -> f64 {
     (4.0 - PI) * r * r
 }
 
+/// The volume a sharp box `x` by `y` by `z` loses when all twelve edges are rounded with radius
+/// `r`: each edge, away from the corners, loses a square minus a quarter circle, and each corner
+/// a cube minus a sphere octant (mesh2cad's `_edge_fillet_removed`).
+pub(crate) fn edge_fillet_removed(x: f64, y: f64, z: f64, r: f64) -> f64 {
+    4.0 * r * r * (1.0 - PI / 4.0) * (x + y + z - 6.0 * r) + 8.0 * r * r * r * (1.0 - PI / 6.0)
+}
+
 /// The area the corner `c` of a counter-clockwise outline (coming from `a`, going on to `b`)
 /// loses to a rounding of radius `r`; negative for an inside corner, which gains it.
 pub(crate) fn fillet_loss(a: P2, c: P2, b: P2, r: f64) -> f64 {

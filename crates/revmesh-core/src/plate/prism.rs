@@ -29,11 +29,82 @@ pub(super) fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     let faces = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
     let face_loops = face_outlines(&faces, tol)?;
     let (corners, radius) = outline_shape(&face_loops.outline, tol)?;
+    let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
     let cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
-    check_prism(&faces, mesh_volume, size[2], &cutouts.stepped, &cutouts.blinds)?;
-    check_walls(&faces, &corners, radius, &cutouts, scale, tol)?;
+    check_prism(&faces, mesh_volume, size[2], &cutouts.stepped, &cutouts.blinds, rim.as_ref())?;
+    check_walls(&faces, &corners, radius, &cutouts, scale, tol, rim.as_ref())?;
     let offset = bounds.min.map(snap_mm);
-    recognition(&corners, radius, cutouts, size, offset, tol, mesh_volume)
+    recognition(&corners, radius, cutouts, size, offset, mesh_volume, rim.as_ref())
+}
+
+/// A box rounded all over (mesh2cad's `edge_fillet_r`): its rim radius and size, for the checks
+/// against its surface — every point of it lies at distance `r` from the inner box.
+pub(super) struct Rim {
+    /// The radius all twelve edges are rounded with.
+    pub(super) r: f64,
+    /// The box's size along X, Y and Z.
+    pub(super) size: Vec3,
+}
+
+impl Rim {
+    /// Whether `p` (relative to the box's lowest corner) lies on the rounded box's surface, at
+    /// distance `r` from the inner box within `tol + slack` — the twelve quarter cylinders, the
+    /// eight sphere octants and the four flat side faces all are at exactly that distance.
+    pub(super) fn holds(&self, p: Vec3, tol: f64, slack: f64) -> bool {
+        let mut d2 = 0.0;
+        for i in 0..3 {
+            let (lo, hi) = (self.r, self.size[i] - self.r);
+            let d = if p[i] < lo {
+                lo - p[i]
+            } else if p[i] > hi {
+                p[i] - hi
+            } else {
+                0.0
+            };
+            d2 += d * d;
+        }
+        (d2.sqrt() - self.r).abs() <= tol + slack
+    }
+
+    /// The sagitta a chord of length `len` on the rounded surface bows inward by.
+    pub(super) fn sagitta(&self, len: f64) -> f64 {
+        let half = len / 2.0;
+        if half < self.r { self.r - (self.r * self.r - half * half).sqrt() } else { self.r }
+    }
+}
+
+/// The rim's rounding when the outline is the rectangle inset by one radius on every side: a box
+/// rounded all over has its flat top and bottom faces inset by the radius, so the top face's
+/// outline is that inner rectangle. Finely tessellated rims leak near-tangent facets into the cap
+/// (their corners lie within the tolerance of its plane), which bulges the outline out by the
+/// corner arcs' radius `radius`; the true inset is the bounding box's inset plus that radius.
+pub(super) fn rim_fillet(outline: &[P2], corners: &[P2], radius: Option<f64>, size: Vec3, tol: f64) -> Option<Rim> {
+    if corners.len() != 4 {
+        return None;
+    }
+    let (mut x0, mut x1) = (f64::INFINITY, f64::NEG_INFINITY);
+    let (mut y0, mut y1) = (f64::INFINITY, f64::NEG_INFINITY);
+    for p in outline {
+        x0 = x0.min(p[0]);
+        x1 = x1.max(p[0]);
+        y0 = y0.min(p[1]);
+        y1 = y1.max(p[1]);
+    }
+    // The four corners must be the bounding box's corners, axis-aligned.
+    let at = |v: f64, lo: f64, hi: f64| (v - lo).abs() <= tol || (v - hi).abs() <= tol;
+    if !corners.iter().all(|c| at(c[0], x0, x1) && at(c[1], y0, y1)) {
+        return None;
+    }
+    let insets = [x0, y0, size[0] - x1, size[1] - y1];
+    let inset = insets.iter().sum::<f64>() / 4.0;
+    if insets.iter().any(|&d| (d - inset).abs() > tol) || inset <= tol {
+        return None;
+    }
+    let r = inset + radius.unwrap_or(0.0);
+    if 2.0 * r >= size[0].min(size[1]).min(size[2]) {
+        return None;
+    }
+    Some(Rim { r, size })
 }
 
 /// Whether `a` and `b` are within `rel` of each other, relative to the larger one.
@@ -360,12 +431,22 @@ pub(super) fn stepped_hole(
 
 /// Without stepped holes the mesh must be a prism over its top face: the two faces match, and
 /// walls meshed in bands bulge only a little between the top face's corners (0.1%). A step
-/// changes either by far more.
-pub(super) fn check_prism(faces: &Faces, mesh_volume: f64, height: f64, stepped: &[Stepped], blinds: &[BlindHole]) -> Result<(), String> {
+/// changes either by far more. A box rounded all over (`rim`) is smaller than its top face times
+/// the height; its volume is checked against the rounded box in [`recognition`].
+pub(super) fn check_prism(
+    faces: &Faces,
+    mesh_volume: f64,
+    height: f64,
+    stepped: &[Stepped],
+    blinds: &[BlindHole],
+    rim: Option<&Rim>,
+) -> Result<(), String> {
     if stepped.is_empty() && blinds.is_empty() {
         let area = |t: &[[P2; 3]]| t.iter().map(|[a, b, c]| signed_area(&[*a, *b, *c])).sum::<f64>();
         let top_area = area(&faces.top);
-        if !close(top_area, area(&faces.bottom), AREA_MATCH_REL) || !close(top_area * height, mesh_volume, VOLUME_MATCH_REL) {
+        if !close(top_area, area(&faces.bottom), AREA_MATCH_REL)
+            || (rim.is_none() && !close(top_area * height, mesh_volume, VOLUME_MATCH_REL))
+        {
             return Err(NOT_CLOSED.into());
         }
     }
@@ -382,26 +463,49 @@ pub(super) fn check_walls(
     cutouts: &PlateCutouts,
     scale: f64,
     tol: f64,
+    rim: Option<&Rim>,
 ) -> Result<(), String> {
-    // A facet facing up or down between the faces must belong to a counterbore's floor or a
-    // countersink's cone; anywhere else it is a floor or a ledge (of a blind hole, a step or a
-    // pocket), even when its corners lie on a hole's circle.
-    if !faces
-        .caps
-        .iter()
-        .all(|cap| cutouts.stepped.iter().any(|s| s.holds_cap(cap, tol)) || cutouts.blinds.iter().any(|b| b.holds_cap(cap, tol)))
-    {
+    let on_rim = |p: Vec3, slack: f64| rim.is_some_and(|rim| rim.holds(p, tol, slack));
+    // The sagitta a facet's own longest edge bows the rounded surface inward by.
+    let sagitta_of = |cap: &[Vec3; 3]| {
+        let edge = |a: Vec3, b: Vec3| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+        let l = edge(cap[0], cap[1]).max(edge(cap[1], cap[2])).max(edge(cap[2], cap[0]));
+        rim.map(|rim| rim.sagitta(l))
+    };
+    // A facet facing up or down between the faces must belong to a counterbore's floor, a
+    // countersink's cone or the rounded rim; anywhere else it is a floor or a ledge (of a blind
+    // hole, a step or a pocket), even when its corners lie on a hole's circle.
+    let cap_on_rim = |cap: &[Vec3; 3]| {
+        cap.iter().all(|p| on_rim(*p, 0.0))
+            && sagitta_of(cap).is_some_and(|s| {
+                let middle = [
+                    (cap[0][0] + cap[1][0] + cap[2][0]) / 3.0,
+                    (cap[0][1] + cap[1][1] + cap[2][1]) / 3.0,
+                    (cap[0][2] + cap[1][2] + cap[2][2]) / 3.0,
+                ];
+                on_rim(middle, CHORD_FACET_SPAN * s)
+            })
+    };
+    if !faces.caps.iter().all(|cap| {
+        cutouts.stepped.iter().any(|s| s.holds_cap(cap, tol)) || cutouts.blinds.iter().any(|b| b.holds_cap(cap, tol)) || cap_on_rim(cap)
+    }) {
         return Err(NOT_FLAT.into());
     }
-    let walls = Walls::new(corners, radius, &cutouts.circles, &cutouts.slot_arcs, &cutouts.wall_loops, scale, tol);
+    // On a rounded rim the top outline is the inner rectangle, which lies inside the rounded
+    // box: its segments must not count as walls, or an off-surface corner projecting onto them
+    // would pass. Only the cut-outs' walls stay; the rim's own corners are checked in 3D.
+    let (wall_corners, wall_radius, wall_loops): (&[P2], Option<f64>, &[Vec<P2>]) =
+        if rim.is_some() { (&[], None, &cutouts.wall_loops[1..]) } else { (corners, radius, &cutouts.wall_loops[..]) };
+    let walls = Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, wall_loops, scale, tol);
     let in_step = |p: Vec3| cutouts.stepped.iter().any(|s| s.holds(p, tol)) || cutouts.blinds.iter().any(|b| b.holds(p, tol));
-    if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p)) {
+    if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p) && !on_rim(*p, 0.0)) {
         return Err(NOT_FLAT.into());
     }
     // A wall facet's edge in a stepped hole's mouth must follow the hole's surface too: its
     // middle within the sagitta of a chord two facets long, or the facet cuts across the bore.
-    // (Pockets facing each other share a footprint: the edge must follow one of them.)
-    let follows = |&(a, b, middle): &(P2, P2, Vec3)| {
+    // (Pockets facing each other share a footprint: the edge must follow one of them.) On the
+    // rounded rim the middle may bow inward by its chord's sagitta, as on any round wall.
+    let follows = |&(a, b, middle, len): &(P2, P2, Vec3, f64)| {
         let mut steps = cutouts.stepped.iter().filter(|s| s.reaches(a, tol) && s.reaches(b, tol)).peekable();
         let mut blind = cutouts.blinds.iter().filter(|h| h.reaches(a, tol) && h.reaches(b, tol)).peekable();
         if steps.peek().is_some() {
@@ -409,11 +513,15 @@ pub(super) fn check_walls(
         } else if blind.peek().is_some() {
             blind.any(|h| h.holds(middle, tol + CHORD_FACET_SPAN * h.sagitta()))
         } else {
-            walls.holds_chord(a, b)
+            walls.holds_chord(a, b) || rim.is_some_and(|rim| on_rim(middle, CHORD_FACET_SPAN * rim.sagitta(len)))
         }
     };
     let on_blind_wall = |p: &P2| cutouts.blinds.iter().any(|b| b.foot.on_wall(*p, &b.ring, tol));
-    if faces.rim.iter().any(|p| !walls.holds(*p) && !in_step([p[0], p[1], 0.0]) && !on_blind_wall(p)) || !faces.chords.iter().all(follows) {
+    // A wall's bottom corner on a rounded rim lies on the bottom cap, which is part of the
+    // rounded surface (at z = 0 every point of the inner rectangle is at distance `r`).
+    if faces.rim.iter().any(|p| !walls.holds(*p) && !on_rim([p[0], p[1], 0.0], 0.0) && !in_step([p[0], p[1], 0.0]) && !on_blind_wall(p))
+        || !faces.chords.iter().all(follows)
+    {
         return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
     }
     Ok(())
@@ -428,17 +536,24 @@ pub(super) fn recognition(
     cutouts: PlateCutouts,
     size: Vec3,
     offset: Vec3,
-    tol: f64,
     mesh_volume: f64,
+    rim: Option<&Rim>,
 ) -> Result<Recognition, String> {
-    let (z, outline_fillet_r) = (snap_mm(size[2]), radius.map(snap_mm));
+    let tol = tolerance(size[0].max(size[1]).max(size[2]));
+    // On a rounded rim the outline's own corner arcs are the leaked rim facets, not a fillet.
+    let (z, outline_fillet_r) = (snap_mm(size[2]), if rim.is_some() { None } else { radius.map(snap_mm) });
     let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
     let PlateCutouts { holes, slots, cutouts, pockets, .. } = cutouts;
     // A rectangle with cut-outs is an outline, as mesh2cad writes it (`extrude_len`, the
-    // outline's corners and each cut-out's).
-    let rectangle = cutouts.is_empty()
-        && corners.len() == 4
-        && box_corners.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol));
+    // outline's corners and each cut-out's). The rectangle is the box itself, or — when the rim is
+    // rounded — the top face's inner rectangle inset by the radius (rim_fillet checked the shape).
+    let matches = |want: &[[f64; 2]; 4]| {
+        corners.len() == 4 && want.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol))
+    };
+    let rectangle = cutouts.is_empty() && corners.len() == 4 && (matches(&box_corners) || rim.is_some());
+    if rim.is_some() && !rectangle {
+        return Err("a box with all edges rounded and cut-outs is not recognised yet".into());
+    }
     let (found, volume) = if rectangle {
         let plate = PlateSpec {
             x: snap_mm(size[0]),
@@ -451,6 +566,7 @@ pub(super) fn recognition(
             bosses: vec![],
             cutouts,
             outline_fillet_r,
+            edge_fillet_r: rim.map(|rim| snap_mm(rim.r)),
         };
         let volume = plate.volume();
         (Recognition::Plate { plate, offset }, volume)

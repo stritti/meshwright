@@ -2,7 +2,8 @@
 //!
 //! revmesh follows mesh2cad's approach and parameter names, one family of parts at a time.
 //! Recognised so far: prisms along a principal axis — an outline of straight sides, optionally
-//! with one radius on every corner parallel to the axis, with round holes; see [`crate::plate`].
+//! with one radius on every corner parallel to the axis, with round holes — and boxes with all
+//! twelve edges rounded with one radius (`edge_fillet_r`); see [`crate::plate`].
 //! A rectangular outline extruded along Z becomes a [`PlateSpec`], driven by its sizes; any
 //! other outline, and any outline extruded along X or Y, a [`ProfileSpec`]. Slots, counterbores
 //! and pockets follow; whatever is not recognised stays a mesh.
@@ -68,13 +69,20 @@ pub fn recognize(mesh: &Mesh) -> Recognition {
         match crate::plate::recognize_plate(source) {
             Ok(Recognition::Plate { plate, offset }) => {
                 let offset = axis.unrotate(offset).map(crate::mesh::snap_mm);
-                return if axis == Axis::Z {
-                    Recognition::Plate { plate, offset }
-                } else {
-                    // Along X or Y a rectangle is written as an outline (`extrude_len` and its
-                    // corners), the way mesh2cad's extrusion module writes it.
-                    Recognition::Profile { profile: plate.into_profile(), offset, axis }
-                };
+                if axis == Axis::Z {
+                    return Recognition::Plate { plate, offset };
+                }
+                if plate.edge_fillet_r.is_some() {
+                    // A box rounded all over is written as a Z plate (mesh2cad's box vocabulary
+                    // is a Z extrusion's); Z was tried first and would have found it.
+                    if reason.is_empty() {
+                        reason = "a box with all edges rounded along another axis".into();
+                    }
+                    continue;
+                }
+                // Along X or Y a rectangle is written as an outline (`extrude_len` and its
+                // corners), the way mesh2cad's extrusion module writes it.
+                return Recognition::Profile { profile: plate.into_profile(), offset, axis };
             }
             Ok(Recognition::Profile { profile, offset, .. }) => {
                 return Recognition::Profile { profile, offset: axis.unrotate(offset).map(crate::mesh::snap_mm), axis };

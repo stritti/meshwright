@@ -16,7 +16,8 @@
    7. (done) polygonal cut-outs
    8. (done) pads and rectangular pockets (steps and other pockets later)
    9. extrusions along X and Y
-   10. boxes with every edge rounded, holes and bosses on side faces
+   10. (done) boxes with every edge rounded (`edge_fillet_r`), with through holes in them;
+       bosses on side faces still to do
    11. chamfers, drafts and the rounds at a boss's foot or a hole's rim
    12. combined extrusions
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate` (volume

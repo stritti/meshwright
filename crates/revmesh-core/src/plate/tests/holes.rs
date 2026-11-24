@@ -394,6 +394,7 @@ fn split_hole_rims_stay_round() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: None,
+        edge_fillet_r: None,
     };
     let mut mesh = synth::plate(&expected, 16, [0.0; 3]);
     let ring = synth::rings(&expected.holes, 16).remove(0);

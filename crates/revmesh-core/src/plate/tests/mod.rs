@@ -27,6 +27,7 @@ fn spec(holes: &[(f64, f64, f64)], r: Option<f64>) -> PlateSpec {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: r,
+        edge_fillet_r: None,
     }
 }
 

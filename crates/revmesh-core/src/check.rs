@@ -327,6 +327,7 @@ mod tests {
             bosses: vec![],
             slots: vec![],
             outline_fillet_r: None,
+            edge_fillet_r: None,
         };
         let coarse = synth::plate(&spec, 16, [0.0; 3]);
         let fine = synth::plate(&spec, 48, [0.0; 3]);

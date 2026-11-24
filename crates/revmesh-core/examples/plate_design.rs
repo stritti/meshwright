@@ -21,6 +21,7 @@ fn main() {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: Some(3.0),
+        edge_fillet_r: None,
     };
     println!("{}", spec.to_design("plate-with-hole").to_json_pretty());
 }

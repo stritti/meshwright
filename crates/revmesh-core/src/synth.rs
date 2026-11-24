@@ -53,6 +53,143 @@ pub fn prism(outline: &[P2], holes: &[Vec<P2>], z: f64, offset: Vec3) -> Mesh {
     Mesh::new(triangles)
 }
 
+/// A rectangular box `x` by `y` by `z` with all twelve edges rounded with radius `r` (the
+/// Minkowski sum of the inner box and a ball of radius `r`), moved by `offset`, tessellated the
+/// way CAD exporters do it: six inset rectangular faces, twelve quarter cylinders and eight
+/// sphere octants, each faceted with about `segments` facets per quarter circle.
+///
+/// # Panics
+///
+/// If `r` is not smaller than half the smallest side.
+#[must_use]
+#[allow(clippy::too_many_lines)] // the three patch kinds, read best in one piece
+pub fn rounded_box(x: f64, y: f64, z: f64, r: f64, segments: usize, offset: Vec3) -> Mesh {
+    assert!(2.0 * r < x.min(y).min(z), "the fillet radius must be under half the smallest side");
+    let size = [x, y, z];
+    let at = |p: Vec3| [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]];
+    let mut triangles: Vec<Triangle> = Vec::new();
+
+    // One planar face: the rectangle inset by `r` in the plane spanned by axes `a` and `b`, at
+    // the fixed coordinate `fixed` on axis `c`, each side faceted into `segments` segments so the
+    // ring's edges pair with the quarter cylinders' ends. `flip` turns the winding for the
+    // face's outward side.
+    let mut face = |a: usize, b: usize, c: usize, fixed: f64, flip: bool| {
+        let (lo_a, hi_a) = (r, size[a] - r);
+        let (lo_b, hi_b) = (r, size[b] - r);
+        let corners = [[lo_a, lo_b], [hi_a, lo_b], [hi_a, hi_b], [lo_a, hi_b]];
+        // The ring stays counter-clockwise; `flip` turns the emitted triangles instead.
+        let n = segments.max(1);
+        let mut ring: Vec<P2> = Vec::with_capacity(4 * n);
+        for i in 0..4 {
+            let (p, q) = (corners[i], corners[(i + 1) % 4]);
+            for j in 0..n {
+                #[allow(clippy::cast_precision_loss)]
+                let t = j as f64 / n as f64;
+                ring.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]);
+            }
+        }
+        let project = |p: P2| {
+            let mut q = [0.0; 3];
+            q[a] = p[0];
+            q[b] = p[1];
+            q[c] = fixed;
+            at(q)
+        };
+        for [p, q, s] in triangulate(&ring, &[]) {
+            let (p, q, s) = (project(p), project(q), project(s));
+            if flip {
+                triangles.push([p, s, q]);
+            } else {
+                triangles.push([p, q, s]);
+            }
+        }
+    };
+    // Top (+Z) and bottom (-Z) faces, in the XY plane.
+    face(0, 1, 2, z, false);
+    face(0, 1, 2, 0.0, true);
+    // Front (-Y) and back (+Y), in the XZ plane: CCW in (x, z) faces -Y.
+    face(0, 2, 1, 0.0, false);
+    face(0, 2, 1, y, true);
+    // Left (-X) and right (+X), in the YZ plane: CCW in (y, z) faces +X.
+    face(1, 2, 0, x, false);
+    face(1, 2, 0, 0.0, true);
+
+    // One quarter cylinder along axis `a` at the edge where axis `b` is on side `sb` and axis
+    // `c` on side `sc` (-1: the low face, +1: the high face).
+    let mut edge = |a: usize, b: usize, c: usize, sb: f64, sc: f64| {
+        let wall_b = if sb < 0.0 { 0.0 } else { size[b] };
+        let c2 = if sc < 0.0 { r } else { size[c] - r };
+        let lo = r;
+        let hi = size[a] - r;
+        let point = |t: f64, phi: f64| {
+            let mut p = [0.0; 3];
+            p[a] = lo + t * (hi - lo);
+            p[b] = wall_b - sb * r * (1.0 - phi.cos());
+            p[c] = c2 + sc * r * phi.sin();
+            at(p)
+        };
+        let n = segments.max(1);
+        for i in 0..n {
+            for j in 0..n {
+                let (t0, t1) = (i as f64 / n as f64, (i + 1) as f64 / n as f64);
+                let (p0, p1) = (j as f64 / n as f64 * PI / 2.0, (j + 1) as f64 / n as f64 * PI / 2.0);
+                let (q00, q10, q11, q01) = (point(t0, p0), point(t1, p0), point(t1, p1), point(t0, p1));
+                // The winding faces outward when the two sides' signs differ.
+                if sb * sc < 0.0 {
+                    triangles.push([q00, q10, q11]);
+                    triangles.push([q00, q11, q01]);
+                } else {
+                    triangles.push([q00, q11, q10]);
+                    triangles.push([q00, q01, q11]);
+                }
+            }
+        }
+    };
+    // The four edges along each axis: the two sides of each of the other two axes.
+    for a in 0..3 {
+        let (b, c) = ((a + 1) % 3, (a + 2) % 3);
+        for sb in [-1.0, 1.0] {
+            for sc in [-1.0, 1.0] {
+                edge(a, b, c, sb, sc);
+            }
+        }
+    }
+
+    // One sphere octant at the corner where each axis is on side `s` (-1: 0, +1: size).
+    let mut corner = |sx: f64, sy: f64, sz: f64| {
+        let centre =
+            [if sx < 0.0 { r } else { size[0] - r }, if sy < 0.0 { r } else { size[1] - r }, if sz < 0.0 { r } else { size[2] - r }];
+        let point = |u: f64, v: f64| {
+            at([centre[0] + sx * r * u.sin() * v.cos(), centre[1] + sy * r * u.sin() * v.sin(), centre[2] + sz * r * u.cos()])
+        };
+        let n = segments.max(1);
+        for i in 0..n {
+            for j in 0..n {
+                let (u0, u1) = (i as f64 / n as f64 * PI / 2.0, (i + 1) as f64 / n as f64 * PI / 2.0);
+                let (v0, v1) = (j as f64 / n as f64 * PI / 2.0, (j + 1) as f64 / n as f64 * PI / 2.0);
+                let (q00, q10, q11, q01) = (point(u0, v0), point(u1, v0), point(u1, v1), point(u0, v1));
+                // The winding faces outward when an even number of sides are low.
+                if sx * sy * sz > 0.0 {
+                    triangles.push([q00, q10, q11]);
+                    triangles.push([q00, q11, q01]);
+                } else {
+                    triangles.push([q00, q11, q10]);
+                    triangles.push([q00, q01, q11]);
+                }
+            }
+        }
+    };
+    for sx in [-1.0, 1.0] {
+        for sy in [-1.0, 1.0] {
+            for sz in [-1.0, 1.0] {
+                corner(sx, sy, sz);
+            }
+        }
+    }
+
+    Mesh::new(triangles)
+}
+
 /// Each hole as a counter-clockwise polygon of `segments` corners on its circle.
 pub(crate) fn rings(holes: &[HoleSpec], segments: usize) -> Vec<Vec<P2>> {
     holes
