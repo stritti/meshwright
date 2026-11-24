@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.0-beta.5](https://github.com/stritti/revmesh/compare/v0.1.0-beta.4...v0.1.0-beta.5) (2026-11-24)
+
+
+### Features
+
+* **combined:** recognise openings through the outlines ([#58](https://github.com/stritti/revmesh/issues/58)) ([17e6bc2](https://github.com/stritti/revmesh/commit/17e6bc24cb501e6d6dc9bc491450f346db527909))
+* **combined:** recognise round holes in combined extrusions ([#60](https://github.com/stritti/revmesh/issues/60)) ([da8d7cd](https://github.com/stritti/revmesh/commit/da8d7cd655430be29415072fee3e5afa1ec19ec9))
+* **combined:** recognise straight blind cuts and pockets ([#59](https://github.com/stritti/revmesh/issues/59)) ([c79e558](https://github.com/stritti/revmesh/commit/c79e5583df40d300694b5aa6afec47800536039e))
+* **plate:** recognise drafted bosses and chamfered boss tops ([#52](https://github.com/stritti/revmesh/issues/52)) ([b50ea33](https://github.com/stritti/revmesh/commit/b50ea33ca54d70a509aac15130050fda57bff897))
+* **plate:** recognise rounded hole rims ([#55](https://github.com/stritti/revmesh/issues/55)) ([5590d6a](https://github.com/stritti/revmesh/commit/5590d6a3329a6d55e33a761923046580b7db2f18))
+* recognise intersections of outlines extruded along X, Y and Z ([#57](https://github.com/stritti/revmesh/issues/57)) ([8e1185c](https://github.com/stritti/revmesh/commit/8e1185c31825b1e1e5959a84ef1ace69b92079a8))
+* recognise outlines stacked along an axis ([#62](https://github.com/stritti/revmesh/issues/62)) ([c0d3ae2](https://github.com/stritti/revmesh/commit/c0d3ae2bdb2c2e15cc4dd84abf1a72c28594ce4d))
+* translate the plugin's texts into German (i18n, English default) ([#56](https://github.com/stritti/revmesh/issues/56)) ([15c1653](https://github.com/stritti/revmesh/commit/15c165393c0078f7a0ae9915a5412fc8f99a2571))
+
+
+### Documentation
+
+* map concepts from the tools and literature to mesh2cad and revmesh ([#53](https://github.com/stritti/revmesh/issues/53)) ([594d055](https://github.com/stritti/revmesh/commit/594d05578b47bb77f8f03b2f1dd5b286e6d521be))
+
 ## [0.1.0-beta.4](https://github.com/stritti/revmesh/compare/v0.1.0-beta.3...v0.1.0-beta.4) (2026-11-24)
 
 
