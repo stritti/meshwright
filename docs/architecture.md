@@ -89,5 +89,11 @@ mesh in about 8 s; 2 million triangles exceed 128 MiB (before streaming, 600,000
 2. `cargo xtask plugin-test`: `solidcraft-cli plugin test` installs the real component in a
    scratch folder and imports each file in `plugin/revmesh/tests` through SolidCraft's
    `file.import`, then checks bodies, features, the loss report and the measured volume.
-3. By hand: open a golden design (`cargo run -p revmesh-core --example plate_design`) in
+3. `cargo xtask check`: imports each fixture, rebuilds the design in SolidCraft
+   (`solidcraft-cli eval`: a feature error fails the check) and re-exports it
+   (`solidcraft-cli run --out`), then compares the rebuilt mesh with the source STL in
+   `check.rs`: the volume error and the surface deviation (Hausdorff of the two
+   triangulations), gated as mesh2cad gates its scripts (deviation at most
+   `max(4 * 0.1% of the diagonal, 0.1 mm)`, volume error at most 1%).
+4. By hand: open a golden design (`cargo run -p revmesh-core --example plate_design`) in
    SolidCraft, change parameters and watch it rebuild.
