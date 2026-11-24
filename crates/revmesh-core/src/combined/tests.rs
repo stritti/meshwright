@@ -112,6 +112,7 @@ fn a_cut_along_a_plain_axis_starts_at_a_number() {
             from: 0.0,
             to: 3.0,
         }],
+        holes: vec![],
     };
     assert!((base.volume() - (block.volume() - 4.0 * 4.0 * 3.0)).abs() < 1e-9, "{}", base.volume());
     for (y, start) in [(0.0, "cut_1_0"), (-4.5, "cut_1_0 + 4.5"), (7.0, "cut_1_0 - 7")] {
@@ -232,6 +233,138 @@ fn volume_of_a_spec() {
         size: [60.0, 40.0, 30.0],
         extrusions: vec![crate::recognize::Extrusion { axis: Axis::X, outline: RAMP.to_vec(), cutouts: vec![] }],
         cuts: vec![],
+        holes: vec![],
     };
     assert!((spec.volume() - 950.0 * 60.0).abs() < 1e-6);
+}
+
+/// SolidCraft's plate under a ramp with a Ø6 hole through it along Z, a Ø4 one along X and a
+/// Ø4 blind hole 10 deep into its front along Y: SolidCraft meshes the bores' walls with staggered
+/// corners, tilted a little to every axis.
+#[test]
+fn recognises_round_holes() {
+    let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-holes.stl"));
+    let (spec, offset) = recognize_combined(&mesh).expect("combined");
+    assert_eq!(offset, [0.0; 3]);
+    let holes: Vec<(Axis, [f64; 2], f64, f64, f64)> = spec.holes.iter().map(|h| (h.axis, h.centre, h.d, h.from, h.to)).collect();
+    assert_eq!(
+        holes,
+        [(Axis::X, [12.0, 15.0], 4.0, 0.0, 60.0), (Axis::Y, [10.0, -8.0], 4.0, 0.0, 10.0), (Axis::Z, [50.0, 5.0], 6.0, 0.0, 30.0)]
+    );
+    // The outlines are the plate's and the ramp's again, their openings now holes.
+    assert_eq!(spec.extrusions.iter().map(|e| (e.axis, e.cutouts.len())).collect::<Vec<_>>(), [(Axis::Z, 0), (Axis::X, 0)]);
+    assert_eq!(spec.cuts.len(), 0);
+    // 37 000 less π 3² 30, π 2² 60 and π 2² 10, as SolidCraft measures it.
+    assert!((spec.volume() - 35_272.124_040_525_61).abs() < 1e-3, "{}", spec.volume());
+    assert_eq!(spec.describe(), "A 60 x 40 x 30 mm part of outlines extruded along X and Z with 3 holes");
+    // Cylinders cut out of the part in its own frame, driven by mesh2cad's names.
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [1.0, 2.0, 3.0]).to_json()).expect("json");
+    let features = json["features"].as_array().expect("features");
+    let cylinders: Vec<&serde_json::Value> = features.iter().filter(|f| f["type"] == "cylinder").collect();
+    assert_eq!(cylinders.len(), 3);
+    assert_eq!(cylinders[0]["base"], serde_json::json!(["-1", "hole_1_y - 2", "hole_1_z - extrude_z_0"]));
+    assert_eq!(cylinders[0]["height"], "extrude_x_len + 2");
+    assert_eq!(cylinders[1]["base"], serde_json::json!(["hole_2_x - extrude_x_0", "-1", "hole_2_z - extrude_z_0"]));
+    assert_eq!(cylinders[1]["axis"], serde_json::json!([0.0, 1.0, 0.0]));
+    assert_eq!(cylinders[1]["height"], "hole_2_depth + 1");
+    assert_eq!(cylinders[2]["radius"], "hole_3_d / 2");
+    assert!(cylinders.iter().all(|c| c["operation"] == "cut"));
+    let value = |name: &str| json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].clone());
+    assert_eq!(value("hole_2_depth"), Some("10 mm".into()));
+    assert_eq!(value("hole_2_z"), Some("11 mm".into()));
+    assert_eq!(value("hole_3_x"), Some("51 mm".into()));
+    assert_eq!(features.last().expect("move")["type"], "move");
+}
+
+/// A blind hole opening on the far face along its axis is drilled from that face, against it.
+#[test]
+fn blind_holes_from_the_far_face() {
+    let spec = CombinedSpec {
+        size: [20.0, 10.0, 10.0],
+        extrusions: vec![crate::recognize::Extrusion {
+            axis: Axis::Z,
+            outline: vec![[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [0.0, 10.0]],
+            cutouts: vec![],
+        }],
+        cuts: vec![],
+        holes: vec![crate::recognize::CombinedHole { axis: Axis::Z, centre: [5.0, 5.0], d: 2.0, from: 6.0, to: 10.0 }],
+    };
+    // 2000 less π 1² 4, exactly: the part is as deep all over the hole.
+    assert!((spec.volume() - (2000.0 - std::f64::consts::PI * 4.0)).abs() < 1e-9, "{}", spec.volume());
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("json");
+    let hole = json["features"].as_array().expect("features").iter().find(|f| f["type"] == "cylinder").expect("hole").clone();
+    assert_eq!(hole["base"][2], "extrude_z_len + 1");
+    assert_eq!(hole["axis"], serde_json::json!([0.0, 0.0, -1.0]));
+}
+
+/// A 20 x 20 ramp, 20 high at X = 0 and 10 at X = 20, with a radius-9 bore through it along Z of
+/// `sides` facets.
+fn ramp_with_bore(sides: u32) -> Mesh {
+    use std::f64::consts::TAU;
+    let square = [[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]];
+    let bore: Vec<[f64; 2]> =
+        (0..sides).map(|i| f64::from(i) * TAU / f64::from(sides)).map(|t| [10.0 + 9.0 * t.cos(), 10.0 + 9.0 * t.sin()]).collect();
+    let mut mesh = crate::synth::prism(&square, &[bore], 20.0, [0.0; 3]);
+    for p in mesh.triangles.iter_mut().flatten() {
+        if p[2] > 0.0 {
+            p[2] = 20.0 - p[0] / 2.0;
+        }
+    }
+    mesh
+}
+
+/// A bore ending in the ramp's slope is no round hole yet (seen across it, it covers no
+/// rectangle): it stays the opening its facets make, exactly.
+#[test]
+fn a_bore_into_a_slope_stays_an_opening() {
+    let mesh = ramp_with_bore(12);
+    let (spec, _) = recognize_combined(&mesh).expect("combined");
+    assert_eq!(spec.holes.len(), 0);
+    assert_eq!(spec.outline(Axis::Z).map(<[[f64; 2]]>::len), Some(4));
+    assert_eq!(spec.extrusions.iter().map(|e| e.cutouts.iter().map(Vec::len).sum::<usize>()).sum::<usize>(), 12);
+    // (Its corners rounded to micrometres, as every outline's are.)
+    assert!((spec.volume() - mesh.volume()).abs() < 0.2, "{} vs {}", spec.volume(), mesh.volume());
+}
+
+/// A closed 20 x 20 x 10 box with a radius-9 blind hole of `sides` facets drilled 9 deep into its
+/// top: walls from the floor at Z = 1 up to the top.
+fn box_with_blind_bore(sides: u32) -> Mesh {
+    use std::f64::consts::TAU;
+    let square = [[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]];
+    let bore: Vec<[f64; 2]> =
+        (0..sides).map(|i| f64::from(i) * TAU / f64::from(sides)).map(|t| [10.0 + 9.0 * t.cos(), 10.0 + 9.0 * t.sin()]).collect();
+    let at = |p: [f64; 2], z: f64| [p[0], p[1], z];
+    let mut t = Vec::new();
+    for [a, b, c] in crate::synth::triangulate(&square, std::slice::from_ref(&bore)) {
+        t.push([at(a, 10.0), at(b, 10.0), at(c, 10.0)]);
+    }
+    for [a, b, c] in crate::synth::triangulate(&square, &[]) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (square[i], square[(i + 1) % 4]);
+        t.extend([[at(a, 0.0), at(b, 0.0), at(b, 10.0)], [at(a, 0.0), at(b, 10.0), at(a, 10.0)]]);
+    }
+    for [a, b, c] in crate::synth::triangulate(&bore, &[]) {
+        t.push([at(a, 1.0), at(b, 1.0), at(c, 1.0)]);
+    }
+    let n = bore.len();
+    for i in 0..n {
+        let (p, q) = (bore[(i + 1) % n], bore[i]);
+        t.extend([[at(p, 1.0), at(q, 1.0), at(q, 10.0)], [at(p, 1.0), at(q, 10.0), at(p, 10.0)]]);
+    }
+    Mesh::new(t)
+}
+
+/// A coarsely faceted bore holds less than its true circle: with 12 sides 5.7% less, past the 1%
+/// a recognised part keeps; with 64 sides the hole is recognised.
+#[test]
+fn coarse_bores_keep_the_mesh() {
+    let coarse = box_with_blind_bore(12);
+    assert!(coarse.volume() > 0.0);
+    let why = recognize_combined(&coarse).expect_err("refused");
+    assert!(why.contains("too coarsely faceted"), "{why}");
+    let (spec, _) = recognize_combined(&box_with_blind_bore(64)).expect("combined");
+    let holes: Vec<_> = spec.holes.iter().map(|h| (h.axis, h.centre, h.d, h.from, h.to)).collect();
+    assert_eq!(holes, [(Axis::Z, [10.0, 10.0], 18.0, 1.0, 10.0)]);
 }

@@ -69,6 +69,9 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
                 Ok((profile.to_design_on("", offset, axis), profile.describe_in(locale), profile.volume()))
             }
             Recognition::Combined { spec, offset } => Ok((spec.to_design_at("", offset), spec.describe_in(locale), spec.volume())),
+            Recognition::Stack { spec, offset, axis } => {
+                Ok((spec.to_design_on("", offset, axis), spec.describe_in(locale, axis), spec.volume()))
+            }
             Recognition::Unrecognized { reason } => Err(reason),
         };
         match recognised {
@@ -380,7 +383,7 @@ mod tests {
     /// Keeps the combined extrusions' plugin fixtures and their expectations in step.
     #[test]
     fn plugin_test_combined_fixtures() {
-        let cases: [(&str, &[u8]); 5] = [
+        let cases: [(&str, &[u8]); 6] = [
             (include_str!("../../../plugin/revmesh/tests/combined.json"), include_bytes!("../../../plugin/revmesh/tests/combined.stl")),
             (include_str!("../../../plugin/revmesh/tests/combined-3.json"), include_bytes!("../../../plugin/revmesh/tests/combined-3.stl")),
             (
@@ -395,11 +398,34 @@ mod tests {
                 include_str!("../../../plugin/revmesh/tests/combined-cuts.json"),
                 include_bytes!("../../../plugin/revmesh/tests/combined-cuts.stl"),
             ),
+            (
+                include_str!("../../../plugin/revmesh/tests/combined-holes.json"),
+                include_bytes!("../../../plugin/revmesh/tests/combined-holes.stl"),
+            ),
         ];
         for (case, bytes) in cases {
             let case: serde_json::Value = serde_json::from_str(case).expect("valid case");
             let result = import(bytes, "combined.stl", &ImportOptions::default()).expect("imports");
             let Recognition::Combined { spec, .. } = recognize(&stl::parse(bytes).expect("parses")) else { panic!("not combined") };
+            let expect = &case["expect"];
+            assert_eq!(result.design.features.len() as u64, expect["reply"]["features"].as_u64().expect("count"));
+            assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));
+            let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
+            assert!((spec.volume() - volume).abs() < 1e-6 * volume, "{} vs {volume}", spec.volume());
+        }
+    }
+
+    /// Keeps the stacks' plugin fixtures and their expectations in step.
+    #[test]
+    fn plugin_test_stack_fixtures() {
+        let cases: [(&str, &[u8]); 2] = [
+            (include_str!("../../../plugin/revmesh/tests/stack.json"), include_bytes!("../../../plugin/revmesh/tests/stack.stl")),
+            (include_str!("../../../plugin/revmesh/tests/stack-y.json"), include_bytes!("../../../plugin/revmesh/tests/stack-y.stl")),
+        ];
+        for (case, bytes) in cases {
+            let case: serde_json::Value = serde_json::from_str(case).expect("valid case");
+            let result = import(bytes, "stack.stl", &ImportOptions::default()).expect("imports");
+            let Recognition::Stack { spec, .. } = recognize(&stl::parse(bytes).expect("parses")) else { panic!("not a stack") };
             let expect = &case["expect"];
             assert_eq!(result.design.features.len() as u64, expect["reply"]["features"].as_u64().expect("count"));
             assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));

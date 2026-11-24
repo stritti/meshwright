@@ -20,13 +20,15 @@
 mod axis;
 mod combined;
 mod spec;
+mod stack;
 #[cfg(test)]
 pub(crate) mod tests;
 mod to_design;
 
 pub use axis::Axis;
-pub use combined::{CombinedSpec, Cut, Extrusion};
+pub use combined::{CombinedHole, CombinedSpec, Cut, Extrusion};
 pub use spec::{Blind, BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+pub use stack::{Band, StackSpec};
 
 use crate::mesh::{Mesh, Vec3};
 
@@ -58,6 +60,15 @@ pub enum Recognition {
         spec: CombinedSpec,
         /// Where that corner was in the file; the design puts it at the origin.
         offset: Vec3,
+    },
+    /// Outlines stacked along `axis`, each extruded over its own span, joined.
+    Stack {
+        /// The stack, in its axis's frame, its bounding box's corner at the origin there.
+        spec: StackSpec,
+        /// Where that corner is in the file (the design puts it at the origin).
+        offset: Vec3,
+        /// The axis the outlines are stacked along.
+        axis: Axis,
     },
     /// Nothing the recognisers know; the mesh is kept as it is.
     Unrecognized {
@@ -100,7 +111,9 @@ pub fn recognize(mesh: &Mesh) -> Recognition {
             Ok(Recognition::Profile { profile, offset, .. }) => {
                 return Recognition::Profile { profile, offset: axis.unrotate(offset).map(crate::mesh::snap_mm), axis };
             }
-            Ok(Recognition::Unrecognized { .. } | Recognition::Combined { .. }) => unreachable!("recognize_plate finds prisms or errs"),
+            Ok(Recognition::Unrecognized { .. } | Recognition::Combined { .. } | Recognition::Stack { .. }) => {
+                unreachable!("recognize_plate finds prisms or errs")
+            }
             // The first axis's reason is the one reported: Z reads most naturally, and it is the
             // reason every mesh got before X and Y were tried.
             Err(why) => {
@@ -112,8 +125,30 @@ pub fn recognize(mesh: &Mesh) -> Recognition {
     }
     // The prisms' reason stays the one reported: a part that is no intersection of extrusions
     // either is most often a prism with something the recognisers do not know yet.
-    match crate::combined::recognize_combined(mesh) {
-        Ok((spec, offset)) => Recognition::Combined { spec, offset },
-        Err(_) => Recognition::Unrecognized { reason },
+    if let Ok((spec, offset)) = crate::combined::recognize_combined(mesh) {
+        return Recognition::Combined { spec, offset };
     }
+    // As mesh2cad, a union of partial extrusions when the intersection misses. A part whose
+    // faces all lie square to the axes is a stack along each of them: the fewest bands win, the
+    // first of Z, X and Y on a tie.
+    let mut best: Option<Recognition> = None;
+    for axis in Axis::ALL {
+        let rotated;
+        let source = if axis == Axis::Z {
+            mesh
+        } else {
+            rotated = axis.rotate_mesh(mesh);
+            &rotated
+        };
+        if let Ok((spec, offset)) = crate::stack::recognize_stack(source) {
+            let fewer = match &best {
+                Some(Recognition::Stack { spec: b, .. }) => spec.bands.len() < b.bands.len(),
+                _ => true,
+            };
+            if fewer {
+                best = Some(Recognition::Stack { spec, offset: axis.unrotate(offset).map(crate::mesh::snap_mm), axis });
+            }
+        }
+    }
+    best.unwrap_or(Recognition::Unrecognized { reason })
 }

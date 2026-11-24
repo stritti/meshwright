@@ -68,9 +68,14 @@ fn bosses_must_be_straight_and_round() {
     // A boss narrowing straight up to a top of 0.9 times its radius is drafted, by
     // atan(0.5 / 4) = 7.13°.
     assert_eq!(found(&standing(&foot, &draft, 4.0)).0.bosses[0].draft_deg, Some(7.13));
-    for mesh in [standing(&foot, &twist, 4.0), standing(&diamond, &|p| p, 4.0)] {
-        reason(&mesh);
-    }
+    reason(&standing(&foot, &twist, 4.0));
+    // A diamond standing on the plate is no plate's pad; it is a stack of the plate and the
+    // diamond.
+    let diamond = standing(&diamond, &|p| p, 4.0);
+    assert!(crate::plate::recognize_plate(&diamond).is_err());
+    let found = crate::recognize::recognize(&diamond);
+    let crate::recognize::Recognition::Stack { spec, .. } = found else { panic!("not a stack: {found:?}") };
+    assert_eq!(spec.bands.len(), 2);
     // A square pad narrowing straight up is no plate's pad; it is the intersection of two
     // trapezoids extruded along X and Y, a combined extrusion.
     let tapered = standing(&block, &pad_draft, 4.0);

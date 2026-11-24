@@ -13,11 +13,14 @@
 //! facet lies on the intersection's boundary (on a side of an outline's extrusion, or on the
 //! bounding box) and the volumes agree: no face lies inside, so nothing is missing. The facets
 //! that do lie inside must be the floors and walls of cuts, which then count as boundary too.
+//! Round holes are found as bores first and set aside (see [`holes`]); each must then be a round
+//! opening through an outline or a round cut from a face, which becomes the hole.
 
 #![allow(clippy::many_single_char_names)] // points a, b, c, p, q, as in the geometry
 
 mod cuts;
-mod silhouette;
+mod holes;
+pub(crate) mod silhouette;
 #[cfg(test)]
 mod tests;
 pub(crate) mod volume;
@@ -25,7 +28,7 @@ pub(crate) mod volume;
 use silhouette::{P2, area2, segment_distance};
 
 use crate::mesh::{Mesh, Vec3, cross, dot, length, snap_mm, sub};
-use crate::recognize::{Axis, CombinedSpec, Extrusion};
+use crate::recognize::{Axis, CombinedHole, CombinedSpec, Extrusion};
 
 /// The fit tolerance, as for plates: STL coordinates have about seven significant digits.
 const REL_TOLERANCE: f64 = 1e-5;
@@ -51,7 +54,7 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
     let size = bounds.size().map(snap_mm);
     let tol = (size.iter().copied().fold(0.0, f64::max) * REL_TOLERANCE).max(MIN_TOLERANCE);
     // The facets with their unit normals, the box's corner moved to the origin.
-    let facets: Vec<([Vec3; 3], Vec3)> = mesh
+    let all: Vec<([Vec3; 3], Vec3)> = mesh
         .triangles
         .iter()
         .filter_map(|t| {
@@ -61,6 +64,8 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
             (len > tol * tol).then(|| (t, n.map(|c| c / len)))
         })
         .collect();
+    // The bores' walls are set aside: an exporter may tilt their facets a little to every axis.
+    let (bores, facets, _) = holes::find_bores(&all, tol);
     if facets.iter().any(|(_, n)| n.iter().all(|c| c.abs() > PARALLEL)) {
         return Err(TILTED.into());
     }
@@ -79,8 +84,10 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
     }
     let mut extrusions = Vec::new();
     for axis in Axis::ALL {
-        // The facets facing along the axis, in its profile coordinates.
-        let front: Vec<[P2; 3]> = facets
+        // The facets facing along the axis, in its profile coordinates, and each bore across it as
+        // the rectangle it covers (its wall's facets, nearly edge on at its sides, would fray the
+        // silhouette; along its own axis it covers nothing).
+        let mut front: Vec<[P2; 3]> = facets
             .iter()
             .filter(|(_, n)| axis.rotate(*n)[2] > PARALLEL)
             .map(|(t, _)| {
@@ -90,6 +97,7 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
                 })
             })
             .collect();
+        front.extend(bores.iter().filter(|b| b.axis != axis).flat_map(|b| b.across(axis)));
         // One boundary (counter-clockwise) and the openings through it (clockwise).
         let rings = silhouette::loops(&front, tol)?;
         let (mut outer, openings): (Vec<Vec<P2>>, Vec<Vec<P2>>) = rings.into_iter().partition(|r| area2(r) > 0.0);
@@ -114,7 +122,7 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
         extrusions.push(Extrusion { axis, outline, cutouts });
     }
     // What lies inside the outlines' intersection must be cuts into it.
-    let base = CombinedSpec { size, extrusions: extrusions.clone(), cuts: Vec::new() };
+    let base = CombinedSpec { size, extrusions: extrusions.clone(), cuts: Vec::new(), holes: Vec::new() };
     let inside: Vec<([Vec3; 3], Vec3)> = facets.iter().filter(|(t, n)| !on_boundary(&base, t, *n, tol)).copied().collect();
     let cuts = cuts::find_cuts(&inside, size, tol)?;
     if extrusions.len() < 2 && cuts.is_empty() {
@@ -128,7 +136,7 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
             cutouts: Vec::new(),
         });
     }
-    let spec = CombinedSpec { size, extrusions, cuts };
+    let spec = CombinedSpec { size, extrusions, cuts, holes: Vec::new() };
     if !facets.iter().all(|(t, n)| on_boundary(&spec, t, *n, tol)) {
         return Err(INSIDE.into());
     }
@@ -142,37 +150,89 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
              {measured:.1} mm³"
         ));
     }
+    // The holes' true circles hold more than their facets did; a coarsely faceted bore may change
+    // the volume past the 1% every recognised part keeps.
+    let spec = with_holes(spec, &bores, tol)?;
+    let rounded = spec.volume();
+    if (rounded - measured).abs() > crate::plate::MAX_VOLUME_ERROR * measured.abs() {
+        return Err(format!(
+            "it is not a combination of extrusions: with its holes round it holds {rounded:.1} mm³, the mesh {measured:.1} mm³ \
+             (its holes are too coarsely faceted)"
+        ));
+    }
     Ok((spec, bounds.min.map(snap_mm)))
 }
 
-/// Whether the facet `t` (normal `n`) lies on the intersection's boundary: on the bounding box,
-/// or, corners and centre, on a side of an outline whose outward normal it shares.
-fn on_boundary(spec: &CombinedSpec, t: &[Vec3; 3], n: Vec3, tol: f64) -> bool {
-    let centre = [0, 1, 2].map(|i| (t[0][i] + t[1][i] + t[2][i]) / 3.0);
-    let mut points = t.to_vec();
-    points.push(centre);
-    let on_box = (0..3).any(|i| {
-        let flush = |at: f64| points.iter().all(|p| (p[i] - at).abs() <= tol);
-        (n[i] <= -1.0 + PARALLEL && flush(0.0)) || (n[i] >= 1.0 - PARALLEL && flush(spec.size[i]))
+/// The spec with each bore's round opening or round cut made a hole: a true circle, through the
+/// part or from the face it opens on.
+fn with_holes(mut spec: CombinedSpec, bores: &[holes::Bore], tol: f64) -> Result<CombinedSpec, String> {
+    let size = spec.size;
+    for bore in bores {
+        let a = bore.axis.index();
+        let (centre, d) = (bore.centre.map(snap_mm), snap_mm(2.0 * bore.r));
+        let opening = spec.extrusions.iter_mut().filter(|e| e.axis == bore.axis).find_map(|e| {
+            let k = e.cutouts.iter().position(|c| bore.matches(c, 2.0 * tol))?;
+            Some(e.cutouts.remove(k))
+        });
+        let hole = if opening.is_some() {
+            CombinedHole { axis: bore.axis, centre, d, from: 0.0, to: size[a] }
+        } else {
+            let k = spec
+                .cuts
+                .iter()
+                .position(|c| c.axis == bore.axis && bore.matches(&c.outline, 2.0 * tol) && (c.from <= tol || c.to >= size[a] - tol))
+                .ok_or("it is not a combination of extrusions: a round hole neither runs through it nor into it from a face")?;
+            let cut = spec.cuts.remove(k);
+            CombinedHole { axis: bore.axis, centre, d, from: cut.from, to: cut.to }
+        };
+        spec.holes.push(hole);
+    }
+    // An outline kept only for a hole through it is the box's side again.
+    spec.extrusions.retain(|e| {
+        let [u, v] = e.axis.profile_axes();
+        let box_side = size[u] * size[v];
+        !(e.cutouts.is_empty() && e.outline.len() == 4 && (area2(&e.outline) / 2.0 - box_side).abs() <= tol * (size[u] + size[v]))
     });
+    if spec.extrusions.is_empty() {
+        let [x, y, _] = size;
+        spec.extrusions.push(Extrusion { axis: Axis::Z, outline: vec![[0.0, 0.0], [x, 0.0], [x, y], [0.0, y]], cutouts: Vec::new() });
+    }
+    spec.holes.sort_by(|p, q| {
+        p.axis.index().cmp(&q.axis.index()).then(p.centre[0].total_cmp(&q.centre[0])).then(p.centre[1].total_cmp(&q.centre[1]))
+    });
+    Ok(spec)
+}
+
+/// Whether the facet `t` (normal `n`) lies on the boundary: each of its corners, the middles of
+/// its sides and its centre on the bounding box, on a cut's end or wall, or on a side of an
+/// outline, each facing the way the facet does. (One flat face of the part may be several of
+/// those, and an exporter's facet may span them.)
+fn on_boundary(spec: &CombinedSpec, t: &[Vec3; 3], n: Vec3, tol: f64) -> bool {
+    let mid = |a: Vec3, b: Vec3| [0, 1, 2].map(|i| f64::midpoint(a[i], b[i]));
+    let centre = [0, 1, 2].map(|i| (t[0][i] + t[1][i] + t[2][i]) / 3.0);
+    let points = [t[0], t[1], t[2], mid(t[0], t[1]), mid(t[1], t[2]), mid(t[2], t[0]), centre];
+    points.iter().all(|p| point_on_boundary(spec, *p, n, tol))
+}
+
+/// Whether the point `p` of a facet facing `n` lies on the boundary (see [`on_boundary`]).
+fn point_on_boundary(spec: &CombinedSpec, p: Vec3, n: Vec3, tol: f64) -> bool {
+    let on_box =
+        (0..3).any(|i| (n[i] <= -1.0 + PARALLEL && p[i].abs() <= tol) || (n[i] >= 1.0 - PARALLEL && (p[i] - spec.size[i]).abs() <= tol));
     on_box
-        || spec.cuts.iter().any(|c| cuts::on_cut(c, &points, n, tol))
+        || spec.cuts.iter().any(|c| cuts::on_cut(c, &[p], n, tol))
         || spec.extrusions.iter().any(|e| {
             let m = e.axis.rotate(n);
             if m[2].abs() > PARALLEL {
                 return false;
             }
+            let q = e.axis.rotate(p);
             // Each side with the material on its left: the outline's and the openings' (wound the
             // other way).
             e.rings().iter().flat_map(|r| (0..r.len()).map(move |i| (r[i], r[(i + 1) % r.len()]))).any(|(a, b)| {
                 let d = [b[0] - a[0], b[1] - a[1]];
                 let len = d[0].hypot(d[1]);
                 let outward = [d[1] / len, -d[0] / len];
-                dot([outward[0], outward[1], 0.0], m) >= SIDE_COS
-                    && points.iter().all(|p| {
-                        let q = e.axis.rotate(*p);
-                        segment_distance([q[0], q[1]], a, b) <= tol
-                    })
+                dot([outward[0], outward[1], 0.0], m) >= SIDE_COS && segment_distance([q[0], q[1]], a, b) <= tol
             })
         })
 }

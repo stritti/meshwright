@@ -28,6 +28,7 @@ pub mod patterns;
 pub mod plate;
 pub mod recognize;
 pub mod report;
+pub(crate) mod stack;
 pub mod stl;
 pub mod synth;
 

@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "stack-y.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 7, "loss_report": {"summary": "A 60 x 28 x 40 mm part of 3 outlines stacked along Y"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 34296}},
+    "tolerance": 1e-6
+  }
+}

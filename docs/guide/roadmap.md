@@ -20,8 +20,9 @@
        bosses on side faces still to do
    11. (done) chamfers, drafts and the rounds at a boss's foot or a hole's rim
    12. combined extrusions: (done) the intersection of outlines extruded along X, Y and Z, with
-       openings through them and straight blind cuts into them; holes and unions of partial
-       extrusions in it still to do
+       openings through them, straight blind cuts into them and round holes, and (done) unions
+       of outlines stacked along an axis; holes that cross, roofs and bevels on a stack still to
+       do
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate` (volume
    and deviation), as mesh2cad does with CadQuery.
 5. **Reworkable sketches** — beyond parity: every sketch fully dimensioned and constrained, so it
