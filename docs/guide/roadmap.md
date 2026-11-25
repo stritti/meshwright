@@ -64,11 +64,13 @@
       each top loop's level tagged in `face_outlines`, heads measured from their mouth's face in
       `stepped_hole`),
       and with 3.12 combined extrusions
-   4. (done for plates and profiles along Z) per-face surface deviation in the import report,
+   4. (done for every recognised kind) per-face surface deviation in the import report,
       computed in the sandbox at import: each recognised face's label with the farthest its mesh
-      points lie from the ideal surface (`plate::face_deviations`, `Walls::deviation`; the volume
-      within 1% stays the gate, Hausdorff in `cargo xtask check`; combined and stacked parts
-      follow)
+      points lie from the ideal surface (`recognize::deviations`: `plate::face_deviations` for
+      prisms, a box rounded all over reports its rounded envelope as "rounded surface",
+      `plate::walls_deviations` per extrusion and per band for combined and stacked parts,
+      labelled `extrude <a> side <i>` / `band <k> side <i>`; `Walls::deviation`; the volume
+      within 1% stays the gate, Hausdorff in `cargo xtask check`)
 6. **More parts, fitted robustly** — from the code review of the recognisers against the
    references (the extracted know-how is packaged in the `revmesh-recognition-knowhow` agent
    skill; the concept → code mapping with the sources is [Comparable tools → Concepts from the

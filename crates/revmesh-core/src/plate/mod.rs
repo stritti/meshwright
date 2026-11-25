@@ -52,8 +52,8 @@ use std::f64::consts::PI;
 
 use bosses::{Shape, strip_bosses};
 use holes::Footprint;
-pub(crate) use prism::face_deviations;
 use prism::recognize_prism;
+pub(crate) use prism::{face_deviations, walls_deviations};
 
 use crate::mesh::{Mesh, snap_mm};
 use crate::recognize::{BossChamfer, BossSpec, PadSpec, Recognition};

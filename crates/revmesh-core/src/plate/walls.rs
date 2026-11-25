@@ -62,6 +62,11 @@ impl Walls {
     /// indexed as straight walls. `cutouts` are the ideal cut-outs (their corners and arc
     /// sides) and `slot_sides` the slots' straight sides (the slot's index, one side's start and
     /// end), so their walls are indexed too.
+    /// `cuts` are blind cuts' outlines (a combined part's, each counter-clockwise), each with its
+    /// cut's number in the design (`cut_<n>`), so their walls are indexed under that number too.
+    /// `cutout_base` is how many cut-outs the design numbers before `cutouts` (a combined or
+    /// stacked part numbers `cutout_<n>_*` across all its extrusions or bands), so the
+    /// `cut-out <n>` labels match the editable parameters.
     #[allow(clippy::too_many_arguments)] // the wall kinds of one part, each labelled
     #[allow(clippy::too_many_lines)] // one piece pushed per wall kind, each with its label
     pub(super) fn new(
@@ -73,6 +78,8 @@ impl Walls {
         loops: &[Vec<P2>],
         cutouts: &[CutoutSpec],
         slot_sides: &[(usize, P2, P2)],
+        cuts: &[(usize, Vec<P2>)],
+        cutout_base: usize,
         size: f64,
         tol: f64,
     ) -> Self {
@@ -152,11 +159,19 @@ impl Walls {
             for i in 0..ring.len() {
                 if let Some(a) = arc_sides.get(i).copied().flatten() {
                     walls.push(Wall::ArcSide { centre: a.centre, r: a.r, a: ring[i], b: ring[(i + 1) % ring.len()] });
-                    labels.push(format!("cut-out {}, arc side {}", m + 1, i + 1));
+                    labels.push(format!("cut-out {}, arc side {}", m + 1 + cutout_base, i + 1));
                 } else {
                     walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
-                    labels.push(format!("cut-out {}, side {}", m + 1, i + 1));
+                    labels.push(format!("cut-out {}, side {}", m + 1 + cutout_base, i + 1));
                 }
+            }
+        }
+        // Each blind cut's outline sides, labelled with the cut's number in the design
+        // (`cut_<n>`), carried by the caller so the numbering stays design-wide across axes.
+        for &(m, ref ring) in cuts {
+            for i in 0..ring.len() {
+                walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
+                labels.push(format!("cut {} side {}", m + 1, i + 1));
             }
         }
         // Each slot's two straight sides, labelled with the slot's number in the design

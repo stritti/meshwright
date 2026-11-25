@@ -386,3 +386,62 @@ fn coarse_bores_keep_the_mesh() {
     let holes: Vec<_> = spec.holes.iter().map(|h| (h.axis, h.centre, h.d, h.from, h.to)).collect();
     assert_eq!(holes, [(Axis::Z, [10.0, 10.0], 18.0, 1.0, 10.0)]);
 }
+
+/// Roadmap 5.4: a combined part's walls are measured per extrusion, labelled `extrude <a> side
+/// <i>`, its blind cuts' `extrude <a> cut <n> side <i>`, its holes' `extrude <a> hole <n>` — in
+/// each extrusion's own axis frame.
+#[test]
+fn deviations_are_reported_per_extrusion() {
+    let mesh = combined();
+    let found = recognize(&mesh);
+    let devs = crate::recognize::deviations(&mesh, &found);
+    let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("extrude z side")), "{labels:?}");
+    assert!(labels.iter().any(|l| l.starts_with("extrude x side")), "{labels:?}");
+    for (l, d) in &devs {
+        assert!(*d < 0.01, "{l}: {d}");
+    }
+
+    // A box cut along X and a triangular notch along Y are reported as cut walls.
+    let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-cuts.stl"));
+    let found = recognize(&mesh);
+    let devs = crate::recognize::deviations(&mesh, &found);
+    let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("extrude x cut 1 side")), "{labels:?}");
+    assert!(labels.iter().any(|l| l.starts_with("extrude y cut 2 side")), "the Y cut is cut 2 design-wide: {labels:?}");
+
+    // Openings are numbered design-wide across axes (`cutout_<n>_*`), so the report's
+    // `cut-out <n>` labels match the editable parameters: the Y opening is cut-out 2 here.
+    let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-windows.stl"));
+    let found = recognize(&mesh);
+    let devs = crate::recognize::deviations(&mesh, &found);
+    let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("extrude x cut-out 1, side")), "{labels:?}");
+    assert!(labels.iter().any(|l| l.starts_with("extrude y cut-out 2, side")), "{labels:?}");
+
+    // The staggered, slightly tilted bore corners of combined-holes.stl are measured against
+    // their circles: the holes' labels carry a real deviation, not zero.
+    let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-holes.stl"));
+    let found = recognize(&mesh);
+    let devs = crate::recognize::deviations(&mesh, &found);
+    let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("extrude z hole")), "{labels:?}");
+    let hole = devs.iter().find(|(l, _)| l.starts_with("extrude z hole")).expect("a z hole");
+    assert!(hole.1 > 0.0 && hole.1 < 0.1, "the bore's tilt: {hole:?}");
+}
+
+/// In the per-extrusion deviation report only vertical facets' edges are sampled, so a blind
+/// bore's floor fan (horizontal, its diagonals with both ends on the bore's circle) is not
+/// measured against the bore (codex finding on #86).
+#[test]
+fn blind_bores_floor_fan_is_not_measured_against_the_bore() {
+    let mesh = box_with_blind_bore(64);
+    let outline = vec![[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]];
+    let circles = vec![(0usize, [10.0, 10.0], 9.0)];
+    let devs = crate::plate::walls_deviations(&mesh, &outline, &[], &[], &circles, 0, (0.0, 10.0), "extrude z");
+    let hole = devs.iter().find(|(l, _)| l.contains("hole 1")).unwrap_or_else(|| panic!("the bore is measured: {devs:?}"));
+    // The 64-gon's wall chords bow inward by their sagitta; the floor's diagonals (~8.5 mm) must
+    // not appear.
+    let sagitta = 9.0 * (1.0 - (std::f64::consts::PI / 64.0).cos());
+    assert!(hole.1 < 0.05, "the bore measures its wall chords' sagitta {sagitta}, not the floor's diagonals: {hole:?}");
+}
