@@ -410,6 +410,15 @@ fn deviations_are_reported_per_extrusion() {
     assert!(labels.iter().any(|l| l.starts_with("extrude x cut 1 side")), "{labels:?}");
     assert!(labels.iter().any(|l| l.starts_with("extrude y cut 2 side")), "the Y cut is cut 2 design-wide: {labels:?}");
 
+    // Openings are numbered design-wide across axes (`cutout_<n>_*`), so the report's
+    // `cut-out <n>` labels match the editable parameters: the Y opening is cut-out 2 here.
+    let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-windows.stl"));
+    let found = recognize(&mesh);
+    let devs = crate::recognize::deviations(&mesh, &found);
+    let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("extrude x cut-out 1, side")), "{labels:?}");
+    assert!(labels.iter().any(|l| l.starts_with("extrude y cut-out 2, side")), "{labels:?}");
+
     // The staggered, slightly tilted bore corners of combined-holes.stl are measured against
     // their circles: the holes' labels carry a real deviation, not zero.
     let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-holes.stl"));

@@ -66,6 +66,8 @@ pub(crate) fn deviations(mesh: &Mesh, found: &Recognition) -> Vec<(String, f64)>
             for axis in axes {
                 let extrusion = spec.extrusions.iter().find(|e| e.axis == axis);
                 let outline: Vec<[f64; 2]> = extrusion.map_or_else(|| box_side(axis), |e| e.outline.clone());
+                // The design numbers `cutout_<n>_*` across all extrusions in spec order.
+                let cutout_base: usize = spec.extrusions.iter().take_while(|e| e.axis != axis).map(|e| e.cutouts.len()).sum();
                 let cutouts: Vec<CutoutSpec> = extrusion
                     .map_or_else(Vec::new, |e| e.cutouts.iter().map(|c| CutoutSpec { corners: c.clone(), arcs: Vec::new() }).collect());
                 // The cut's design-wide number travels with it, so the report's `cut <n>` matches
@@ -81,6 +83,7 @@ pub(crate) fn deviations(mesh: &Mesh, found: &Recognition) -> Vec<(String, f64)>
                     &cutouts,
                     &cuts,
                     &circles,
+                    cutout_base,
                     (0.0, spec.size[axis.index()]),
                     &prefix,
                 ));
@@ -96,8 +99,19 @@ pub(crate) fn deviations(mesh: &Mesh, found: &Recognition) -> Vec<(String, f64)>
             let mut out = Vec::new();
             for (k, band) in spec.bands.iter().enumerate() {
                 let cutouts: Vec<CutoutSpec> = band.cutouts.iter().map(|c| CutoutSpec { corners: c.clone(), arcs: Vec::new() }).collect();
+                // The design numbers `cutout_<n>_*` across all bands, from the lowest up.
+                let cutout_base: usize = spec.bands.iter().take(k).map(|b| b.cutouts.len()).sum();
                 let prefix = format!("band {}", k + 1);
-                out.extend(crate::plate::walls_deviations(&in_frame, &band.outline, &cutouts, &[], &[], (band.from, band.to), &prefix));
+                out.extend(crate::plate::walls_deviations(
+                    &in_frame,
+                    &band.outline,
+                    &cutouts,
+                    &[],
+                    &[],
+                    cutout_base,
+                    (band.from, band.to),
+                    &prefix,
+                ));
             }
             out
         }

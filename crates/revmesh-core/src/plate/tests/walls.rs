@@ -149,7 +149,7 @@ fn a_shifted_bottom_band_is_not_vertical() {
 #[test]
 fn diagonal_walls_fill_few_cells() {
     let diamond = [[50.0, 0.0], [100.0, 50.0], [50.0, 100.0], [0.0, 50.0]];
-    let walls = Walls::new(&diamond, None, &[], &[], &[], &[], &[], &[], &[], 100.0, 1e-3);
+    let walls = Walls::new(&diamond, None, &[], &[], &[], &[], &[], &[], &[], 0, 100.0, 1e-3);
     assert!(walls.cells.len() < 10_000, "{} cells", walls.cells.len());
     assert!(walls.holds([75.0, 25.0]) && walls.holds([25.0, 75.0]));
     assert!(!walls.holds([50.0, 50.0]) && !walls.holds([75.0, 26.0]));
@@ -162,13 +162,13 @@ fn diagonal_walls_fill_few_cells() {
 fn an_arc_sides_chord_is_no_wall() {
     let corners = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
     let arcs = [None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None];
-    let walls = Walls::new(&corners, None, &[], &[], &arcs, &[], &[], &[], &[], 100.0, 1e-3);
+    let walls = Walls::new(&corners, None, &[], &[], &arcs, &[], &[], &[], &[], 0, 100.0, 1e-3);
     assert!(walls.holds([30.0, 70.0]), "on the arc");
     assert!(walls.holds([30.0, 0.0]), "on a straight side");
     assert!(!walls.holds([30.0, 40.0]), "the chord's middle (the circle's centre) lies inside");
     assert!(!walls.holds_chord(corners[2], corners[3]), "the arc side's chord");
     // The same side without an arc on it is a straight wall.
-    let walls = Walls::new(&corners, None, &[], &[], &[None; 4], &[], &[], &[], &[], 100.0, 1e-3);
+    let walls = Walls::new(&corners, None, &[], &[], &[None; 4], &[], &[], &[], &[], 0, 100.0, 1e-3);
     assert!(walls.holds([30.0, 40.0]) && walls.holds_chord(corners[2], corners[3]));
 }
 

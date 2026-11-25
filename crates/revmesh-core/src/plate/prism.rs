@@ -747,6 +747,7 @@ fn walls_of(
         &cutouts.cutouts,
         &slot_sides_of(cutouts),
         &[],
+        0,
         scale,
         tol,
     )
@@ -804,7 +805,7 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         // has no straight side walls: its surface is the rounded envelope around the inner box,
         // measured directly, and only its holes' circles are indexed.
         let walls = if rim.is_some() {
-            Walls::new(&[], None, &cutouts.circles, &cutouts.slot_arcs, &[], &[], &[], &[], &[], scale, tol)
+            Walls::new(&[], None, &cutouts.circles, &cutouts.slot_arcs, &[], &[], &[], &[], &[], 0, scale, tol)
         } else {
             Walls::new(
                 &corners,
@@ -816,6 +817,7 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
                 &cutouts.cutouts,
                 &slot_sides_of(&cutouts),
                 &[],
+                0,
                 scale,
                 tol,
             )
@@ -944,6 +946,7 @@ pub(crate) fn walls_deviations(
     cutouts: &[CutoutSpec],
     cuts: &[(usize, Vec<P2>)],
     circles: &[(usize, P2, f64)],
+    cutout_base: usize,
     span: (f64, f64),
     prefix: &str,
 ) -> Vec<(String, f64)> {
@@ -952,7 +955,7 @@ pub(crate) fn walls_deviations(
         let size = bounds.size();
         let scale = size[0].max(size[1]).max(size[2]);
         let tol = tolerance(scale);
-        let mut walls = Walls::new(outline, None, circles, &[], &[], &[], cutouts, &[], cuts, scale, tol);
+        let mut walls = Walls::new(outline, None, circles, &[], &[], &[], cutouts, &[], cuts, cutout_base, scale, tol);
         for label in &mut walls.labels {
             *label = format!("{prefix} {label}");
         }
