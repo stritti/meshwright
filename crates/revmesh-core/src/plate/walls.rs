@@ -40,13 +40,14 @@ impl Walls {
     /// The walls of the outline `corners` (rounded with `radius`), of the holes' `circles` and,
     /// as meshed, of the top face's boundary `loops` (a facet's chord of an arc is no wall of the
     /// true part, but its corners and its subdivisions lie on it).
-    /// `arcs` are further bounded round walls: centre, radius, the corner each rounds and how far
-    /// from that corner it reaches.
+    /// `arcs` are further bounded round walls: the slot each end belongs to (its index in the
+    /// design's sorted `slots`, where the design numbers them `slot_<n>`), the end's centre,
+    /// radius, the corner it rounds and how far from that corner it reaches.
     pub(super) fn new(
         corners: &[P2],
         radius: Option<f64>,
         circles: &[(P2, f64)],
-        arcs: &[(P2, f64, P2, f64)],
+        arcs: &[(usize, P2, f64, P2, f64)],
         loops: &[Vec<P2>],
         size: f64,
         tol: f64,
@@ -88,9 +89,14 @@ impl Walls {
             walls.push(Wall::Circle(c, r));
             labels.push(format!("hole {}", k + 1));
         }
-        for (k, &(centre, r, corner, t)) in arcs.iter().enumerate() {
+        // Each arc is labelled with the slot that owns it (the design's `slot_<n>`), its two
+        // ends counted within that slot.
+        let mut ends: HashMap<usize, usize> = HashMap::new();
+        for &(slot, centre, r, corner, t) in arcs {
             walls.push(Wall::Arc { centre, r, corner, t });
-            labels.push(format!("slot {} end", k + 1));
+            let end = ends.entry(slot).or_insert(0);
+            *end += 1;
+            labels.push(format!("slot {} end {}", slot + 1, *end));
         }
         for (m, ring) in loops.iter().enumerate() {
             let what = if m == 0 { "outline as meshed" } else { "cut-out" };
@@ -158,35 +164,51 @@ impl Walls {
 
     /// How far `p` lies from the nearest wall piece, with that piece's index — for the import
     /// report's per-face deviation (a facet chord of a round wall bows inward by its sagitta).
-    pub(super) fn deviation(&self, p: P2) -> Option<(f64, usize)> {
-        let key = ((p[0] / self.cell).floor() as i64, (p[1] / self.cell).floor() as i64);
+    /// The walls are looked up in the cells around `p` and around each of `near` (a chord's
+    /// middle through its ends, which lie on the walls, as `holds_chord` does); a sample no
+    /// neighbouring cell knows is measured against every wall, so none is silently dropped.
+    pub(super) fn deviation(&self, p: P2, near: &[P2]) -> Option<(f64, usize)> {
         let mut best: Option<(f64, usize)> = None;
-        let consider = |k: usize, best: &mut Option<(f64, usize)>| {
-            let d = match self.pieces[k] {
-                Wall::Segment(a, b) => segment_distance(p, a, b),
-                Wall::Arc { centre, r, corner, t } => {
-                    if distance(p, corner) <= t + self.tol {
-                        (distance(p, centre) - r).abs()
-                    } else {
-                        f64::INFINITY
+        let lookup = |q: P2, best: &mut Option<(f64, usize)>| {
+            let key = ((q[0] / self.cell).floor() as i64, (q[1] / self.cell).floor() as i64);
+            for dx in [-1, 0, 1] {
+                for dy in [-1, 0, 1] {
+                    if let Some(candidates) = self.cells.get(&(key.0 + dx, key.1 + dy)) {
+                        for &k in candidates {
+                            self.measure(p, k, best);
+                        }
                     }
                 }
-                Wall::Circle(centre, r) => (distance(p, centre) - r).abs(),
-            };
-            if d < best.map_or(f64::INFINITY, |(b, _)| b) {
-                *best = Some((d, k));
             }
         };
-        for dx in [-1, 0, 1] {
-            for dy in [-1, 0, 1] {
-                if let Some(candidates) = self.cells.get(&(key.0 + dx, key.1 + dy)) {
-                    for &k in candidates {
-                        consider(k, &mut best);
-                    }
-                }
+        lookup(p, &mut best);
+        for &q in near {
+            lookup(q, &mut best);
+        }
+        if best.is_none() {
+            for k in 0..self.pieces.len() {
+                self.measure(p, k, &mut best);
             }
         }
         best
+    }
+
+    /// The distance from `p` to wall piece `k`, kept when it is the nearest so far.
+    fn measure(&self, p: P2, k: usize, best: &mut Option<(f64, usize)>) {
+        let d = match self.pieces[k] {
+            Wall::Segment(a, b) => segment_distance(p, a, b),
+            Wall::Arc { centre, r, corner, t } => {
+                if distance(p, corner) <= t + self.tol {
+                    (distance(p, centre) - r).abs()
+                } else {
+                    f64::INFINITY
+                }
+            }
+            Wall::Circle(centre, r) => (distance(p, centre) - r).abs(),
+        };
+        if d < best.map_or(f64::INFINITY, |(b, _)| b) {
+            *best = Some((d, k));
+        }
     }
 
     /// Whether `p` (relative to the plate's corner) lies on one of the walls.

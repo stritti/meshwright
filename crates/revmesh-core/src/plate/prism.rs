@@ -147,9 +147,9 @@ pub(super) struct PlateCutouts {
     pub(super) circles: Vec<(P2, f64)>,
     /// The loops the walls stand on, as meshed: the outline and the cut-outs'.
     pub(super) wall_loops: Vec<Vec<P2>>,
-    /// The slots' two end arcs (centre, radius, corner, reach), bounded round walls the wall
-    /// check uses too.
-    pub(super) slot_arcs: Vec<(P2, f64, P2, f64)>,
+    /// The slots' two end arcs (the slot's index in the sorted `slots`, centre, radius, corner,
+    /// reach), bounded round walls the wall check uses too.
+    pub(super) slot_arcs: Vec<(usize, P2, f64, P2, f64)>,
     /// Every hole, sorted from left to right.
     pub(super) holes: Vec<HoleSpec>,
     /// The straight slots, in mesh2cad's order.
@@ -296,12 +296,17 @@ pub(super) fn pair_slots(
     if top.len() != bottom.len() || !top.iter().all(|(_, g, _)| bottom.iter().any(|(_, other, _)| g.matches(other, tol))) {
         return Err("a slot does not go straight through (blind and slanted slots are not recognised yet)".into());
     }
-    for (spec, g, k) in top {
-        out.slot_arcs.extend(g.halves());
-        out.wall_loops.push(face_loops.loops[*k].clone());
-        out.slots.push(spec.clone());
+    // Sort the slots with their geometry and loop, in mesh2cad's order, so each end arc keeps
+    // the number its slot gets in the design (`slot_<n>`).
+    let mut fitted = top.to_vec();
+    fitted.sort_by(|a, b| {
+        a.0.y.total_cmp(&b.0.y).then(a.0.x.total_cmp(&b.0.x)).then(a.0.angle.total_cmp(&b.0.angle)).then(a.0.w.total_cmp(&b.0.w))
+    });
+    for (i, (spec, g, k)) in fitted.into_iter().enumerate() {
+        out.slot_arcs.extend(g.halves().into_iter().map(|(centre, r, corner, t)| (i, centre, r, corner, t)));
+        out.wall_loops.push(face_loops.loops[k].clone());
+        out.slots.push(spec);
     }
-    out.slots.sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)).then(a.angle.total_cmp(&b.angle)).then(a.w.total_cmp(&b.w)));
     Ok(())
 }
 
@@ -550,8 +555,9 @@ fn walls_of(corners: &[P2], radius: Option<f64>, cutouts: &PlateCutouts, scale: 
 
 /// The mesh's per-face surface deviation from the recognised plate: each wall piece's label with
 /// the farthest its sampled mesh points lie from it (a facet chord of a round wall bows inward by
-/// its sagitta; planar faces lie exactly on theirs). Empty when the mesh is no Z prism. Best
-/// effort: any pipeline error yields no report rather than failing the import.
+/// its sagitta; planar faces lie exactly on theirs). Empty when the mesh is no Z prism, or when
+/// none of its walls is indexed (a box rounded all over, whose rounded surfaces are not
+/// measured). Best effort: any pipeline error yields no report rather than failing the import.
 pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
     let run = || -> Result<Vec<(String, f64)>, String> {
         let bounds = mesh.bounds().ok_or("the mesh has no triangles")?;
@@ -570,6 +576,10 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         // measure zero): outline sides and corner rounds, the holes' circles, the slots' arcs.
         let (wall_corners, wall_radius): (&[P2], Option<f64>) = if rim.is_some() { (&[], None) } else { (&corners, radius) };
         let walls = Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, &[], scale, tol);
+        // No wall of the part is indexed (a box rounded all over): no deviation to report.
+        if walls.pieces.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut worst: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
         let mut note = |label: &str, d: f64| {
             let e = worst.entry(label.to_owned()).or_insert(0.0);
@@ -580,23 +590,28 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         // The faces themselves lie in their planes by construction.
         note("top face", 0.0);
         note("bottom face", 0.0);
-        // Wall corners and chord middles: their distance to the nearest ideal wall.
-        let rel = |p: &Vec3| [p[0] - bounds.min[0], p[1] - bounds.min[1]];
+        // Wall corners and chord middles: their distance to the nearest ideal wall. `faces`
+        // keeps every point relative to the mesh's lowest corner, as the walls are.
         for p in &faces.between {
-            if let Some((d, k)) = walls.deviation(rel(p)) {
+            if let Some((d, k)) = walls.deviation([p[0], p[1]], &[]) {
                 note(&walls.labels[k], d);
             }
         }
         for p in &faces.rim {
-            if let Some((d, k)) = walls.deviation(*p) {
+            if let Some((d, k)) = walls.deviation(*p, &[]) {
                 note(&walls.labels[k], d);
             }
         }
         for &(a, b, middle, _) in &faces.chords {
-            for p in [a, b, [middle[0], middle[1]]] {
-                if let Some((d, k)) = walls.deviation(p) {
+            for p in [a, b] {
+                if let Some((d, k)) = walls.deviation(p, &[]) {
                     note(&walls.labels[k], d);
                 }
+            }
+            // A coarse round wall's chord middle lies several cells inside its circle: look the
+            // walls up through the chord's ends, which lie on them.
+            if let Some((d, k)) = walls.deviation([middle[0], middle[1]], &[a, b]) {
+                note(&walls.labels[k], d);
             }
         }
         Ok(worst.into_iter().collect())

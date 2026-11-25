@@ -4,7 +4,7 @@ use crate::mesh::{Mesh, cross, sub};
 use crate::recognize::{Axis, HoleSpec, PlateSpec, Recognition, recognize};
 use crate::synth;
 
-use super::{P2, ell, found, reason, spec};
+use super::{P2, banded, ell, found, reason, spec, stadium};
 
 #[test]
 fn recognises_holes_and_rounded_corners() {
@@ -264,6 +264,86 @@ fn synthetic_top_faces_are_not_folded() {
                 assert!(n[2].abs() > 1e-9, "degenerate cap triangle");
                 assert_eq!(n[2] > 0.0, a[2] > 0.0, "cap triangle facing the wrong way");
             }
+        }
+    }
+}
+
+/// The per-face deviation report measures a coarse hole's chord middles, which lie several grid
+/// cells inside the circle: a centred radius-16 hole in a 100 x 100 plate, faceted into eight,
+/// has its chord middles about 1.218 mm inside its circle.
+#[test]
+fn deviation_of_a_coarse_hole_is_its_sagitta() {
+    let s = PlateSpec {
+        x: 100.0,
+        y: 100.0,
+        z: 6.0,
+        holes: vec![HoleSpec { x: 50.0, y: 50.0, d: 32.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_r: None,
+        edge_fillet_r: None,
+    };
+    let deviations = crate::plate::face_deviations(&synth::plate(&s, 8, [0.0; 3]));
+    let sagitta = 16.0 * (1.0 - (PI / 8.0).cos());
+    let hole = deviations.iter().find(|(label, _)| label == "hole 1").unwrap_or_else(|| panic!("no hole 1 in {deviations:?}"));
+    assert!((hole.1 - sagitta).abs() < 0.05, "hole 1 lies {} mm from its circle, its chord's sagitta is {sagitta} mm", hole.1);
+}
+
+/// The deviation report does not depend on where in the file the part lies: `split_faces` keeps
+/// its points relative to the mesh's lowest corner, and the wall index is in the same frame.
+#[test]
+fn deviation_report_ignores_where_the_part_lies() {
+    let s = spec(&[(30.0, 20.0, 10.0)], None);
+    let at_origin = banded(&synth::plate(&s, 24, [0.0; 3]), 0.2, [40.0, 25.0]);
+    let moved = banded(&synth::plate(&s, 24, [4000.0, 4000.0, 100.0]), 0.2, [4040.0, 4025.0]);
+    let here = crate::plate::face_deviations(&at_origin);
+    let there = crate::plate::face_deviations(&moved);
+    // Same labels, same deviations (to single precision's rounding at the far offset).
+    assert_eq!(here.len(), there.len());
+    for ((label, d), (_, other)) in here.iter().zip(&there) {
+        assert!((d - other).abs() < 1e-9, "{label}: {d} vs {other}");
+    }
+    // The banded walls' middle corners bulge 0.2 mm inward, and the report says so.
+    let hole = here.iter().find(|(label, _)| label == "hole 1").expect("the hole is measured");
+    assert!(hole.1 > 0.1, "hole 1: {}", hole.1);
+}
+
+/// A box rounded all over has no wall in the index (its rounded surfaces are not measured), so
+/// the report is empty rather than two zero faces standing for the whole part.
+#[test]
+fn deviation_of_a_rounded_box_is_empty() {
+    let mesh = synth::rounded_box(60.0, 40.0, 30.0, 5.0, 16, [0.0; 3]);
+    assert_eq!(crate::plate::face_deviations(&mesh), Vec::new());
+}
+
+/// Each slot's two end arcs are labelled with the slot's number in the design (`slot_<n>`), the
+/// two ends counted within it — and each end's deviation is its own slot's sagitta.
+#[test]
+fn deviation_labels_slot_ends_with_their_slot() {
+    let mesh = synth::prism(
+        &[[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]],
+        &[stadium([25.0, 15.0], 20.0, 6.0, 0.0, 8), stadium([55.0, 35.0], 16.0, 10.0, 90.0, 8)],
+        6.0,
+        [0.0; 3],
+    );
+    let deviations = crate::plate::face_deviations(&mesh);
+    let labels: Vec<&str> = deviations.iter().map(|(label, _)| label.as_str()).collect();
+    for expected in ["slot 1 end 1", "slot 1 end 2", "slot 2 end 1", "slot 2 end 2"] {
+        assert!(labels.contains(&expected), "{expected} in {labels:?}");
+    }
+    assert!(!labels.iter().any(|l| l.starts_with("slot 3") || l.starts_with("slot 4")), "{labels:?}");
+    // Slot 1 (at y = 15) is 6 mm wide, slot 2 (at y = 35) 10 mm; each end is a half circle of
+    // eight facets, and its chords bow inward by their sagitta.
+    let sagitta = |w: f64| w / 2.0 * (1.0 - (PI / 16.0).cos());
+    for (label, d) in &deviations {
+        if label.starts_with("slot 1") {
+            assert!((d - sagitta(6.0)).abs() < 0.05, "{label}: {d}");
+        }
+        if label.starts_with("slot 2") {
+            assert!((d - sagitta(10.0)).abs() < 0.05, "{label}: {d}");
         }
     }
 }
