@@ -32,7 +32,7 @@ fn hexagonal_cut_out_is_not_a_hole() {
     assert_eq!(plate.cutouts[0][0], [37.5, 20.67]);
 }
 
-/// A 70 x 40 x 6 plate exported from SolidCraft 0.48 with a 16 x 20 rectangular and a
+/// A 70 x 40 x 6 plate exported from SolidCraft 0.49 with a 16 x 20 rectangular and a
 /// hexagonal cut-out (7 mm to its corners) and an Ø5 hole.
 #[test]
 fn recognises_polygonal_cut_outs() {
