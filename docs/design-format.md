@@ -259,8 +259,9 @@ side as an `arc` curve whose `Diameter` constraint is driven by the model parame
 `arc_<i>_d`; the arc's centre is a free sketch point (like a slot's arc centres), which the
 solver keeps equidistant from the side's two corners at the driving diameter, so changing one
 `arc_<i>_d` leaves the sketch solvable. A straight side meeting an arc side at a gently turning
-corner is held tangent to it, like a slot's sides. The straight sides keep their `Length`
-constraints. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
+corner is held tangent to it, like a slot's sides, and two arc sides joined by such tangent
+straight sides (a stadium's ends) share one radius through an `equal` constraint, only the first
+driving its `Diameter`. The straight sides keep their `Length` constraints. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
 in `solidcraft-cli 0.49.0` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
 9,461.81 mm³, again as computed.
