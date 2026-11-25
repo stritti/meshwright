@@ -389,15 +389,28 @@ fn stepped_plate_with_counterbore(bore: f64, head: f64, floor: f64, head_on_leve
     Mesh::new(t)
 }
 
-/// A counterbore opening on a step's level is refused by the plate recogniser: the hole would
-/// be drilled from the plate's top face, not from the level. (The part may still be recognised
-/// exactly by another recogniser, as a stack of bands, or kept as a mesh.)
+/// A counterbore opening on a step's level is drilled from that level, not from the plate's top
+/// face: it is recognised exactly, its bore blind from the bottom as deep as the level lies
+/// above it (roadmap 5.3).
 #[test]
-fn a_counterbore_opening_on_a_step_level_is_refused() {
+fn a_counterbore_opening_on_a_step_level_is_recognised() {
+    use crate::recognize::{Blind, HoleHead};
     let mesh = stepped_plate_with_counterbore(6.0, 10.0, 2.0, true);
     assert!(mesh.volume() > 0.0, "mesh wound inside out");
-    let why = crate::plate::recognize_plate(&mesh, true).expect_err("the plate recogniser refuses a headed hole on a step's level");
-    assert!(why.contains("step's level"), "{why}");
+    let step = vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile.outline_pockets, [OutlinePocketSpec { corners: step, depth: 3.0, bottom: false }]);
+    assert_eq!(
+        profile.holes,
+        [HoleSpec {
+            x: 45.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Counterbore { d: 10.0, depth: 1.0, bottom: false }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }]
+    );
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
 }
 
 /// A counterbore opening on the bottom face of a hole in a step's level is drilled from the
