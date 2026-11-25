@@ -743,10 +743,13 @@ pub(super) fn recognition(
     let (z, outline_fillet_r) = (snap_mm(size[2]), if rim.is_some() { None } else { radius.map(snap_mm) });
     let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
     let PlateCutouts { mut holes, slots, cutouts, pockets, outline_pockets, .. } = cutouts;
-    // A hole in a step's region goes only up to the step's level, not through the whole plate:
-    // from the bottom face it is blind, as deep as the level lies above it.
+    // A through hole in a pocket's or step's region goes only up to that level, not through the
+    // whole plate: from the bottom face it is blind, as deep as the level lies above it. A blind
+    // hole already measured beneath the region keeps its own depth.
     for h in &mut holes {
-        if let Some(p) = outline_pockets.iter().find(|p| !p.bottom && p.contains([h.x, h.y], tol)) {
+        if h.blind.is_none()
+            && let Some(p) = outline_pockets.iter().find(|p| !p.bottom && p.contains([h.x, h.y], tol))
+        {
             h.blind = Some(Blind { depth: snap_mm(size[2] - p.depth), bottom: true });
         }
     }

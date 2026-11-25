@@ -227,3 +227,48 @@ fn recognises_a_hole_in_a_step_level() {
     // The volume differs only by the hole's facets becoming a true circle.
     assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
 }
+
+/// A blind hole from the bottom face beneath a top pocket keeps its own measured depth: the
+/// pocket's level must not overwrite it (the web between the cavities stays).
+#[test]
+fn a_blind_hole_beneath_a_pocket_keeps_its_measured_depth() {
+    use crate::recognize::Blind;
+    let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+    let triangle = vec![[20.0, 10.0], [40.0, 10.0], [30.0, 25.0]];
+    let hole: Vec<P2> = (0..16)
+        .map(|i| {
+            let a = 2.0 * std::f64::consts::PI * f64::from(i) / 16.0;
+            [30.0 + 4.0 * a.cos(), 17.0 + 4.0 * a.sin()]
+        })
+        .collect();
+    let at = |p: P2, z: f64| [p[0], p[1], z];
+    let mut t = Vec::new();
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&triangle)) {
+        t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+    }
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&hole)) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    t.extend(ring_walls(&outline, 0.0, 6.0));
+    let [a, b, c] = [triangle[0], triangle[1], triangle[2]];
+    t.push([at(a, 3.0), at(b, 3.0), at(c, 3.0)]);
+    for i in 0..3 {
+        let (p, q) = (triangle[(i + 1) % 3], triangle[i]);
+        t.extend([[at(p, 3.0), at(q, 3.0), at(q, 6.0)], [at(p, 3.0), at(q, 6.0), at(p, 6.0)]]);
+    }
+    // The blind hole from the bottom face, 1 mm deep, beneath the pocket.
+    let cw: Vec<P2> = hole.iter().rev().copied().collect();
+    t.extend(ring_walls(&cw, 0.0, 1.0));
+    for [a, b, c] in synth::triangulate(&hole, &[]) {
+        t.push([at(a, 1.0), at(c, 1.0), at(b, 1.0)]);
+    }
+    let mesh = Mesh::new(t);
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile.outline_pockets, [OutlinePocketSpec { corners: triangle, depth: 3.0, bottom: false }]);
+    assert_eq!(profile.holes.len(), 1, "{:?}", profile.holes);
+    let h = &profile.holes[0];
+    assert!((h.x - 30.0).abs() < 0.01 && (h.y - 17.0).abs() < 0.01 && (h.d - 8.0).abs() < 0.01, "{h:?}");
+    assert_eq!(h.blind, Some(Blind { depth: 1.0, bottom: true }), "the measured depth, not the pocket's level: {h:?}");
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
+}
