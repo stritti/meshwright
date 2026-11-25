@@ -174,6 +174,26 @@ impl ProfileSpec {
                 dim[i] = true;
             }
         }
+        // A straight side between two fixed-centre arc sides whose length equals the centres'
+        // separation ties the two radii together (their endpoints' offsets from the centres are
+        // equal), so alongside both driving diameters it must not drive: changing one
+        // `arc_<i>_d` alone would leave no solution. Let the side adjust instead.
+        let n = self.corners.len();
+        for i in 0..n {
+            if !dim[i] || arcs.get(i).is_some_and(Option::is_some) {
+                continue;
+            }
+            let (Some(prev), Some(next)) = (arcs.get((i + n - 1) % n).copied().flatten(), arcs.get((i + 1) % n).copied().flatten()) else {
+                continue;
+            };
+            let (a, b) = (self.corners[i], self.corners[(i + 1) % n]);
+            let len = (a[0] - b[0]).hypot(a[1] - b[1]);
+            let dc = (prev.centre[0] - next.centre[0]).hypot(prev.centre[1] - next.centre[1]);
+            let cross = (b[0] - a[0]) * (next.centre[1] - prev.centre[1]) - (b[1] - a[1]) * (next.centre[0] - prev.centre[0]);
+            if cross.abs() <= 1e-9 * len * dc && (len - dc).abs() <= 1e-6 * len.max(1.0) {
+                dim[i] = false;
+            }
+        }
         let outline_lens = side_len_params(&mut b, "outline", &self.corners, arcs, &dim);
         let sketch_geom = if has_arcs {
             let arc_dims = arc_side_params(&mut b, &self.corners, arcs, &dim);

@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "stadium.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 3, "loss_report": {"summary": "A 50 x 20 x 4 mm plate with a 4-sided outline"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 4456.637061}},
+    "tolerance": 1e-4
+  }
+}

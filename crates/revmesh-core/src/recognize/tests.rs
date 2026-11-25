@@ -417,6 +417,42 @@ fn outline_arc_sides_become_sketch_arcs() {
     assert!(centre["fixed"].as_bool().expect("fixed"));
 }
 
+/// In a stadium — two arc sides with fixed centres joined by straight sides as long as the
+/// centres are apart — the straight sides do not drive: their length equals the centres'
+/// separation, which ties the two radii, so driving it alongside both diameters would leave no
+/// solution when one `arc_<i>_d` changes (codex finding on #68). The diameters stay the only
+/// driving sketch dimensions.
+#[test]
+fn stadium_straight_sides_do_not_drive_beside_fixed_centre_arcs() {
+    let spec = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 10.0], [40.0, 10.0], [40.0, 30.0], [0.0, 30.0]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, Some(ArcSide { centre: [40.0, 20.0], r: 10.0 }), None, Some(ArcSide { centre: [0.0, 20.0], r: 10.0 })],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let names: Vec<&str> =
+        params.iter().filter(|p| !p["model"].as_bool().expect("model")).map(|p| p["name"].as_str().expect("name")).collect();
+    assert!(!names.iter().any(|n| n.starts_with("outline_") && n.ends_with("_len")), "no outline length drives: {names:?}");
+    assert!(names.contains(&"arc_2_d") && names.contains(&"arc_4_d"), "both diameters drive: {names:?}");
+    assert!(names.contains(&"arc_2_cx") && names.contains(&"arc_2_cy") && names.contains(&"arc_4_cx") && names.contains(&"arc_4_cy"));
+    let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr").to_owned());
+    assert_eq!(expr("arc_2_d").as_deref(), Some("20 mm"));
+    assert_eq!(expr("arc_4_d").as_deref(), Some("20 mm"));
+    // The two straight sides carry no Length constraint at all.
+    let lengths =
+        json["features"][0]["sketch"]["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "length").count();
+    assert_eq!(lengths, 0, "no Length constraint on the stadium's straight sides");
+}
+
 /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face
 /// down, or from the bottom face up.
 #[test]
