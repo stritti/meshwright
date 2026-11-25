@@ -299,7 +299,7 @@ pub struct PolygonAngle {
 /// Which side of a closed polygon may get the driving `Angle` constraint: the longest side that
 /// is neither horizontal nor vertical. Parallel slanted sides share their angle and a loop's
 /// turns sum to 360°, so one angle per polygon is the independent one; the sides' lengths (see
-/// [`dimensioned_sides`]) fix the shape. `None` when every side is axis-aligned.
+/// [`dimensioned_sides_for_angle`]) fix the shape. `None` when every side is axis-aligned.
 #[must_use]
 pub fn dimensioned_angle(corners: &[[f64; 2]]) -> Option<usize> {
     let n = corners.len();
@@ -351,6 +351,48 @@ pub fn dimensioned_sides(corners: &[[f64; 2]]) -> Vec<bool> {
         if let Some(&longest) = g.iter().filter(|_| g.len() >= 2).max_by(|&&a, &&b| len(a).total_cmp(&len(b))) {
             dim[longest] = false;
         }
+    }
+    dim
+}
+
+/// Whether side `i` of a closed polygon is axis-aligned, so the sketch holds it horizontal or
+/// vertical (as `polygon_sketch_sized` does).
+fn axis_aligned(corners: &[[f64; 2]], i: usize) -> bool {
+    let n = corners.len();
+    let (a, b) = (corners[i], corners[(i + 1) % n]);
+    (a[1] - b[1]).abs() < 1e-9 || (a[0] - b[0]).abs() < 1e-9
+}
+
+/// Which sides of a closed polygon may get a driving `Length` constraint when side `angle` (see
+/// [`dimensioned_angle`]) drives the `Angle` too. As in [`dimensioned_sides`], but the angle
+/// side does not drive a length (with the other sides fixed, the angle determines it), and so do
+/// no further sides while the driving constraints exceed the polygon's shape degrees of freedom:
+/// its `n` corners are free in the plane and two degrees of freedom are its position, so `2n - 2`
+/// remain for the shape, and every axis-aligned side takes one for its horizontal or vertical
+/// constraint, every driving length one, the angle one. When they exceed that — a right
+/// triangle's two legs with their horizontal and vertical constraints already fix the
+/// diagonal's direction, so driving the angle too would leave no solution when the angle
+/// parameter changes — the longest axis-aligned driving side's length is released (derived
+/// through loop closure instead), until they fit.
+#[allow(clippy::many_single_char_names)] // points a, b, as in the geometry
+#[must_use]
+pub fn dimensioned_sides_for_angle(corners: &[[f64; 2]], angle: usize) -> Vec<bool> {
+    let n = corners.len();
+    let len = |i: usize| {
+        let (a, b) = (corners[i], corners[(i + 1) % n]);
+        (a[0] - b[0]).hypot(a[1] - b[1])
+    };
+    let mut dim = dimensioned_sides(corners);
+    dim[angle] = false;
+    let hv = (0..n).filter(|&i| axis_aligned(corners, i)).count();
+    while hv + dim.iter().filter(|&&d| d).count() + 1 > 2 * n - 2 {
+        let Some(release) = (0..n).filter(|&i| dim[i]).max_by(|&a, &b| match axis_aligned(corners, a).cmp(&axis_aligned(corners, b)) {
+            std::cmp::Ordering::Equal => len(a).total_cmp(&len(b)),
+            ord => ord,
+        }) else {
+            break;
+        };
+        dim[release] = false;
     }
     dim
 }

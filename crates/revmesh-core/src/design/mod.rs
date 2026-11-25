@@ -15,7 +15,8 @@ mod tests;
 
 pub use sketch::{
     Constraint, Link, PointExprs, PolygonAngle, Sketch, SketchCurve, SketchPoint, SlotDimensions, dimensioned_angle, dimensioned_sides,
-    polygon_sketch, polygon_sketch_dimensioned, polygons_sketch, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
+    dimensioned_sides_for_angle, polygon_sketch, polygon_sketch_dimensioned, polygons_sketch, polygons_sketch_dimensioned,
+    rectangle_sketch, slot_sketch,
 };
 
 use serde::Serialize;

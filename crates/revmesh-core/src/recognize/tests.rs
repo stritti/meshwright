@@ -371,6 +371,75 @@ fn parallelogram_skips_one_side_per_parallel_group() {
     assert_eq!(dimensioned_sides(&corners), [true, true, false, false]);
 }
 
+/// With an angle side, a right triangle's legs with their horizontal and vertical constraints
+/// already fix the diagonal's direction, so one leg's length is released too (see
+/// [`dimensioned_sides_for_angle`]): the longer leg (the base, side 1) is derived through loop
+/// closure and only the shorter leg drives — driving both legs plus the angle would
+/// over-constrain the sketch. A triangle with a horizontal base but no right angle needs no
+/// extra release: its other slanted side's direction stays free.
+#[test]
+fn dimensioned_sides_for_angle_releases_a_leg_of_a_right_triangle() {
+    use crate::design::dimensioned_sides_for_angle;
+    assert_eq!(dimensioned_sides_for_angle(&[[0.0, 0.0], [40.0, 0.0], [40.0, 30.0]], 2), [false, true, false]);
+    assert_eq!(dimensioned_sides_for_angle(&[[0.0, 0.0], [60.0, 0.0], [40.0, 30.0]], 2), [true, true, false]);
+    // The pentagon of `outline_and_cutout_sides_are_dimensioned` stays as it is.
+    assert_eq!(
+        dimensioned_sides_for_angle(&[[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [30.0, 40.0], [0.0, 40.0]], 2),
+        [false, true, false, true, false]
+    );
+}
+
+/// A right-triangle outline or cut-out whose diagonal drives the `Angle` gets exactly `2n - 2 = 4`
+/// driving constraints for its three free corners — horizontal and vertical on the legs, one
+/// `Length` on the shorter leg, the `Angle` on the diagonal; the longer leg's (the base's) length
+/// is derived, so bumping `outline_3_angle` by a degree in SolidCraft still has a solution.
+#[test]
+fn right_triangle_releases_a_leg_length_for_the_angle() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: Vec::new(),
+        bosses: vec![],
+        cutouts: vec![vec![[10.0, 10.0], [30.0, 10.0], [30.0, 20.0]]],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let param = |name: &str| {
+        params.iter().find(|p| p["name"] == name).map(|p| (p["expr"].as_str().expect("expr"), p["model"].as_bool().expect("model")))
+    };
+    // The outline's base (side 1, 40 mm, the longer leg) and the diagonal (side 3, the angle
+    // side) are derived; the vertical leg (side 2) drives.
+    assert!(param("outline_1_len").is_none() && param("outline_3_len").is_none(), "the base's and the diagonal's lengths are derived");
+    let (expr, model) = param("outline_2_len").expect("user param");
+    assert!(!model);
+    assert_eq!(expr, "30 mm");
+    assert!(param("outline_3_angle").is_some(), "the diagonal carries the angle");
+    let sketch = &json["features"][0]["sketch"];
+    let constraints = sketch["constraints"].as_array().expect("constraints");
+    let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    assert_eq!(lengths, [1], "one Length, on the vertical leg (line index 1)");
+    assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 2);
+    let angles: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "angle").collect();
+    assert_eq!(angles.len(), 1);
+    assert_eq!(angles[0]["b"].as_u64(), Some(2), "the Angle sits on the diagonal (line index 2)");
+    // The right-triangle cut-out the same way: its base (side 1, 20 mm) is derived, its vertical
+    // leg (side 2) drives, the diagonal carries `cutout_1_3_angle`.
+    let cutouts = &json["features"].as_array().expect("features").iter().find(|f| f["name"] == "CutoutsSketch").expect("cutouts sketch");
+    assert!(param("cutout_1_1_len").is_none() && param("cutout_1_3_len").is_none());
+    assert_eq!(param("cutout_1_2_len").map(|(e, _)| e), Some("10 mm"));
+    assert!(param("cutout_1_3_angle").is_some());
+    let cut_constraints = cutouts["sketch"]["constraints"].as_array().expect("constraints");
+    let cut_lengths: Vec<u64> = cut_constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    // In the cut-outs' shared sketch the X axis is curve 0, so the cut-out's side 2 is curve 2.
+    assert_eq!(cut_lengths, [2], "one Length, on the cut-out's vertical leg (side 2)");
+    assert_eq!(cut_constraints.iter().filter(|c| c["type"] == "angle").count(), 1);
+}
+
 /// A thin profile keeps its slanted lengths' precision (0.1 µm snap): a 0.1 mm high triangle's
 /// slanted sides stay 50.0001 mm, so the dimensioned sketch does not collapse to zero area.
 #[test]

@@ -5,7 +5,8 @@ use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, OutlinePocketSpec, 
 
 use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, PolygonAngle, Profiles, SlotDimensions,
-    dimensioned_angle, dimensioned_sides, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
+    dimensioned_angle, dimensioned_sides, dimensioned_sides_for_angle, polygon_sketch_dimensioned, polygons_sketch_dimensioned,
+    rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Vec3, snap_dim, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
@@ -221,19 +222,21 @@ fn side_angle_param(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -
     Some(PolygonAngle { side, degrees, param: model })
 }
 
-/// One user parameter `<prefix>_<i>_len` per driving side of `corners` (see
-/// [`dimensioned_sides`]) and a model parameter driving its `Length` constraint in the sketch, so
-/// the polygon re-dimensions in SolidCraft side by side, like the rectangle's `base_x`/`base_y`.
-/// The side that drives the `Angle` (see [`dimensioned_angle`]) does not drive a length too: with
-/// the other sides' lengths fixed, the angle determines it, and driving both would leave no
-/// solution when the angle parameter changes. Returns the model parameters' names, `None` for a
-/// side that does not drive.
+/// One user parameter `<prefix>_<i>_len` per driving side of `corners` (see [`dimensioned_sides`],
+/// or [`dimensioned_sides_for_angle`] when the polygon has an angle side) and a model parameter
+/// driving its `Length` constraint in the sketch, so the polygon re-dimensions in SolidCraft side
+/// by side, like the rectangle's `base_x`/`base_y`. The side that drives the `Angle` (see
+/// [`dimensioned_angle`]) does not drive a length too, and neither do the further sides
+/// [`dimensioned_sides_for_angle`] releases: with the other sides' lengths and orientations
+/// fixed, the angle determines those lengths, and driving them too would leave no solution when
+/// the angle parameter changes. Returns the model parameters' names, `None` for a side that does
+/// not drive.
 fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Vec<Option<String>> {
     let n = corners.len();
-    let mut dim = dimensioned_sides(corners);
-    if let Some(s) = dimensioned_angle(corners) {
-        dim[s] = false;
-    }
+    let dim = match dimensioned_angle(corners) {
+        Some(angle) => dimensioned_sides_for_angle(corners, angle),
+        None => dimensioned_sides(corners),
+    };
     (0..n)
         .map(|i| {
             if !dim[i] {

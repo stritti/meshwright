@@ -253,9 +253,13 @@ opened in SolidCraft 0.49.0 with no errors: volume 16,452.05 mm³ as computed by
 warnings.
 
 A polygon outline (`ProfileSpec::to_design`: horizontal and vertical constraints on the
-axis-aligned sides plus a `Length` constraint per side driven by the model parameter behind
-`outline_<i>_len`, an `Angle` constraint on the longest slanted side driven by `outline_<i>_angle`,
-a fillet on every corner named `F2:side:l<i>|F2:side:l<i+1>`) works the same
+axis-aligned sides plus a `Length` constraint per driving side driven by the model parameter
+behind `outline_<i>_len`, an `Angle` constraint on the longest slanted side driven by
+`outline_<i>_angle` — the angle side's length is derived, and when the other sides' orientations
+already fix its direction, as a right triangle's legs held horizontal and vertical do for the
+diagonal, the longest axis-aligned side's length is derived too (see `dimensioned_sides_for_angle`
+in `crates/revmesh-core/src/design/sketch.rs`), a fillet on every corner named
+`F2:side:l<i>|F2:side:l<i+1>`) works the same
 way, inside corners included. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
 in `solidcraft-cli 0.49.0` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
