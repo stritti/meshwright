@@ -634,7 +634,17 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         note("bottom face", 0.0);
         // Wall corners and chord middles: their distance to the nearest ideal wall. `faces`
         // keeps every point relative to the mesh's lowest corner, as the walls are.
+        // Samples of unsupported features (blind or stepped holes, whose surfaces are not
+        // indexed) are excluded rather than attributed to distant outer walls.
+        let in_unsupported = |p: Vec3| cutouts.stepped.iter().any(|s| s.holds(p, tol)) || cutouts.blinds.iter().any(|b| b.holds(p, tol));
+        let footprint_unsupported = |q: P2| {
+            cutouts.stepped.iter().any(|s| distance(q, s.centre) <= s.head_r + tol)
+                || cutouts.blinds.iter().any(|b| b.foot.contains(q, tol))
+        };
         for p in &faces.between {
+            if in_unsupported(*p) {
+                continue;
+            }
             if let Some((d, k)) = walls.deviation([p[0], p[1]], &[]) {
                 note(&walls.labels[k], d);
             }
@@ -644,16 +654,35 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
                 note(&walls.labels[k], d);
             }
         }
-        for &(a, b, middle, _) in &faces.chords {
+        let mut note_chord = |a: P2, b: P2, middle: P2| {
+            // A chord of an unsupported feature (a blind or stepped hole's bore or mouth) has
+            // no indexed surface: skip it rather than attributing it to a distant outer wall.
+            if footprint_unsupported(a) || footprint_unsupported(middle) {
+                return;
+            }
             for p in [a, b] {
                 if let Some((d, k)) = walls.deviation(p, &[]) {
                     note(&walls.labels[k], d);
                 }
             }
-            // A coarse round wall's chord middle lies several cells inside its circle: look the
-            // walls up through the chord's ends, which lie on them.
-            if let Some((d, k)) = walls.deviation([middle[0], middle[1]], &[a, b]) {
+            // The chord's middle is measured against the wall owning its ends (a coarse round
+            // wall's middle lies several cells inside its circle, so the wall is found through
+            // the ends), not against a neighbouring feature that happens to lie nearer.
+            if let Some((d, k)) = walls.deviation_chord(a, b, middle) {
                 note(&walls.labels[k], d);
+            }
+        };
+        for &(a, b, middle, _) in &faces.chords {
+            note_chord(a, b, [middle[0], middle[1]]);
+        }
+        // The top boundary loops' chords too: `split_faces` skips edges lying wholly on the top
+        // face, so a coarsely tessellated top rim's chords would otherwise not be sampled.
+        for ring in std::iter::once(&face_loops.outline).chain(face_loops.loops.iter()) {
+            for i in 0..ring.len() {
+                let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+                if distance(a, b) > tol {
+                    note_chord(a, b, [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1])]);
+                }
             }
         }
         Ok(worst.into_iter().collect())

@@ -411,3 +411,109 @@ fn deviation_of_a_polygonal_cutout_is_measured_on_its_own_walls() {
         }
     }
 }
+
+/// A blind hole's floor and bore samples have no indexed surface: they are excluded from the
+/// deviation report instead of being attributed to distant outer walls (codex finding on #74).
+#[test]
+fn deviation_of_a_blind_holes_floor_is_not_attributed_to_outer_walls() {
+    let (z, floor) = (5.0, 2.5);
+    let outline = [[0.0, 0.0], [200.0, 0.0], [200.0, 200.0], [0.0, 200.0]];
+    let ring = synth::rings(&[HoleSpec { x: 100.0, y: 100.0, d: 2.0, head: None, blind: None }], 16).remove(0);
+    let lift = |p: P2, h: f64| [p[0], p[1], h];
+    let mut t: Vec<crate::mesh::Triangle> = Vec::new();
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&ring)) {
+        t.push([lift(a, z), lift(b, z), lift(c, z)]);
+    }
+    for [a, b, c] in synth::triangulate(&outline, &[]) {
+        t.push([lift(a, 0.0), lift(c, 0.0), lift(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (outline[i], outline[(i + 1) % 4]);
+        t.push([lift(a, 0.0), lift(b, 0.0), lift(b, z)]);
+        t.push([lift(a, 0.0), lift(b, z), lift(a, z)]);
+    }
+    let m = ring.len();
+    for i in 0..m {
+        let (a, b) = (ring[(i + 1) % m], ring[i]);
+        t.push([lift(a, floor), lift(b, floor), lift(b, z)]);
+        t.push([lift(a, floor), lift(b, z), lift(a, z)]);
+    }
+    for i in 1..m - 1 {
+        t.push([lift(ring[0], floor), lift(ring[i], floor), lift(ring[i + 1], floor)]);
+    }
+    let mesh = Mesh::new(t);
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let deviations = crate::plate::face_deviations(&mesh);
+    for (label, d) in &deviations {
+        if label.starts_with("side") {
+            assert!(*d < 0.01, "the blind hole's samples must not inflate {label}: {d}");
+        }
+    }
+}
+
+/// A chord's middle is measured against the wall owning its ends: a hole beside a rounded
+/// corner must not steal the corner's chord (codex finding on #74). A 100 x 100 plate with R16
+/// corners and a D13.4 hole at (10, 10), eight segments per circle: the corner's chords bow
+/// 1.218 mm, the hole's 0.510 mm.
+#[test]
+fn deviation_of_a_chord_stays_with_its_owning_wall() {
+    let s = PlateSpec {
+        x: 100.0,
+        y: 100.0,
+        z: 6.0,
+        holes: vec![HoleSpec { x: 10.0, y: 10.0, d: 13.4, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_r: Some(16.0),
+        edge_fillet_r: None,
+    };
+    let deviations = crate::plate::face_deviations(&synth::plate(&s, 8, [0.0; 3]));
+    let corner = deviations.iter().find(|(l, _)| l.contains("round")).unwrap_or_else(|| panic!("no corner round in {deviations:?}"));
+    let want_corner = 16.0 * (1.0 - (PI / 8.0).cos());
+    assert!((corner.1 - want_corner).abs() < 0.05, "the corner keeps its chord's sagitta {want_corner}: {corner:?}");
+    let hole = deviations.iter().find(|(l, _)| l == "hole 1").unwrap_or_else(|| panic!("no hole 1 in {deviations:?}"));
+    let want_hole = 6.7 * (1.0 - (PI / 8.0).cos());
+    assert!((hole.1 - want_hole).abs() < 0.05, "the hole measures its own sagitta {want_hole}, not the corner's: {hole:?}");
+}
+
+/// A bore whose top rim is tessellated more coarsely than its bottom rim has its largest
+/// deviation on the top chords, which `split_faces` skips (both endpoints on the top face); the
+/// report samples the top boundary loops' chords too (codex finding on #74). A centred radius-1
+/// bore in a 100 x 100 x 6 plate: eight top vertices, sixteen bottom ones — the 45-degree top
+/// chords bow 0.0761 mm, the 22.5-degree wall edges only 0.0192 mm.
+#[test]
+fn deviation_samples_the_top_rims_coarse_chords() {
+    let (z, r) = (6.0, 1.0);
+    let outline = [[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]];
+    let bottom_ring: Vec<P2> = (0..16).map(|i| 2.0 * PI * i as f64 / 16.0).map(|a| [50.0 + r * a.cos(), 50.0 + r * a.sin()]).collect();
+    let top_ring: Vec<P2> = (0..8).map(|j| bottom_ring[2 * j]).collect();
+    let lift = |p: P2, h: f64| [p[0], p[1], h];
+    let mut t: Vec<crate::mesh::Triangle> = Vec::new();
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&top_ring)) {
+        t.push([lift(a, z), lift(b, z), lift(c, z)]);
+    }
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&bottom_ring)) {
+        t.push([lift(a, 0.0), lift(c, 0.0), lift(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (outline[i], outline[(i + 1) % 4]);
+        t.push([lift(a, 0.0), lift(b, 0.0), lift(b, z)]);
+        t.push([lift(a, 0.0), lift(b, z), lift(a, z)]);
+    }
+    // The bore's wall from the 16-gon at the bottom to the 8-gon at the top: each top edge spans
+    // two bottom edges.
+    for j in 0..8 {
+        let (p0, p1, p2) = (bottom_ring[2 * j], bottom_ring[2 * j + 1], bottom_ring[2 * (j + 1) % 16]);
+        t.push([lift(p2, 0.0), lift(p1, 0.0), lift(p2, z)]);
+        t.push([lift(p2, 0.0), lift(p2, z), lift(p0, z)]);
+    }
+    let mesh = Mesh::new(t);
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let deviations = crate::plate::face_deviations(&mesh);
+    let hole = deviations.iter().find(|(l, _)| l == "hole 1").unwrap_or_else(|| panic!("no hole 1 in {deviations:?}"));
+    let want = r * (1.0 - (PI / 8.0).cos());
+    assert!((hole.1 - want).abs() < 0.01, "hole 1 measures the coarse top chords' sagitta {want}: {hole:?}");
+}

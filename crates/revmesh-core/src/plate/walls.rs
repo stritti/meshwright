@@ -238,13 +238,46 @@ impl Walls {
     /// Whether `p` (relative to the plate's corner) lies on one of the walls.
     pub(super) fn holds(&self, p: P2) -> bool {
         let key = ((p[0] / self.cell).floor() as i64, (p[1] / self.cell).floor() as i64);
+        self.cells.get(&key).is_some_and(|candidates| candidates.iter().any(|&k| self.holds_piece(k, p)))
+    }
+
+    /// Whether point `p` lies on wall piece `k`, within the tolerance.
+    fn holds_piece(&self, k: usize, p: P2) -> bool {
         let tol = self.tol;
-        self.cells.get(&key).is_some_and(|candidates| {
-            candidates.iter().any(|&k| match self.pieces[k] {
-                Wall::Segment(a, b) => segment_distance(p, a, b) <= tol,
-                Wall::Arc { centre, r, corner, t } => (distance(p, centre) - r).abs() <= tol && distance(p, corner) <= t + tol,
-                Wall::Circle(centre, r) => (distance(p, centre) - r).abs() <= tol,
-            })
-        })
+        match self.pieces[k] {
+            Wall::Segment(a, b) => segment_distance(p, a, b) <= tol,
+            Wall::Arc { centre, r, corner, t } => (distance(p, centre) - r).abs() <= tol && distance(p, corner) <= t + tol,
+            Wall::Circle(centre, r) => (distance(p, centre) - r).abs() <= tol,
+        }
+    }
+
+    /// The deviation of a chord's middle from the wall that owns the chord: among the walls
+    /// holding both ends `a` and `b`, the nearest to `middle`. A neighbouring wall that happens
+    /// to lie nearer the middle (a hole beside a rounded corner, say) must not take the chord
+    /// over. Falls back to the plain lookup when no wall holds both ends.
+    pub(super) fn deviation_chord(&self, a: P2, b: P2, middle: P2) -> Option<(f64, usize)> {
+        let mut best: Option<(f64, usize)> = None;
+        for k in 0..self.pieces.len() {
+            if !self.holds_piece(k, a) || !self.holds_piece(k, b) {
+                continue;
+            }
+            // The middle lies within the arc's span from `a` to `b`, not merely within the
+            // corner's reach, so a corner round's chord measures against its own arc.
+            let d = match self.pieces[k] {
+                Wall::Segment(x, y) => segment_distance(middle, x, y),
+                Wall::Arc { centre, r, .. } => {
+                    let ang = |p: P2| (p[1] - centre[1]).atan2(p[0] - centre[0]);
+                    let (u, w) = ([a[0] - centre[0], a[1] - centre[1]], [b[0] - centre[0], b[1] - centre[1]]);
+                    let span = (u[0] * w[1] - u[1] * w[0]).atan2(u[0] * w[0] + u[1] * w[1]).abs();
+                    let in_span = (ang(middle) - ang(a)).rem_euclid(2.0 * PI) <= span + self.tol / r;
+                    if in_span { (distance(middle, centre) - r).abs() } else { f64::INFINITY }
+                }
+                Wall::Circle(centre, r) => (distance(middle, centre) - r).abs(),
+            };
+            if d < best.map_or(f64::INFINITY, |(bd, _)| bd) {
+                best = Some((d, k));
+            }
+        }
+        best.or_else(|| self.deviation(middle, &[a, b]))
     }
 }
