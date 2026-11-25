@@ -311,12 +311,16 @@ fn deviation_report_ignores_where_the_part_lies() {
     assert!(hole.1 > 0.1, "hole 1: {}", hole.1);
 }
 
-/// A box rounded all over has no wall in the index (its rounded surfaces are not measured), so
-/// the report is empty rather than two zero faces standing for the whole part.
+/// A box rounded all over is measured against its rounded envelope: one "rounded surface" label
+/// with the farthest its tessellated surface lies from it (a facet's sagitta, roadmap 5.4).
 #[test]
-fn deviation_of_a_rounded_box_is_empty() {
+fn deviation_of_a_rounded_box_measures_its_rounded_surface() {
     let mesh = synth::rounded_box(60.0, 40.0, 30.0, 5.0, 16, [0.0; 3]);
-    assert_eq!(crate::plate::face_deviations(&mesh), Vec::new());
+    let deviations = crate::plate::face_deviations(&mesh);
+    let surface = deviations.iter().find(|(l, _)| l == "rounded surface").unwrap_or_else(|| panic!("no rounded surface in {deviations:?}"));
+    // The corner octants' facets bow inward by about the rim radius's sagitta on their chords.
+    assert!(surface.1 > 0.05 && surface.1 < 0.2, "rounded surface: {surface:?}");
+    assert_eq!(deviations.len(), 1, "one label for the whole rounded surface: {deviations:?}");
 }
 
 /// Each slot's two end arcs are labelled with the slot's number in the design (`slot_<n>`), the
@@ -518,13 +522,19 @@ fn deviation_samples_the_top_rims_coarse_chords() {
     assert!((hole.1 - want).abs() < 0.01, "hole 1 measures the coarse top chords' sagitta {want}: {hole:?}");
 }
 
-/// A box rounded all over with a through opening: its rounded surfaces are not indexed, so the
-/// report is suppressed rather than attributing them to the hole ~30 mm away (codex finding on
-/// #74).
+/// A box rounded all over with a through hole: the rounded surface is measured against the
+/// envelope and the hole against its own circle, so neither is attributed to the other ~30 mm
+/// away (codex finding on #74; roadmap 5.4).
 #[test]
-fn deviation_of_a_rounded_box_with_a_hole_is_empty() {
+fn deviation_of_a_rounded_box_with_a_hole_separates_surface_and_hole() {
     let mesh = rounded_box_with_openings(60.0, 40.0, 30.0, 5.0, &[circle_loop(30.0, 20.0, 8.0, 32)], 32);
-    assert!(crate::plate::face_deviations(&mesh).is_empty(), "a rounded box's surfaces are not measured yet");
+    let deviations = crate::plate::face_deviations(&mesh);
+    let hole = deviations.iter().find(|(l, _)| l == "hole 1").unwrap_or_else(|| panic!("no hole 1 in {deviations:?}"));
+    // The 32-gon's chords bow inward by their sagitta.
+    let want = 4.0 * (1.0 - (PI / 32.0).cos());
+    assert!((hole.1 - want).abs() < 0.01, "hole 1 measures its chords' sagitta {want}: {hole:?}");
+    let surface = deviations.iter().find(|(l, _)| l == "rounded surface").unwrap_or_else(|| panic!("no rounded surface in {deviations:?}"));
+    assert!(surface.1 < 0.1, "the rounded surface is not inflated by the hole: {surface:?}");
 }
 
 /// A step down from the top face is registered before measuring: the step's internal wall chords

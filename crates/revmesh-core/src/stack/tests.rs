@@ -119,3 +119,22 @@ fn a_stack_of_blocks_is_an_intersection_first() {
     assert_eq!((cut.axis, cut.from, cut.to), (Axis::X, 25.0, 60.0));
     assert!((spec.volume() - 35_000.0).abs() < 1e-6);
 }
+
+/// Roadmap 5.4: a stack's walls are measured per band, labelled `band <k> side <i>` in the
+/// stack's axis frame — along Z, and along X and Y when the part lies that way.
+#[test]
+fn deviations_are_reported_per_band() {
+    for axis in [Axis::Z, Axis::X, Axis::Y] {
+        let mesh = if axis == Axis::Z { stack() } else { axis.unrotate_mesh(&stack()) };
+        let found = recognize(&mesh);
+        let devs = crate::recognize::deviations(&mesh, &found);
+        let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+        assert!(labels.contains(&"band 1 side 1"), "{axis:?}: {labels:?}");
+        assert!(labels.contains(&"band 2 side 1"), "{axis:?}: {labels:?}");
+        assert!(labels.contains(&"band 3 side 1"), "{axis:?}: {labels:?}");
+        // The fixture's walls are straight, so every sampled point lies on its wall.
+        for (l, d) in &devs {
+            assert!(*d < 0.01, "{axis:?} {l}: {d}");
+        }
+    }
+}

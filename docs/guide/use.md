@@ -13,7 +13,8 @@ A recognised part arrives as a timeline (sketch, extrusion, holes, fillet) with 
 parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. The
 report also lists the surface deviation per recognised face — how far the mesh's facets lie from
 the ideal faces (a hole's facets bow inside its true circle by their sagitta; a box rounded all
-over gets no such line yet, its rounded surfaces are not measured). A part that is not
+over reports its rounded surface; a combined or stacked part reports its walls per extrusion or
+band, labelled `extrude z side 1`, `band 2 side 3`). A part that is not
 recognised arrives as a mesh body, and the report says why.
 
 ::: tip Try it

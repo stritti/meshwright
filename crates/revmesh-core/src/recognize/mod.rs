@@ -35,6 +35,73 @@ pub use stack::{Band, StackSpec};
 
 use crate::mesh::{Mesh, Vec3};
 
+/// The per-face surface deviation report for a recognised part (roadmap 5.4): a plate's or a
+/// profile's walls measured in the Z frame (another axis's profile is rotated into it), a
+/// combined part's per extrusion ("extrude z side 1", "extrude z cut 1 side 2", "extrude z hole
+/// 1"), a stack's per band ("band 2 side 1"). Empty for an unrecognised mesh.
+pub(crate) fn deviations(mesh: &Mesh, found: &Recognition) -> Vec<(String, f64)> {
+    match found {
+        Recognition::Plate { .. } => crate::plate::face_deviations(mesh),
+        Recognition::Profile { axis, .. } => crate::plate::face_deviations(&axis.rotate_mesh(mesh)),
+        Recognition::Combined { spec, .. } => {
+            // The combined spec's frame: the bounding box's corner at the origin in world
+            // coordinates, then rotated per axis (along Y the profile's second coordinate is
+            // −Z). An axis with no outline of its own (one that only a cut or a hole runs
+            // along) gets the box's side as the outline, so the cut's and hole's walls are found.
+            let bounds = mesh.bounds().expect("recognised meshes are not empty");
+            let in_frame =
+                |axis: Axis| Mesh::new(mesh.triangles.iter().map(|t| t.map(|p| axis.rotate(crate::mesh::sub(p, bounds.min)))).collect());
+            let box_side = |axis: Axis| {
+                let [u, v] = axis.profile_axes();
+                let lo = if axis.profile_sign(1) < 0.0 { -spec.size[v] } else { 0.0 };
+                vec![[0.0, lo], [spec.size[u], lo], [spec.size[u], lo + spec.size[v]], [0.0, lo + spec.size[v]]]
+            };
+            let mut axes: Vec<Axis> = spec.extrusions.iter().map(|e| e.axis).collect();
+            for extra in spec.cuts.iter().map(|c| c.axis).chain(spec.holes.iter().map(|h| h.axis)) {
+                if !axes.contains(&extra) {
+                    axes.push(extra);
+                }
+            }
+            let mut out = Vec::new();
+            for axis in axes {
+                let extrusion = spec.extrusions.iter().find(|e| e.axis == axis);
+                let outline: Vec<[f64; 2]> = extrusion.map_or_else(|| box_side(axis), |e| e.outline.clone());
+                let cutouts: Vec<CutoutSpec> = extrusion
+                    .map_or_else(Vec::new, |e| e.cutouts.iter().map(|c| CutoutSpec { corners: c.clone(), arcs: Vec::new() }).collect());
+                let cuts: Vec<Vec<[f64; 2]>> = spec.cuts.iter().filter(|c| c.axis == axis).map(|c| c.outline.clone()).collect();
+                let circles: Vec<(usize, [f64; 2], f64)> =
+                    spec.holes.iter().enumerate().filter(|(_, h)| h.axis == axis).map(|(i, h)| (i, h.centre, h.d / 2.0)).collect();
+                let prefix = format!("extrude {}", axis.letter().to_ascii_lowercase());
+                out.extend(crate::plate::walls_deviations(
+                    &in_frame(axis),
+                    &outline,
+                    &cutouts,
+                    &cuts,
+                    &circles,
+                    (0.0, spec.size[axis.index()]),
+                    &prefix,
+                ));
+            }
+            out
+        }
+        Recognition::Stack { spec, axis, .. } => {
+            // The stack spec's frame: the mesh rotated into the axis's frame, rebased to that
+            // frame's lowest corner (as `recognize_stack` does).
+            let rotated = axis.rotate_mesh(mesh);
+            let min = rotated.bounds().expect("recognised meshes are not empty").min;
+            let in_frame = Mesh::new(rotated.triangles.iter().map(|t| t.map(|p| crate::mesh::sub(p, min))).collect());
+            let mut out = Vec::new();
+            for (k, band) in spec.bands.iter().enumerate() {
+                let cutouts: Vec<CutoutSpec> = band.cutouts.iter().map(|c| CutoutSpec { corners: c.clone(), arcs: Vec::new() }).collect();
+                let prefix = format!("band {}", k + 1);
+                out.extend(crate::plate::walls_deviations(&in_frame, &band.outline, &cutouts, &[], &[], (band.from, band.to), &prefix));
+            }
+            out
+        }
+        Recognition::Unrecognized { .. } => Vec::new(),
+    }
+}
+
 /// What recognition found.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Recognition {

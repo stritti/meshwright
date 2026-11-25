@@ -386,3 +386,37 @@ fn coarse_bores_keep_the_mesh() {
     let holes: Vec<_> = spec.holes.iter().map(|h| (h.axis, h.centre, h.d, h.from, h.to)).collect();
     assert_eq!(holes, [(Axis::Z, [10.0, 10.0], 18.0, 1.0, 10.0)]);
 }
+
+/// Roadmap 5.4: a combined part's walls are measured per extrusion, labelled `extrude <a> side
+/// <i>`, its blind cuts' `extrude <a> cut <n> side <i>`, its holes' `extrude <a> hole <n>` — in
+/// each extrusion's own axis frame.
+#[test]
+fn deviations_are_reported_per_extrusion() {
+    let mesh = combined();
+    let found = recognize(&mesh);
+    let devs = crate::recognize::deviations(&mesh, &found);
+    let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("extrude z side")), "{labels:?}");
+    assert!(labels.iter().any(|l| l.starts_with("extrude x side")), "{labels:?}");
+    for (l, d) in &devs {
+        assert!(*d < 0.01, "{l}: {d}");
+    }
+
+    // A box cut along X and a triangular notch along Y are reported as cut walls.
+    let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-cuts.stl"));
+    let found = recognize(&mesh);
+    let devs = crate::recognize::deviations(&mesh, &found);
+    let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("extrude x cut 1 side")), "{labels:?}");
+    assert!(labels.iter().any(|l| l.starts_with("extrude y cut 1 side")), "{labels:?}");
+
+    // The staggered, slightly tilted bore corners of combined-holes.stl are measured against
+    // their circles: the holes' labels carry a real deviation, not zero.
+    let mesh = fixture(include_bytes!("../../../../plugin/revmesh/tests/combined-holes.stl"));
+    let found = recognize(&mesh);
+    let devs = crate::recognize::deviations(&mesh, &found);
+    let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("extrude z hole")), "{labels:?}");
+    let hole = devs.iter().find(|(l, _)| l.starts_with("extrude z hole")).expect("a z hole");
+    assert!(hole.1 > 0.0 && hole.1 < 0.1, "the bore's tilt: {hole:?}");
+}

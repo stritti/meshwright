@@ -62,6 +62,8 @@ impl Walls {
     /// indexed as straight walls. `cutouts` are the ideal cut-outs (their corners and arc
     /// sides) and `slot_sides` the slots' straight sides (the slot's index, one side's start and
     /// end), so their walls are indexed too.
+    /// `cuts` are blind cuts' outlines (a combined part's, each counter-clockwise), so their
+    /// walls are indexed too.
     #[allow(clippy::too_many_arguments)] // the wall kinds of one part, each labelled
     #[allow(clippy::too_many_lines)] // one piece pushed per wall kind, each with its label
     pub(super) fn new(
@@ -73,6 +75,7 @@ impl Walls {
         loops: &[Vec<P2>],
         cutouts: &[CutoutSpec],
         slot_sides: &[(usize, P2, P2)],
+        cuts: &[Vec<P2>],
         size: f64,
         tol: f64,
     ) -> Self {
@@ -157,6 +160,14 @@ impl Walls {
                     walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
                     labels.push(format!("cut-out {}, side {}", m + 1, i + 1));
                 }
+            }
+        }
+        // Each blind cut's outline sides, labelled with the cut's number in the design
+        // (`cut_<n>`).
+        for (m, ring) in cuts.iter().enumerate() {
+            for i in 0..ring.len() {
+                walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
+                labels.push(format!("cut {} side {}", m + 1, i + 1));
             }
         }
         // Each slot's two straight sides, labelled with the slot's number in the design

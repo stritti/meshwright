@@ -76,6 +76,24 @@ impl Rim {
         (d2.sqrt() - self.r).abs() <= tol + slack
     }
 
+    /// How far `p` (relative to the box's lowest corner) lies from the rounded box's surface:
+    /// its distance from the inner box less the radius.
+    pub(super) fn deviation(&self, p: Vec3) -> f64 {
+        let mut d2 = 0.0;
+        for i in 0..3 {
+            let (lo, hi) = (self.r, self.size[i] - self.r);
+            let d = if p[i] < lo {
+                lo - p[i]
+            } else if p[i] > hi {
+                p[i] - hi
+            } else {
+                0.0
+            };
+            d2 += d * d;
+        }
+        (d2.sqrt() - self.r).abs()
+    }
+
     /// The sagitta a chord of length `len` on the rounded surface bows inward by.
     pub(super) fn sagitta(&self, len: f64) -> f64 {
         let half = len / 2.0;
@@ -728,6 +746,7 @@ fn walls_of(
         wall_loops,
         &cutouts.cutouts,
         &slot_sides_of(cutouts),
+        &[],
         scale,
         tol,
     )
@@ -749,11 +768,20 @@ fn slot_sides_of(cutouts: &PlateCutouts) -> Vec<(usize, P2, P2)> {
     out
 }
 
+/// Records the farthest deviation seen for a report label.
+fn note_deviation(worst: &mut std::collections::BTreeMap<String, f64>, label: &str, d: f64) {
+    let e = worst.entry(label.to_owned()).or_insert(0.0);
+    if d > *e {
+        *e = d;
+    }
+}
+
 /// The mesh's per-face surface deviation from the recognised plate: each wall piece's label with
 /// the farthest its sampled mesh points lie from it (a facet chord of a round wall bows inward by
-/// its sagitta; planar faces lie exactly on theirs). Empty when the mesh is no Z prism, or for a
-/// box rounded all over, whose rounded surfaces are not measured. Best effort: any pipeline
-/// error yields no report rather than failing the import.
+/// its sagitta; planar faces lie exactly on theirs). A box rounded all over is measured against
+/// its rounded envelope ("rounded surface"), its holes against their circles. Empty when the mesh
+/// is no Z prism. Best effort: any pipeline error yields no report rather than failing the import.
+#[allow(clippy::too_many_lines)] // one sample kind after another, each with its own exclusions
 pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
     let run = || -> Result<Vec<(String, f64)>, String> {
         let bounds = mesh.bounds().ok_or("the mesh has no triangles")?;
@@ -768,42 +796,41 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         let face_loops = face_outlines(&faces, &steps, size[2], tol)?;
         let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
         let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
-        // A box rounded all over: its rounded surfaces are not indexed, so no deviation to
-        // report (measuring them is left for the roadmap), with or without openings.
-        if rim.is_some() {
-            return Ok(Vec::new());
-        }
         let mut cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
         add_steps(&mut cutouts, &steps, size[2], tol)?;
         // Against the ideal walls only, not the meshed boundary loops (a facet's own chord would
         // measure zero): outline sides, arc sides and corner rounds, the holes' circles, the
-        // slots' arcs and straight sides, the cut-outs' straight sides.
-        let walls = Walls::new(
-            &corners,
-            radius,
-            &cutouts.circles,
-            &cutouts.slot_arcs,
-            &side_arcs,
-            &[],
-            &cutouts.cutouts,
-            &slot_sides_of(&cutouts),
-            scale,
-            tol,
-        );
-        // No wall of the part is indexed: no deviation to report.
-        if walls.pieces.is_empty() {
+        // slots' arcs and straight sides, the cut-outs' straight sides. A box rounded all over
+        // has no straight side walls: its surface is the rounded envelope around the inner box,
+        // measured directly, and only its holes' circles are indexed.
+        let walls = if rim.is_some() {
+            Walls::new(&[], None, &cutouts.circles, &cutouts.slot_arcs, &[], &[], &[], &[], &[], scale, tol)
+        } else {
+            Walls::new(
+                &corners,
+                radius,
+                &cutouts.circles,
+                &cutouts.slot_arcs,
+                &side_arcs,
+                &[],
+                &cutouts.cutouts,
+                &slot_sides_of(&cutouts),
+                &[],
+                scale,
+                tol,
+            )
+        };
+        // No wall of the part is indexed, and the box is not rounded all over: no deviation to
+        // report.
+        if walls.pieces.is_empty() && rim.is_none() {
             return Ok(Vec::new());
         }
         let mut worst: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
-        let mut note = |label: &str, d: f64| {
-            let e = worst.entry(label.to_owned()).or_insert(0.0);
-            if d > *e {
-                *e = d;
-            }
-        };
         // The faces themselves lie in their planes by construction.
-        note("top face", 0.0);
-        note("bottom face", 0.0);
+        if rim.is_none() {
+            note_deviation(&mut worst, "top face", 0.0);
+            note_deviation(&mut worst, "bottom face", 0.0);
+        }
         // Wall corners and chord middles: their distance to the nearest ideal wall. `faces`
         // keeps every point relative to the mesh's lowest corner, as the walls are.
         // Samples of unsupported features (blind or stepped holes, whose surfaces are not
@@ -813,44 +840,78 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
             cutouts.stepped.iter().any(|s| distance(q, s.centre) <= s.head_r + tol)
                 || cutouts.blinds.iter().any(|b| b.foot.contains(q, tol))
         };
+        // On a box rounded all over every surface point but a hole's lies on the rounded
+        // envelope: measure those against it, the holes' bore points against their circles.
+        let in_hole = |q: P2| cutouts.circles.iter().any(|&(_, c, r)| distance(q, c) <= r + tol);
+        let note_point = |worst: &mut std::collections::BTreeMap<String, f64>, p: Vec3| {
+            let q = [p[0], p[1]];
+            if let Some(rim) = &rim {
+                if in_hole(q)
+                    && let Some((d, k)) = walls.deviation(q, &[])
+                {
+                    note_deviation(worst, &walls.labels[k], d);
+                } else if !in_hole(q) && !footprint_unsupported(q) {
+                    note_deviation(worst, "rounded surface", rim.deviation(p));
+                }
+            } else if !in_unsupported(p)
+                && let Some((d, k)) = walls.deviation(q, &[])
+            {
+                note_deviation(worst, &walls.labels[k], d);
+            }
+        };
         for p in &faces.between {
-            if in_unsupported(*p) {
-                continue;
-            }
-            if let Some((d, k)) = walls.deviation([p[0], p[1]], &[]) {
-                note(&walls.labels[k], d);
-            }
+            note_point(&mut worst, *p);
         }
         for p in &faces.rim {
             // Bottom-rim mouths of unsupported features (a bottom blind hole's, a step's) are
             // excluded like the other sample kinds, not attributed to distant outer walls.
-            if footprint_unsupported(*p) {
+            if footprint_unsupported(*p) && rim.is_none() {
                 continue;
             }
-            if let Some((d, k)) = walls.deviation(*p, &[]) {
-                note(&walls.labels[k], d);
+            if rim.is_some() {
+                note_point(&mut worst, [p[0], p[1], 0.0]);
+            } else if let Some((d, k)) = walls.deviation(*p, &[]) {
+                note_deviation(&mut worst, &walls.labels[k], d);
             }
         }
-        let mut note_chord = |a: P2, b: P2, middle: P2| {
+        let note_chord = |worst: &mut std::collections::BTreeMap<String, f64>, a: P2, b: P2, middle: P2, middle3: Vec3| {
             // A chord of an unsupported feature (a blind or stepped hole's bore or mouth) has
             // no indexed surface: skip it rather than attributing it to a distant outer wall.
             if footprint_unsupported(a) || footprint_unsupported(middle) {
                 return;
             }
+            if let Some(rim) = &rim {
+                if in_hole(a) || in_hole(b) || in_hole(middle) {
+                    for p in [a, b] {
+                        if let Some((d, k)) = walls.deviation(p, &[]) {
+                            note_deviation(worst, &walls.labels[k], d);
+                        }
+                    }
+                    if let Some((d, k)) = walls.deviation_chord(a, b, middle) {
+                        note_deviation(worst, &walls.labels[k], d);
+                    }
+                } else {
+                    note_deviation(worst, "rounded surface", rim.deviation(middle3));
+                    for p in [a, b] {
+                        note_point(worst, [p[0], p[1], middle3[2]]);
+                    }
+                }
+                return;
+            }
             for p in [a, b] {
                 if let Some((d, k)) = walls.deviation(p, &[]) {
-                    note(&walls.labels[k], d);
+                    note_deviation(worst, &walls.labels[k], d);
                 }
             }
             // The chord's middle is measured against the wall owning its ends (a coarse round
             // wall's middle lies several cells inside its circle, so the wall is found through
             // the ends), not against a neighbouring feature that happens to lie nearer.
             if let Some((d, k)) = walls.deviation_chord(a, b, middle) {
-                note(&walls.labels[k], d);
+                note_deviation(worst, &walls.labels[k], d);
             }
         };
         for &(a, b, middle, _) in &faces.chords {
-            note_chord(a, b, [middle[0], middle[1]]);
+            note_chord(&mut worst, a, b, [middle[0], middle[1]], middle);
         }
         // The top boundary loops' chords too: `split_faces` skips edges lying wholly on the top
         // face, so a coarsely tessellated top rim's chords would otherwise not be sampled.
@@ -858,7 +919,67 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
             for i in 0..ring.len() {
                 let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
                 if distance(a, b) > tol {
-                    note_chord(a, b, [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1])]);
+                    let mid = [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1])];
+                    note_chord(&mut worst, a, b, mid, [mid[0], mid[1], size[2]]);
+                }
+            }
+        }
+        Ok(worst.into_iter().collect())
+    };
+    run().unwrap_or_default()
+}
+
+/// The per-face surface deviation of one extrusion of a combined part or one band of a stack
+/// (roadmap 5.4): `mesh` already rotated into the axis's frame with the spec's corner at the
+/// origin, the outline's sides, the cut-outs', blind cuts' and holes' circles indexed as walls,
+/// and every
+/// mesh edge whose ends lie on one of them measured (a facet chord's middle bows inward by its
+/// sagitta; a point on another extrusion's wall is not on these and is skipped). `span` limits
+/// the samples to the run along the axis (an extrusion's is the whole box). `prefix` labels the
+/// walls ("extrude z", "band 2"). Best effort: any error yields no report.
+#[allow(clippy::too_many_arguments)] // one outline's walls, its span and its label prefix
+pub(crate) fn walls_deviations(
+    mesh: &Mesh,
+    outline: &[P2],
+    cutouts: &[CutoutSpec],
+    cuts: &[Vec<P2>],
+    circles: &[(usize, P2, f64)],
+    span: (f64, f64),
+    prefix: &str,
+) -> Vec<(String, f64)> {
+    let run = || -> Result<Vec<(String, f64)>, String> {
+        let bounds = mesh.bounds().ok_or("the mesh has no triangles")?;
+        let size = bounds.size();
+        let scale = size[0].max(size[1]).max(size[2]);
+        let tol = tolerance(scale);
+        let mut walls = Walls::new(outline, None, circles, &[], &[], &[], cutouts, &[], cuts, scale, tol);
+        for label in &mut walls.labels {
+            *label = format!("{prefix} {label}");
+        }
+        let mut worst: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+        for t in &mesh.triangles {
+            for (i, j) in [(0, 1), (1, 2), (2, 0)] {
+                let (a, b) = (t[i], t[j]);
+                if a[2] < span.0 - tol || a[2] > span.1 + tol || b[2] < span.0 - tol || b[2] > span.1 + tol {
+                    continue;
+                }
+                let (qa, qb) = ([a[0], a[1]], [b[0], b[1]]);
+                let middle = [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1])];
+                // An end counts as on a wall only within the tolerance (a recognised part's
+                // wall corners lie on theirs); a cap's diagonal whose ends are two corners of
+                // different walls is no wall chord, and its middle is not measured.
+                let dev_a = walls.deviation(qa, &[]).filter(|(d, _)| *d <= tol);
+                let dev_b = walls.deviation(qb, &[]).filter(|(d, _)| *d <= tol);
+                for dev in [dev_a, dev_b].into_iter().flatten() {
+                    let (d, k) = dev;
+                    note_deviation(&mut worst, &walls.labels[k], d);
+                }
+                if dev_a.is_some()
+                    && dev_b.is_some()
+                    && walls.holds_chord(qa, qb)
+                    && let Some((d, k)) = walls.deviation_chord(qa, qb, middle)
+                {
+                    note_deviation(&mut worst, &walls.labels[k], d);
                 }
             }
         }
