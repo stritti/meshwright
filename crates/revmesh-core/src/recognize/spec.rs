@@ -20,8 +20,9 @@ pub struct PlateSpec {
     pub pads: Vec<PadSpec>,
     /// Rectangular blind pockets in the top or the bottom face.
     pub pockets: Vec<PocketSpec>,
-    /// Openings of straight sides through the plate, each its corners counter-clockwise.
-    pub cutouts: Vec<Vec<[f64; 2]>>,
+    /// Openings through the plate, each a polygon of straight sides or of straight and arc
+    /// sides.
+    pub cutouts: Vec<CutoutSpec>,
     /// The radius of the four vertical corner edges, if they are rounded.
     pub outline_fillet_r: Option<f64>,
     /// The radius of all twelve edges (the four vertical corner edges and the eight on the top
@@ -324,20 +325,46 @@ impl PlateSpec {
         let holes: f64 = self.holes.iter().map(|h| h.volume(self.z)).sum();
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
         let bosses: f64 = self.bosses.iter().map(BossSpec::volume).sum();
-        let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area(c)).sum();
+        let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area_arcs(&c.corners, c.arc_sides()).abs()).sum();
         base - (slots + cutouts) * self.z - holes + bosses + blocks(&self.pads, &self.pockets)
     }
 }
 
-/// An arc side of an outline: the side from corner `i` to corner `i + 1` (wrapping round) is the
-/// arc of the circle about `centre` with radius `r`, bulging outward (the outline runs
-/// counter-clockwise).
+/// An arc side of an outline or a cut-out: the side from corner `i` to corner `i + 1` (wrapping
+/// round) is the arc of the circle about `centre` with radius `r`, bulging away from the
+/// polygon's interior (the loop runs counter-clockwise).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ArcSide {
     /// The arc's centre.
     pub centre: [f64; 2],
     /// The arc's radius.
     pub r: f64,
+}
+
+/// An opening through the plate: a polygon of straight sides, or of straight and arc sides, its
+/// corners counter-clockwise from the lowest, the leftmost of those.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CutoutSpec {
+    /// The corners as if every side were straight.
+    pub corners: Vec<[f64; 2]>,
+    /// `arcs[i]` is the arc side from corner `i` to corner `i + 1` when that side is curved,
+    /// `None` when it is a straight line. Empty when every side is straight.
+    pub arcs: Vec<Option<ArcSide>>,
+}
+
+impl CutoutSpec {
+    /// The arc sides, parallel to `corners` (`arcs[i]` from corner `i` to corner `i + 1`); an
+    /// empty slice when every side is straight.
+    #[must_use]
+    pub fn arc_sides(&self) -> &[Option<ArcSide>] {
+        if self.arcs.len() == self.corners.len() { &self.arcs } else { &[] }
+    }
+
+    /// Whether any side is an arc side.
+    #[must_use]
+    pub fn has_arcs(&self) -> bool {
+        self.arc_sides().iter().any(Option::is_some)
+    }
 }
 
 /// A plate whose outline is any polygon of straight sides (counter-clockwise, in the first
@@ -363,8 +390,9 @@ pub struct ProfileSpec {
     pub pockets: Vec<PocketSpec>,
     /// Blind pockets of any outline of straight sides in the top or the bottom face.
     pub outline_pockets: Vec<OutlinePocketSpec>,
-    /// Openings of straight sides through the plate, each its corners counter-clockwise.
-    pub cutouts: Vec<Vec<[f64; 2]>>,
+    /// Openings through the plate, each a polygon of straight sides or of straight and arc
+    /// sides.
+    pub cutouts: Vec<CutoutSpec>,
     /// The radius of every vertical corner edge, inside and outside corners alike, if they are
     /// rounded.
     pub outline_fillet_r: Option<f64>,
@@ -443,21 +471,7 @@ impl ProfileSpec {
     #[must_use]
     pub fn volume(&self) -> f64 {
         let n = self.corners.len();
-        let mut area = (0..n)
-            .map(|i| {
-                let (a, b) = (self.corners[i], self.corners[(i + 1) % n]);
-                a[0] * b[1] - b[0] * a[1]
-            })
-            .sum::<f64>()
-            / 2.0;
-        // An arc side's area is the chord's plus the circular segment between chord and arc.
-        for (i, arc) in self.arc_sides().iter().enumerate() {
-            let Some(arc) = arc else { continue };
-            let (a, b) = (self.corners[i], self.corners[(i + 1) % n]);
-            let (ca, cb) = ([a[0] - arc.centre[0], a[1] - arc.centre[1]], [b[0] - arc.centre[0], b[1] - arc.centre[1]]);
-            let theta = (cb[1].atan2(cb[0]) - ca[1].atan2(ca[0])).rem_euclid(2.0 * std::f64::consts::PI);
-            area += 0.5 * arc.r * arc.r * (theta - theta.sin());
-        }
+        let mut area = polygon_area_arcs(&self.corners, self.arc_sides());
         if let Some(r) = self.outline_fillet_r {
             for i in 0..n {
                 let (a, c, b) = (self.corners[(i + n - 1) % n], self.corners[i], self.corners[(i + 1) % n]);
@@ -467,7 +481,7 @@ impl ProfileSpec {
         let holes: f64 = self.holes.iter().map(|h| h.volume(self.z)).sum();
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
         let bosses: f64 = self.bosses.iter().map(BossSpec::volume).sum();
-        let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area(c)).sum();
+        let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area_arcs(&c.corners, c.arc_sides()).abs()).sum();
         let outline_pockets: f64 = self.outline_pockets.iter().map(|p| polygon_area(&p.corners) * p.depth).sum();
         (area - slots - cutouts) * self.z - holes - outline_pockets + bosses + blocks(&self.pads, &self.pockets)
     }
@@ -478,6 +492,22 @@ impl ProfileSpec {
 fn polygon_area(corners: &[[f64; 2]]) -> f64 {
     let n = corners.len();
     ((0..n).map(|i| corners[i][0] * corners[(i + 1) % n][1] - corners[(i + 1) % n][0] * corners[i][1]).sum::<f64>() / 2.0).abs()
+}
+
+/// The signed area a closed polygon of `corners` (counter-clockwise: positive) with arc sides
+/// `arcs` encloses: the chord polygon's plus each arc side's circular segment between chord and
+/// arc.
+fn polygon_area_arcs(corners: &[[f64; 2]], arcs: &[Option<ArcSide>]) -> f64 {
+    let n = corners.len();
+    let mut area = (0..n).map(|i| corners[i][0] * corners[(i + 1) % n][1] - corners[(i + 1) % n][0] * corners[i][1]).sum::<f64>() / 2.0;
+    for (i, arc) in arcs.iter().enumerate() {
+        let Some(arc) = arc else { continue };
+        let (a, b) = (corners[i], corners[(i + 1) % n]);
+        let (ca, cb) = ([a[0] - arc.centre[0], a[1] - arc.centre[1]], [b[0] - arc.centre[0], b[1] - arc.centre[1]]);
+        let theta = (cb[1].atan2(cb[0]) - ca[1].atan2(ca[0])).rem_euclid(2.0 * std::f64::consts::PI);
+        area += 0.5 * arc.r * arc.r * (theta - theta.sin());
+    }
+    area
 }
 
 /// The volume pads add and pockets take away, in mm³.

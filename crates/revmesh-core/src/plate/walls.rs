@@ -2,7 +2,7 @@
 //! corner checks.
 
 use super::geometry::{distance, sagitta, segment_distance, segments};
-use crate::recognize::ArcSide;
+use crate::recognize::{ArcSide, CutoutSpec};
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
@@ -59,9 +59,9 @@ impl Walls {
     /// design's sorted `slots`, where the design numbers them `slot_<n>`), the end's centre,
     /// radius, the corner it rounds and how far from that corner it reaches.
     /// `arc_sides` are the outline's curved sides, as fitted; their endpoint chords are not
-    /// indexed as straight walls. `cutout_loops` are the ideal polygonal cut-outs and
-    /// `slot_sides` the slots' straight sides (the slot's index, one side's start and end), so
-    /// their walls are indexed too.
+    /// indexed as straight walls. `cutouts` are the ideal cut-outs (their corners and arc
+    /// sides) and `slot_sides` the slots' straight sides (the slot's index, one side's start and
+    /// end), so their walls are indexed too.
     #[allow(clippy::too_many_arguments)] // the wall kinds of one part, each labelled
     #[allow(clippy::too_many_lines)] // one piece pushed per wall kind, each with its label
     pub(super) fn new(
@@ -71,7 +71,7 @@ impl Walls {
         arcs: &[(usize, P2, f64, P2, f64)],
         arc_sides: &[Option<ArcSide>],
         loops: &[Vec<P2>],
-        cutout_loops: &[Vec<P2>],
+        cutouts: &[CutoutSpec],
         slot_sides: &[(usize, P2, P2)],
         size: f64,
         tol: f64,
@@ -143,11 +143,20 @@ impl Walls {
                 labels.push(if m == 0 { format!("outline as meshed, facet {}", i + 1) } else { format!("{what} {}, side {}", m, i + 1) });
             }
         }
-        // The ideal straight cut-out walls, labelled by the cut-out's number and side.
-        for (m, ring) in cutout_loops.iter().enumerate() {
+        // The ideal cut-out walls, labelled by the cut-out's number and side. An arc side's
+        // endpoint chord is no straight wall (it cuts across the opening), so an arc side is
+        // indexed as the arc it is; its meshed facets enter through `loops`.
+        for (m, cutout) in cutouts.iter().enumerate() {
+            let ring = &cutout.corners;
+            let arc_sides = cutout.arc_sides();
             for i in 0..ring.len() {
-                walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
-                labels.push(format!("cut-out {}, side {}", m + 1, i + 1));
+                if let Some(a) = arc_sides.get(i).copied().flatten() {
+                    walls.push(Wall::ArcSide { centre: a.centre, r: a.r, a: ring[i], b: ring[(i + 1) % ring.len()] });
+                    labels.push(format!("cut-out {}, arc side {}", m + 1, i + 1));
+                } else {
+                    walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
+                    labels.push(format!("cut-out {}, side {}", m + 1, i + 1));
+                }
             }
         }
         // Each slot's two straight sides, labelled with the slot's number in the design

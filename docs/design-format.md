@@ -127,6 +127,16 @@ are rounded to 0.01 mm; with `extrude_len = 9` and `hole_1_d = 6` it rebuilt wit
 value computed for those rounded corners. A rectangle with cut-outs is written as an outline,
 as mesh2cad writes it (`extrude_len`, `extrude_0`), not as a `base_*` plate.
 
+As soon as one cut-out has an arc side, every cut-out gets its own sketch `Cutout<n>Sketch` and a
+cut `Cutout<n>` through everything both ways, instead of the shared `CutoutsSketch`: the arc side
+is an `arc` curve whose `Diameter` constraint is driven by the model parameter behind
+`cutout_<n>_arc_<i>_d`, its centre a free sketch point the solver keeps equidistant from the
+side's two corners at the driving diameter (like an outline's arc sides, see the polygon outline
+below), the driving straight sides dimensioned by `cutout_<n>_<i>_len` as before, and a straight
+side meeting an arc side tangentially held with a `tangent` constraint. A cut-out whose corners
+are all rounded, a D-shaped cut-out, a concave arc side and a curve that is no circular arc stay
+a mesh.
+
 ## Bosses
 
 A boss is a `cylinder` joined to the plate, standing on the top face's expression

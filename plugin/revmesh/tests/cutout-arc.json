@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "cutout-arc.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 5, "loss_report": {"summary": "A 70 x 40 x 6 mm plate with a 4-sided outline and 1 cut-out"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 14660.814211}},
+    "tolerance": 1e-4
+  }
+}
