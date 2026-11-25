@@ -54,6 +54,7 @@ fn profile(corners: Vec<[f64; 2]>, z: f64, holes: Vec<HoleSpec>, fillet: Option<
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: fillet,
+        arcs: Vec::new(),
     }
 }
 

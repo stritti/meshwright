@@ -555,6 +555,114 @@ fn add_polygons(
     }
 }
 
+/// Whether the straight side from `line_from` through `corner` is tangent to the arc of radius
+/// `r` about `centre` at `corner`. The corner lies on the arc, so the side's line is tangent to
+/// the circle exactly when the centre's distance to that line equals `r` (within a small
+/// relative tolerance for the snapped output geometry); a merely gentle junction — an arc
+/// closing onto its own chord, say — is not tangent and must not get a `Tangent` constraint.
+#[must_use]
+pub fn line_arc_tangent(line_from: [f64; 2], corner: [f64; 2], centre: [f64; 2], r: f64) -> bool {
+    let (dx, dy) = (corner[0] - line_from[0], corner[1] - line_from[1]);
+    let dist = ((centre[0] - line_from[0]) * dy - (centre[1] - line_from[1]) * dx).abs() / dx.hypot(dy);
+    (r - dist).abs() <= 1e-3 * r.max(1.0)
+}
+
+/// A closed polygon through `corners` (counter-clockwise) where side `i` is the arc about
+/// `arcs[i].0` with radius `arcs[i].1` when `Some`, else a straight line — like
+/// [`polygon_sketch_dimensioned`], with a `Length` constraint on each driving line side
+/// (`lens[i]`) and a `Diameter` constraint on each driving arc side (`arc_params[i]`, the model
+/// parameter behind the side's `arc_<i>_d` user parameter). An arc side's centre is a free
+/// sketch point: the solver places it equidistant from the side's two corners at the driving
+/// diameter, so the centre follows the corners when a parameter changes — like a slot's arc
+/// centres, which are free points too — and the sketch stays solvable. A straight side whose
+/// shared corner with an arc side turns gently is held tangent to the arc (as a slot's sides
+/// are), which keeps a driving diameter change solvable to first order even for a
+/// semicircular side. Arc side pairs in `arc_equals` share one radius (`Equal`, as a slot's
+/// ends do) and only the first of a pair drives. `arcs` and `arc_params` are parallel to
+/// `corners`.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn polygon_sketch_arcs(
+    corners: &[[f64; 2]],
+    arcs: &[Option<([f64; 2], f64)>],
+    lens: &[Option<String>],
+    arc_params: &[Option<String>],
+    arc_equals: &[(usize, usize)],
+) -> Sketch {
+    let n = corners.len();
+    let mut points = vec![SketchPoint::new("origin", [0.0, 0.0], true)];
+    points.extend(corners.iter().enumerate().map(|(i, c)| SketchPoint::new(format!("p{}", i + 1), *c, false)));
+    let mut centre_of = vec![None; n];
+    for (i, arc) in arcs.iter().enumerate() {
+        if let Some((centre, _)) = arc {
+            let idx = points.len();
+            centre_of[i] = Some(idx);
+            points.push(SketchPoint::new(format!("p{idx}"), *centre, false));
+        }
+    }
+    let mut curves: Vec<SketchCurve> = Vec::new();
+    let mut constraints = Vec::new();
+    let mut n_lines = 0;
+    let mut n_arcs = 0;
+    let mut side_curve = vec![0_usize; n];
+    for i in 0..n {
+        let (a, b) = (corners[i], corners[(i + 1) % n]);
+        if let (Some((_, r)), Some(ci)) = (arcs[i], centre_of[i]) {
+            n_arcs += 1;
+            let curve = curves.len();
+            side_curve[i] = curve;
+            curves.push(SketchCurve::Arc { id: format!("a{n_arcs}"), c: ci, a: i + 1, b: (i + 1) % n + 1, construction: false });
+            if let Some(param) = arc_params.get(i).and_then(Clone::clone) {
+                constraints.push(Constraint::Diameter {
+                    id: format!("k{}", constraints.len() + 1),
+                    c: curve,
+                    value: snap_dim(2.0 * r),
+                    param,
+                });
+            }
+        } else {
+            n_lines += 1;
+            let line = curves.len();
+            side_curve[i] = line;
+            curves.push(SketchCurve::Line { id: format!("l{n_lines}"), a: i + 1, b: (i + 1) % n + 1, construction: false, link: None });
+            if (a[1] - b[1]).abs() < 1e-9 {
+                constraints.push(Constraint::Horizontal { id: format!("k{}", constraints.len() + 1), l: line });
+            } else if (a[0] - b[0]).abs() < 1e-9 {
+                constraints.push(Constraint::Vertical { id: format!("k{}", constraints.len() + 1), l: line });
+            }
+            if let Some(param) = lens.get(i).and_then(|l| l.as_ref()) {
+                constraints.push(Constraint::Length {
+                    id: format!("k{}", constraints.len() + 1),
+                    l: line,
+                    value: snap_dim((a[0] - b[0]).hypot(a[1] - b[1])),
+                    param: param.clone(),
+                    text: None,
+                });
+            }
+        }
+    }
+    // A straight side actually tangent to an arc side at their shared corner (within the
+    // snapped geometry's tolerance) is held with a `Tangent` constraint, like a slot's sides.
+    // Without it, growing a semicircular side's diameter would need its centre to slide off the
+    // chord — second order, which no solver does from the snapped position.
+    for i in 0..n {
+        let Some((centre, r)) = arcs[i] else { continue };
+        let prev = (i + n - 1) % n;
+        if arcs[prev].is_none() && line_arc_tangent(corners[prev], corners[i], centre, r) {
+            constraints.push(Constraint::Tangent { id: format!("k{}", constraints.len() + 1), a: side_curve[prev], b: side_curve[i] });
+        }
+        let next = (i + 1) % n;
+        if arcs[next].is_none() && line_arc_tangent(corners[(i + 2) % n], corners[next], centre, r) {
+            constraints.push(Constraint::Tangent { id: format!("k{}", constraints.len() + 1), a: side_curve[i], b: side_curve[next] });
+        }
+    }
+    for &(p, q) in arc_equals {
+        constraints.push(Constraint::Equal { id: format!("k{}", constraints.len() + 1), a: side_curve[p], b: side_curve[q] });
+    }
+    let counters = Counters { a: n_arcs, j: 0, k: constraints.len(), l: n_lines, p: points.len() - 1 };
+    Sketch { points, curves, constraints, links: vec![], counters }
+}
+
 /// What drives a slot's sketch: model parameters for the distance between the end centres,
 /// the width and the long axis's angle from X, and expressions for where the middle lies.
 #[derive(Debug, Clone, PartialEq)]

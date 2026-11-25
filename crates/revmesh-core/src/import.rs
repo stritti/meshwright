@@ -191,6 +191,7 @@ mod tests {
             pockets: vec![],
             outline_pockets: Vec::new(),
             cutouts: vec![],
+            arcs: Vec::new(),
             outline_fillet_r: None,
         };
         assert_eq!(profile.describe_in(Locale::De), "Eine 60 x 40 x 5 mm Platte mit einer 4-eckigen Kontur");
@@ -355,6 +356,7 @@ mod tests {
             outline_pockets: Vec::new(),
             bosses: vec![],
             slots: vec![],
+            arcs: Vec::new(),
             outline_fillet_r: None,
         };
         let bytes = stl::write_binary(&crate::synth::profile(&spec, 32, [20.0, 10.0, 3.0]));

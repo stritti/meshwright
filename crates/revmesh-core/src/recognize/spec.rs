@@ -289,6 +289,7 @@ impl PlateSpec {
             outline_fillet_r: self.outline_fillet_r,
             // A box rounded all over is a Z plate (mesh2cad's box vocabulary is a Z
             // extrusion's); recognize() tries Z first and never converts it to a profile.
+            arcs: Vec::new(),
         }
     }
 
@@ -328,12 +329,26 @@ impl PlateSpec {
     }
 }
 
+/// An arc side of an outline: the side from corner `i` to corner `i + 1` (wrapping round) is the
+/// arc of the circle about `centre` with radius `r`, bulging outward (the outline runs
+/// counter-clockwise).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ArcSide {
+    /// The arc's centre.
+    pub centre: [f64; 2],
+    /// The arc's radius.
+    pub r: f64,
+}
+
 /// A plate whose outline is any polygon of straight sides (counter-clockwise, in the first
 /// quadrant), extruded up from the XY plane, with vertical through holes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProfileSpec {
     /// The outline's corners as if they were sharp, counter-clockwise.
     pub corners: Vec<[f64; 2]>,
+    /// `arcs[i]` is the arc side from corner `i` to corner `i + 1` when that side is curved,
+    /// `None` when it is a straight line. Empty when every side is straight.
+    pub arcs: Vec<Option<ArcSide>>,
     /// Thickness along Z.
     pub z: f64,
     /// Through holes.
@@ -356,6 +371,13 @@ pub struct ProfileSpec {
 }
 
 impl ProfileSpec {
+    /// The arc sides, parallel to `corners` (`arcs[i]` from corner `i` to corner `i + 1`); an
+    /// empty slice when every side is straight.
+    #[must_use]
+    pub fn arc_sides(&self) -> &[Option<ArcSide>] {
+        if self.arcs.len() == self.corners.len() { &self.arcs } else { &[] }
+    }
+
     /// One line describing the plate, for the loss report.
     #[must_use]
     pub fn describe(&self) -> String {
@@ -383,11 +405,38 @@ impl ProfileSpec {
         )
     }
 
-    /// The size of the outline's bounding box along X and Y.
+    /// The size of the outline's bounding box along X and Y, arc sides' bulges included: an arc
+    /// can reach past its endpoints' box, and the reported dimensions must cover it.
     #[must_use]
     pub fn size(&self) -> [f64; 2] {
-        let max = |axis: usize| self.corners.iter().map(|c| c[axis]).fold(0.0, f64::max);
-        [max(0), max(1)]
+        use std::f64::consts::PI;
+        let n = self.corners.len();
+        let mut min = [f64::INFINITY; 2];
+        let mut max = [f64::NEG_INFINITY; 2];
+        let mut take = |p: [f64; 2]| {
+            for (axis, c) in p.iter().enumerate() {
+                min[axis] = min[axis].min(*c);
+                max[axis] = max[axis].max(*c);
+            }
+        };
+        for c in &self.corners {
+            take(*c);
+        }
+        // An arc side's circle extrema that lie within its counter-clockwise sweep from one
+        // corner to the next bound the outline too.
+        for (i, arc) in self.arc_sides().iter().enumerate() {
+            let Some(arc) = arc else { continue };
+            let (a, b) = (self.corners[i], self.corners[(i + 1) % n]);
+            let angle = |p: [f64; 2]| (p[1] - arc.centre[1]).atan2(p[0] - arc.centre[0]);
+            let (from, sweep) = (angle(a), (angle(b) - angle(a)).rem_euclid(2.0 * PI));
+            for k in 0..4 {
+                let t = f64::from(k) * PI / 2.0;
+                if (t - from).rem_euclid(2.0 * PI) <= sweep {
+                    take([arc.centre[0] + arc.r * t.cos(), arc.centre[1] + arc.r * t.sin()]);
+                }
+            }
+        }
+        [max[0] - min[0], max[1] - min[1]]
     }
 
     /// The volume of the plate this spec describes, in mm³.
@@ -401,6 +450,14 @@ impl ProfileSpec {
             })
             .sum::<f64>()
             / 2.0;
+        // An arc side's area is the chord's plus the circular segment between chord and arc.
+        for (i, arc) in self.arc_sides().iter().enumerate() {
+            let Some(arc) = arc else { continue };
+            let (a, b) = (self.corners[i], self.corners[(i + 1) % n]);
+            let (ca, cb) = ([a[0] - arc.centre[0], a[1] - arc.centre[1]], [b[0] - arc.centre[0], b[1] - arc.centre[1]]);
+            let theta = (cb[1].atan2(cb[0]) - ca[1].atan2(ca[0])).rem_euclid(2.0 * std::f64::consts::PI);
+            area += 0.5 * arc.r * arc.r * (theta - theta.sin());
+        }
         if let Some(r) = self.outline_fillet_r {
             for i in 0..n {
                 let (a, c, b) = (self.corners[(i + n - 1) % n], self.corners[i], self.corners[(i + 1) % n]);

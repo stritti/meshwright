@@ -1,4 +1,4 @@
-use super::spec::{BossSpec, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+use super::spec::{ArcSide, BossSpec, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 use super::{Axis, Recognition, recognize};
 
 use crate::design::{Design, dimensioned_sides, fmt_number};
@@ -186,6 +186,7 @@ fn cut_outs_are_cut_after_the_fillet() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![vec![[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]]],
+        arcs: Vec::new(),
         outline_fillet_r: Some(5.0),
     };
     let json: serde_json::Value = serde_json::from_str(&ell.to_design("").to_json()).expect("valid");
@@ -209,6 +210,7 @@ fn outline_and_cutout_sides_are_dimensioned() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
+        arcs: Vec::new(),
         outline_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -312,6 +314,7 @@ fn orthogonal_outline_skips_the_dependent_sides() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -359,6 +362,7 @@ fn slanted_side_below_the_x_axis_keeps_its_direction() {
         pockets: vec![],
         bosses: vec![],
         cutouts: vec![],
+        arcs: vec![None; 3],
         outline_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -413,6 +417,7 @@ fn right_triangle_releases_a_leg_length_for_the_angle() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![vec![[10.0, 10.0], [30.0, 10.0], [30.0, 20.0]]],
+        arcs: vec![None; 3],
         outline_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -462,6 +467,7 @@ fn thin_triangle_keeps_slanted_length_precision() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         cutouts: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -477,6 +483,7 @@ fn thin_triangle_keeps_slanted_length_precision() {
 #[test]
 fn outline_pockets_get_their_own_sketch_and_cut() {
     let spec = ProfileSpec {
+        arcs: vec![],
         corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
         z: 6.0,
         holes: vec![],
@@ -512,6 +519,124 @@ fn outline_pockets_get_their_own_sketch_and_cut() {
     assert_eq!(cut["operation"].as_str(), Some("cut"));
     assert_eq!(cut["extent"]["distance"].as_str(), Some("pocket_2_depth"));
     assert_eq!(cut["extent"]["start_offset"].as_str(), Some("extrude_0 + extrude_len - pocket_2_depth"), "cut from the top face down");
+}
+
+/// Roadmap 5.2: an arc side of the outline becomes a sketch arc `a<n>` with a `Diameter`
+/// constraint driven by its own model parameter, which the user parameter `arc_<i>_d` drives;
+/// the arc's centre is a free sketch point (not fixed, placed by no parameter), so the solver
+/// keeps it equidistant from the side's corners at the driving diameter; the straight sides
+/// stay dimensioned lines (the arc side carries no `Length`).
+#[test]
+fn outline_arc_sides_become_sketch_arcs() {
+    let spec = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let param = |name: &str| {
+        params.iter().find(|p| p["name"] == name).map(|p| (p["expr"].as_str().expect("expr"), p["model"].as_bool().expect("model")))
+    };
+    assert!(param("arc_3_cx").is_none() && param("arc_3_cy").is_none(), "no centre parameters: the centre is derived");
+    let (expr, model) = param("arc_3_d").expect("the arc side's diameter user param");
+    assert!(!model, "a user param, not a model param");
+    assert_eq!(expr, "60 mm");
+    let sketch = &json["features"][0]["sketch"];
+    let curves = sketch["curves"].as_array().expect("curves");
+    let arc_curves: Vec<&serde_json::Value> = curves.iter().filter(|c| c["type"] == "arc").collect();
+    assert_eq!(arc_curves.len(), 1, "one arc curve; the other three sides stay lines");
+    assert_eq!(arc_curves[0]["id"].as_str().expect("id"), "a1");
+    let constraints = sketch["constraints"].as_array().expect("constraints");
+    let diams: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "diameter").collect();
+    assert_eq!(diams.len(), 1, "one Diameter constraint, on the arc");
+    assert_eq!(diams[0]["value"].as_f64().expect("value"), 60.0);
+    let model = diams[0]["param"].as_str().expect("param");
+    let (expr, is_model) = param(model).expect("model param");
+    assert!(is_model);
+    assert_eq!(expr, "arc_3_d");
+    // The driving line sides (the bottom and the right, sides 1 and 2) keep their Length
+    // constraints; the arc side and the derived left side carry none.
+    let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    assert_eq!(lengths, [0, 1]);
+    for &l in &lengths {
+        assert_eq!(curves[l as usize]["type"], "line", "a Length only on a line side");
+    }
+    // The arc's centre is a free sketch point at the fitted centre: the solver places it, no
+    // parameter does.
+    let points = sketch["points"].as_array().expect("points");
+    let centre =
+        points.iter().find(|p| p["pos"][0].as_f64() == Some(30.0) && p["pos"][1].as_f64() == Some(40.0)).expect("the arc's centre point");
+    assert!(!centre["fixed"].as_bool().expect("fixed"), "the centre is free");
+    assert!(centre["exprs"].is_null(), "no expressions place the centre");
+    // The arc is semicircular and meets the two vertical sides tangentially: both junctions are
+    // held with a `Tangent` constraint, like a slot's sides, so a diameter change re-solves.
+    let tangents: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "tangent").collect();
+    assert_eq!(tangents.len(), 2, "one Tangent per arc-line junction: {tangents:?}");
+}
+
+/// In a stadium — two arc sides joined by straight sides tangent to both (as long as the
+/// centres are apart) — the straight sides do not drive, and the two arcs share one radius via
+/// an `Equal` constraint with only the first driving its `Diameter` (codex finding on #68):
+/// the tangents force both radii to half the sides' distance, so driving both diameters
+/// independently would leave no solution when one `arc_<i>_d` changes. The centres are free
+/// points, so the one driving `arc_<i>_d` change moves both arcs together and re-solves.
+#[test]
+fn stadium_straight_sides_do_not_drive_beside_arc_sides() {
+    let spec = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 10.0], [40.0, 10.0], [40.0, 30.0], [0.0, 30.0]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, Some(ArcSide { centre: [40.0, 20.0], r: 10.0 }), None, Some(ArcSide { centre: [0.0, 20.0], r: 10.0 })],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let names: Vec<&str> =
+        params.iter().filter(|p| !p["model"].as_bool().expect("model")).map(|p| p["name"].as_str().expect("name")).collect();
+    assert!(!names.iter().any(|n| n.starts_with("outline_") && n.ends_with("_len")), "no outline length drives: {names:?}");
+    let arc_diams: Vec<&str> = names.iter().filter(|n| n.starts_with("arc_") && n.ends_with("_d")).copied().collect();
+    assert_eq!(arc_diams, ["arc_4_d"], "only the first of the tied arc pair drives: {names:?}");
+    assert!(!names.iter().any(|n| n.contains("_cx") || n.contains("_cy")), "no centre parameters: {names:?}");
+    // Both arc centres are free sketch points, placed by no parameter.
+    let points = json["features"][0]["sketch"]["points"].as_array().expect("points");
+    for pos in [[40.0, 20.0], [0.0, 20.0]] {
+        let centre = points
+            .iter()
+            .find(|p| p["pos"][0].as_f64() == Some(pos[0]) && p["pos"][1].as_f64() == Some(pos[1]))
+            .expect("the arc's centre point");
+        assert!(!centre["fixed"].as_bool().expect("fixed"), "the centre is free");
+        assert!(centre["exprs"].is_null(), "no expressions place the centre");
+    }
+    let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr").to_owned());
+    assert_eq!(expr("arc_4_d").as_deref(), Some("20 mm"));
+    // The two straight sides carry no Length constraint at all.
+    let sketch_constraints = json["features"][0]["sketch"]["constraints"].as_array().expect("constraints");
+    let lengths = sketch_constraints.iter().filter(|c| c["type"] == "length").count();
+    assert_eq!(lengths, 0, "no Length constraint on the stadium's straight sides");
+    // Each arc is tangent to both straight sides: four Tangent constraints. The tied arcs share
+    // one radius: one `Equal`, and only one `Diameter`, so changing the driving `arc_<i>_d`
+    // moves both arcs and the straight sides apart, re-solving to first order.
+    let tangents = sketch_constraints.iter().filter(|c| c["type"] == "tangent").count();
+    assert_eq!(tangents, 4, "one Tangent per arc-line junction");
+    let equals = sketch_constraints.iter().filter(|c| c["type"] == "equal").count();
+    assert_eq!(equals, 1, "the two arcs share one radius");
+    let diams = sketch_constraints.iter().filter(|c| c["type"] == "diameter").count();
+    assert_eq!(diams, 1, "only the first of the tied arc pair drives its Diameter");
 }
 
 /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face
@@ -605,6 +730,7 @@ fn describes_profiles() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: Some(2.0),
     };
     assert_eq!(spec.describe(), "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 2 mm rounded corners");
@@ -630,6 +756,7 @@ fn profile_volume_counts_inside_and_outside_corners() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: Some(2.0),
     };
     let corner = (4.0 - std::f64::consts::PI) / 4.0 * 4.0;
@@ -651,6 +778,7 @@ fn profile_fillet_comes_before_the_holes() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: Some(5.0),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -736,6 +864,7 @@ fn y_extruded_profile_uses_the_xz_plane() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
+        arcs: Vec::new(),
         outline_fillet_r: Some(2.0),
     };
     let mesh = Axis::Y.unrotate_mesh(&synth::profile(&spec, 32, [3.0, 7.0, 11.0]));
@@ -861,6 +990,7 @@ fn y_extrusion_negates_the_second_profile_coordinate_in_expressions() {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![SlotSpec { x: 10.0, y: 8.0, len: 16.0, w: 5.0, angle: 30.0 }],
+        arcs: Vec::new(),
         outline_fillet_r: None,
     };
     let at = [3.0, 11.0, -7.0];
@@ -952,6 +1082,69 @@ fn drafted_and_chamfered_bosses_in_the_design() {
     let cylinder = std::f64::consts::PI * 25.0 * 6.0;
     let cut = |w: f64, h: f64| 2.0 * std::f64::consts::PI * (r - w / 3.0) * w * h / 2.0;
     assert!((spec.volume() - (80.0 * 40.0 * 6.0 + cone + 2.0 * cylinder - cut(1.0, 1.0) - cut(1.5, 0.5))).abs() < 1e-9);
+}
+
+/// An arc side bulging past its endpoints' corner box counts towards the reported size: the
+/// 60 x 40 rectangle with a radius-30 semicircular top is 60 x 70, and the stadium (corners
+/// spanning 40 x 20, arc ends bulging 10 mm past each side) is 60 x 20 (codex finding on #68).
+#[test]
+fn arc_side_extrema_count_towards_the_reported_size() {
+    let bulge = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
+        outline_fillet_r: None,
+    };
+    assert_eq!(bulge.size(), [60.0, 70.0], "the semicircle's top at y = 70 bounds the report");
+    let stadium = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 10.0], [40.0, 10.0], [40.0, 30.0], [0.0, 30.0]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, Some(ArcSide { centre: [40.0, 20.0], r: 10.0 }), None, Some(ArcSide { centre: [0.0, 20.0], r: 10.0 })],
+        outline_fillet_r: None,
+    };
+    assert_eq!(stadium.size(), [60.0, 20.0], "the arc ends' bulges to x = -10 and x = 50 bound the report");
+}
+
+/// A 330-degree arc closing onto its own chord is a valid two-corner outline, but its
+/// arc-chord junctions are gentle, not tangent: no `Tangent` constraint may be emitted for
+/// them (a chord is not tangent to its circle), or the sketch would have no solution (codex
+/// finding on #68).
+#[test]
+fn chord_arc_junctions_get_no_tangent_constraint() {
+    use std::f64::consts::PI;
+    let r = 30.0;
+    let (a, b) = ([r * (PI / 12.0).cos(), r * (PI / 12.0).sin()], [r * (PI / 12.0).cos(), -r * (PI / 12.0).sin()]);
+    let spec = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![a, b],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![Some(ArcSide { centre: [0.0, 0.0], r }), None],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let constraints = json["features"][0]["sketch"]["constraints"].as_array().expect("constraints");
+    let tangents = constraints.iter().filter(|c| c["type"] == "tangent").count();
+    assert_eq!(tangents, 0, "the chord is not tangent to its arc's circle: no Tangent constraint");
 }
 
 /// A hole with a rounded bottom rim beneath a step carries a bottom-facing blind depth; it

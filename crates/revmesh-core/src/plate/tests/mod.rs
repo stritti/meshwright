@@ -47,6 +47,7 @@ fn ell(r: Option<f64>) -> ProfileSpec {
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: r,
+        arcs: Vec::new(),
     }
 }
 

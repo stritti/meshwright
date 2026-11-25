@@ -8,7 +8,7 @@ use super::outline::outline_shape;
 use super::walls::Walls;
 use super::{AREA_MATCH_REL, CAP_NORMAL_MIN, CHORD_FACET_SPAN, MAX_VOLUME_ERROR, NOT_CLOSED, NOT_FLAT, P2, VOLUME_MATCH_REL, tolerance};
 use crate::mesh::{Mesh, Vec3, cross, length, snap_mm, sub};
-use crate::recognize::{Blind, HoleSpec, OutlinePocketSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
+use crate::recognize::{ArcSide, Blind, HoleSpec, OutlinePocketSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
 
 use super::holes::Footprint;
 /// Looks for a plate in `mesh`: a prism over its top face, with holes, slots, cut-outs, pockets
@@ -33,14 +33,14 @@ pub(super) fn recognize_prism(mesh: &Mesh, allow_steps: bool) -> Result<Recognit
     // better written as an intersection of extrusions (roadmap 5.3).
     let steps = if allow_steps { step_levels(&faces, size[2], tol)? } else { Vec::new() };
     let face_loops = face_outlines(&faces, &steps, tol)?;
-    let (corners, radius) = outline_shape(&face_loops.outline, tol)?;
+    let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
     let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
     let mut cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
     add_steps(&mut cutouts, &steps, size[2], tol)?;
     check_prism(&faces, mesh_volume, size[2], &cutouts.stepped, &cutouts.blinds, rim.as_ref())?;
-    check_walls(&faces, &corners, radius, &cutouts, scale, tol, rim.as_ref())?;
+    check_walls(&faces, &corners, radius, &side_arcs, &cutouts, scale, tol, rim.as_ref())?;
     let offset = bounds.min.map(snap_mm);
-    recognition(&corners, radius, cutouts, size, offset, mesh_volume, rim.as_ref())
+    recognition(&corners, radius, side_arcs, cutouts, size, offset, mesh_volume, rim.as_ref())
 }
 
 /// A box rounded all over (mesh2cad's `edge_fillet_r`): its rim radius and size, for the checks
@@ -653,10 +653,12 @@ pub(super) fn check_prism(
 /// The facets and corners between the faces must belong to the walls or to a stepped or blind
 /// hole: anywhere else they are a step, a pocket, a boss, or a wall that leans (a sheared prism
 /// has the same areas and volume as a straight one).
+#[allow(clippy::too_many_arguments)] // the outline, its arc sides and cut-outs, one check
 pub(super) fn check_walls(
     faces: &Faces,
     corners: &[P2],
     radius: Option<f64>,
+    arc_sides: &[Option<ArcSide>],
     cutouts: &PlateCutouts,
     scale: f64,
     tol: f64,
@@ -693,7 +695,7 @@ pub(super) fn check_walls(
     // would pass. Only the cut-outs' walls stay; the rim's own corners are checked in 3D.
     let (wall_corners, wall_radius, wall_loops): (&[P2], Option<f64>, &[Vec<P2>]) =
         if rim.is_some() { (&[], None, &cutouts.wall_loops[1..]) } else { (corners, radius, &cutouts.wall_loops[..]) };
-    let walls = Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, wall_loops, scale, tol);
+    let walls = Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, arc_sides, wall_loops, scale, tol);
     let in_step = |p: Vec3| cutouts.stepped.iter().any(|s| s.holds(p, tol)) || cutouts.blinds.iter().any(|b| b.holds(p, tol));
     if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p) && !on_rim(*p, 0.0)) {
         return Err(NOT_FLAT.into());
@@ -729,9 +731,11 @@ pub(super) fn check_walls(
 /// The recognition from the outline's corners: a rectangular outline without cut-outs becomes a
 /// [`PlateSpec`], any other outline (or one with cut-outs) a [`ProfileSpec`]; the rebuilt part
 /// must match the mesh's volume within [`MAX_VOLUME_ERROR`].
+#[allow(clippy::too_many_arguments)] // the outline, its cut-outs and the frame, one recognition
 pub(super) fn recognition(
     corners: &[P2],
     radius: Option<f64>,
+    side_arcs: Vec<Option<ArcSide>>,
     cutouts: PlateCutouts,
     size: Vec3,
     offset: Vec3,
@@ -766,7 +770,11 @@ pub(super) fn recognition(
     };
     // A pocket of any outline but a rectangle also turns the plate into a profile: its sketch
     // is the pocket's, not the rectangle's.
-    let rectangle = cutouts.is_empty() && outline_pockets.is_empty() && corners.len() == 4 && (matches(&box_corners) || rim.is_some());
+    let rectangle = cutouts.is_empty()
+        && outline_pockets.is_empty()
+        && corners.len() == 4
+        && side_arcs.iter().all(Option::is_none)
+        && (matches(&box_corners) || rim.is_some());
     if rim.is_some() && !rectangle {
         return Err("a box with all edges rounded and cut-outs is not recognised yet".into());
     }
@@ -792,8 +800,34 @@ pub(super) fn recognition(
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
         corners.rotate_left(first.unwrap_or(0));
-        let profile =
-            ProfileSpec { corners, z, holes, slots, pads: vec![], pockets, outline_pockets, bosses: vec![], cutouts, outline_fillet_r };
+        // The arc sides are parallel to the corners, so they rotate with them.
+        let mut side_arcs = side_arcs;
+        side_arcs.rotate_left(first.unwrap_or(0));
+        let mut arcs = if side_arcs.iter().any(Option::is_some) { side_arcs } else { Vec::new() };
+        // The output parameters snap; the wall checks above kept the exact fitted circles. An
+        // arc's diameter must cover the distance between its snapped endpoints, or the sketch's
+        // Diameter constraint has no solution; snapping can shave the radius below it.
+        for (i, arc) in arcs.iter_mut().enumerate() {
+            if let Some(a) = arc {
+                a.centre = a.centre.map(snap_mm);
+                a.r = snap_mm(a.r);
+                let chord = distance(corners[i], corners[(i + 1) % corners.len()]);
+                a.r = a.r.max(chord / 2.0);
+            }
+        }
+        let profile = ProfileSpec {
+            corners,
+            arcs,
+            z,
+            holes,
+            slots,
+            pads: vec![],
+            pockets,
+            outline_pockets,
+            bosses: vec![],
+            cutouts,
+            outline_fillet_r,
+        };
         let volume = profile.volume();
         // The pipeline runs in a frame where the extrusion axis is Z.
         (Recognition::Profile { profile, offset, axis: crate::recognize::Axis::Z }, volume)
