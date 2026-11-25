@@ -2,6 +2,7 @@
 //! corner checks.
 
 use super::geometry::{distance, sagitta, segment_distance, segments};
+use crate::recognize::ArcSide;
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
@@ -21,8 +22,21 @@ pub(super) enum Wall {
     /// A rounded corner: on the circle about `centre` of radius `r`, no farther from the sharp
     /// `corner` than its tangent points (`t`); the rest of the circle lies farther away.
     Arc { centre: P2, r: f64, corner: P2, t: f64 },
+    /// An arc side of the outline: on the circle about `centre` of radius `r`, within the span
+    /// from `a` to `b` counter-clockwise.
+    ArcSide { centre: P2, r: f64, a: P2, b: P2 },
     /// A hole's bore, as fitted (not as its rounded parameters).
     Circle(P2, f64),
+}
+
+/// Whether `p` lies within the counter-clockwise span from `a` to `b` about `centre`, with
+/// `slack` radians of allowance at the ends.
+fn in_arc_span(p: P2, centre: P2, a: P2, b: P2, slack: f64) -> bool {
+    let angle = |q: P2| (q[1] - centre[1]).atan2(q[0] - centre[0]);
+    let (aa, bb, ap) = (angle(a), angle(b), angle(p));
+    let theta = (bb - aa).rem_euclid(2.0 * PI);
+    let d = (ap - aa).rem_euclid(2.0 * PI);
+    d <= theta + slack || d >= 2.0 * PI - slack
 }
 
 /// The walls of a recognised plate, indexed on a grid so that checking a corner against them
@@ -44,14 +58,18 @@ impl Walls {
     /// `arcs` are further bounded round walls: the slot each end belongs to (its index in the
     /// design's sorted `slots`, where the design numbers them `slot_<n>`), the end's centre,
     /// radius, the corner it rounds and how far from that corner it reaches.
-    /// `cutout_loops` are the ideal polygonal cut-outs and `slot_sides` the slots' straight sides
-    /// (the slot's index, one side's start and end), so their walls are indexed too.
+    /// `arc_sides` are the outline's curved sides, as fitted; their endpoint chords are not
+    /// indexed as straight walls. `cutout_loops` are the ideal polygonal cut-outs and
+    /// `slot_sides` the slots' straight sides (the slot's index, one side's start and end), so
+    /// their walls are indexed too.
     #[allow(clippy::too_many_arguments)] // the wall kinds of one part, each labelled
+    #[allow(clippy::too_many_lines)] // one piece pushed per wall kind, each with its label
     pub(super) fn new(
         corners: &[P2],
         radius: Option<f64>,
         circles: &[(usize, P2, f64)],
         arcs: &[(usize, P2, f64, P2, f64)],
+        arc_sides: &[Option<ArcSide>],
         loops: &[Vec<P2>],
         cutout_loops: &[Vec<P2>],
         slot_sides: &[(usize, P2, P2)],
@@ -81,11 +99,16 @@ impl Walls {
         let mut labels = Vec::new();
         for i in 0..n {
             let (c, b) = (corners[i], corners[(i + 1) % n]);
-            let d = unit(c, b);
-            // The side's straight part, between the tangent points of its two corners' arcs.
-            let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
-            walls.push(Wall::Segment([c[0] + d[0] * t0, c[1] + d[1] * t0], [b[0] - d[0] * t1, b[1] - d[1] * t1]));
-            labels.push(format!("side {}", i + 1));
+            // An arc side's endpoint chord is no straight wall: it cuts across the part's
+            // interior, and a wall tapering to it must fail the checks. The side's meshed
+            // facets still enter through `loops`.
+            if arc_sides.get(i).is_none_or(Option::is_none) {
+                let d = unit(c, b);
+                // The side's straight part, between the tangent points of its two corners' arcs.
+                let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
+                walls.push(Wall::Segment([c[0] + d[0] * t0, c[1] + d[1] * t0], [b[0] - d[0] * t1, b[1] - d[1] * t1]));
+                labels.push(format!("side {}", i + 1));
+            }
             if r > 0.0 {
                 walls.push(Wall::Arc { centre: rounds[i].1, r, corner: c, t: rounds[i].0 });
                 labels.push(format!("corner {} round", i + 1));
@@ -105,6 +128,13 @@ impl Walls {
             let end = ends.entry(slot).or_insert(0);
             *end += 1;
             labels.push(format!("slot {} end {}", slot + 1, *end));
+        }
+        // Each arc side of the outline is a wall itself, labelled `arc side <i>`.
+        for (i, side) in arc_sides.iter().enumerate() {
+            if let Some(a) = side {
+                walls.push(Wall::ArcSide { centre: a.centre, r: a.r, a: corners[i], b: corners[(i + 1) % n] });
+                labels.push(format!("arc side {}", i + 1));
+            }
         }
         for (m, ring) in loops.iter().enumerate() {
             let what = if m == 0 { "outline as meshed" } else { "cut-out" };
@@ -149,6 +179,15 @@ impl Walls {
                         .map(|a| [centre[0] + r * a.cos(), centre[1] + r * a.sin()])
                         .collect()
                 }
+                Wall::ArcSide { centre, r, a, b } => {
+                    let aa = (a[1] - centre[1]).atan2(a[0] - centre[0]);
+                    let theta = ((b[1] - centre[1]).atan2(b[0] - centre[0]) - aa).rem_euclid(2.0 * PI);
+                    let steps = ((theta * r) / (WALL_SAMPLE_HALVES * cell)).ceil().max(8.0) as usize;
+                    (0..=steps)
+                        .map(|s| aa + theta * s as f64 / steps as f64)
+                        .map(|ang| [centre[0] + r * ang.cos(), centre[1] + r * ang.sin()])
+                        .collect()
+                }
             };
             for p in samples {
                 let (x, y) = ((p[0] / cell).floor() as i64, (p[1] / cell).floor() as i64);
@@ -178,6 +217,7 @@ impl Walls {
         let follows = |k: usize| match self.pieces[k] {
             Wall::Segment(s, e) => segment_distance(p, s, e) <= tol,
             Wall::Arc { centre, r, corner, t } => on_circle(centre, r) && distance(p, corner) <= t + tol,
+            Wall::ArcSide { centre, r, a, b } => on_circle(centre, r) && in_arc_span(p, centre, a, b, tol / r),
             Wall::Circle(centre, r) => on_circle(centre, r),
         };
         [a, b, p].iter().any(|q| {
@@ -228,6 +268,13 @@ impl Walls {
                     f64::INFINITY
                 }
             }
+            Wall::ArcSide { centre, r, a, b } => {
+                if in_arc_span(p, centre, a, b, self.tol / r) {
+                    (distance(p, centre) - r).abs()
+                } else {
+                    f64::INFINITY
+                }
+            }
             Wall::Circle(centre, r) => (distance(p, centre) - r).abs(),
         };
         if d < best.map_or(f64::INFINITY, |(b, _)| b) {
@@ -247,6 +294,7 @@ impl Walls {
         match self.pieces[k] {
             Wall::Segment(a, b) => segment_distance(p, a, b) <= tol,
             Wall::Arc { centre, r, corner, t } => (distance(p, centre) - r).abs() <= tol && distance(p, corner) <= t + tol,
+            Wall::ArcSide { centre, r, a, b } => (distance(p, centre) - r).abs() <= tol && in_arc_span(p, centre, a, b, tol / r),
             Wall::Circle(centre, r) => (distance(p, centre) - r).abs() <= tol,
         }
     }
@@ -271,6 +319,13 @@ impl Walls {
                     let span = (u[0] * w[1] - u[1] * w[0]).atan2(u[0] * w[0] + u[1] * w[1]).abs();
                     let in_span = (ang(middle) - ang(a)).rem_euclid(2.0 * PI) <= span + self.tol / r;
                     if in_span { (distance(middle, centre) - r).abs() } else { f64::INFINITY }
+                }
+                Wall::ArcSide { centre, r, a, b } => {
+                    if in_arc_span(middle, centre, a, b, self.tol / r) {
+                        (distance(middle, centre) - r).abs()
+                    } else {
+                        f64::INFINITY
+                    }
                 }
                 Wall::Circle(centre, r) => (distance(middle, centre) - r).abs(),
             };

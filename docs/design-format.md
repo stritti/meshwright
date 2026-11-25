@@ -260,7 +260,14 @@ already fix its direction, as a right triangle's legs held horizontal and vertic
 diagonal, the longest axis-aligned side's length is derived too (see `dimensioned_sides_for_angle`
 in `crates/revmesh-core/src/design/sketch.rs`), a fillet on every corner named
 `F2:side:l<i>|F2:side:l<i+1>`) works the same
-way, inside corners included. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
+way, inside corners included. An outline with arc sides (`polygon_sketch_arcs`) draws each arc
+side as an `arc` curve whose `Diameter` constraint is driven by the model parameter behind
+`arc_<i>_d`; the arc's centre is a free sketch point (like a slot's arc centres), which the
+solver keeps equidistant from the side's two corners at the driving diameter, so changing one
+`arc_<i>_d` leaves the sketch solvable. A straight side meeting an arc side at a gently turning
+corner is held tangent to it, like a slot's sides, and two arc sides joined by such tangent
+straight sides (a stadium's ends) share one radius through an `equal` constraint, only the first
+driving its `Diameter`. The straight sides keep their `Length` constraints. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
 in `solidcraft-cli 0.49.0` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
 9,461.81 mm³, again as computed.

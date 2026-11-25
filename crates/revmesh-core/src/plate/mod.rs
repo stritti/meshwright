@@ -110,6 +110,11 @@ const CURVE_LEN_SPREAD: f64 = 4.0;
 /// Facets of a gentle run (a possible curved side) span at most this ratio.
 const GENTLE_LEN_SPREAD: f64 = 3.0;
 
+/// A gentle run of at most this many facets whose circle fit fails is a short polygonal run: its
+/// sides stay straight edges. A longer run that fits no circle is a non-circular curve and is
+/// refused.
+const SHORT_POLYGONAL_RUN: usize = 8;
+
 /// Sine below which two sides count as one straight line when facet corners are merged.
 const COLLINEAR_SIN: f64 = 1e-4;
 

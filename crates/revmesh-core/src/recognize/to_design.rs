@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
 use super::axis::Axis;
-use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+use super::spec::{
+    ArcSide, BossChamfer, BossSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec,
+};
 
 use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, PolygonAngle, Profiles, SlotDimensions,
-    dimensioned_angle, dimensioned_sides, dimensioned_sides_for_angle, polygon_sketch_dimensioned, polygons_sketch_dimensioned,
-    rectangle_sketch, slot_sketch,
+    dimensioned_angle, dimensioned_sides, dimensioned_sides_for_angle, line_arc_tangent, polygon_sketch_arcs, polygon_sketch_dimensioned,
+    polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Vec3, snap_dim, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
@@ -143,11 +145,14 @@ impl ProfileSpec {
 
     /// The profile as a parametric history with its bounding box's lowest corner at `at`,
     /// extruded along `axis`, as mesh2cad writes an extruded outline: parameters `extrude_len`
-    /// (the thickness), `extrude_0` (where it starts along the axis), `outline_<i>_len` per side,
-    /// `outline_<i>_angle` on the longest slanted side, `hole_<n>_<a>/_<b>/_d` for the profile
-    /// plane's world axis letters and `outline_fillet_r`;
+    /// (the thickness), `extrude_0` (where it starts along the axis), `outline_<i>_len` per
+    /// straight side, `outline_<i>_angle` on the longest slanted side, `arc_<i>_d` per arc side
+    /// (its centre a free sketch point the solver places equidistant from the side's two
+    /// corners), `hole_<n>_<a>/_<b>/_d` for the profile plane's world axis letters and
+    /// `outline_fillet_r`;
     /// a sketch of the outline on the axis's plane (see [`Axis::plane`]), every side dimensioned
-    /// by its own parameter, an extrusion along the plane's normal, a move to where the part is,
+    /// by its own parameter (a line side's `Length`, an arc side's `Diameter`), an extrusion along
+    /// the plane's normal, a move to where the part is,
     /// a fillet of every corner edge parallel to the axis and a hole per hole. The fillet comes
     /// before the holes: an inside corner's rounding adds material, and a hole may lie in it.
     #[must_use]
@@ -162,16 +167,57 @@ impl ProfileSpec {
         if let Some(r) = self.outline_fillet_r {
             b.param(Param::user("outline_fillet_r", r));
         }
-        let outline_lens = side_len_params(&mut b, "outline", &self.corners);
-        let outline_angle = side_angle_param(&mut b, "outline", &self.corners);
-        let sketch = b.feature(
-            "Sketch1",
-            vec![],
-            FeatureKind::Sketch {
-                plane: Plane::Origin { name: axis.plane() },
-                sketch: polygon_sketch_dimensioned(&self.corners, &outline_lens, outline_angle.as_ref()),
-            },
-        );
+        let arcs = self.arc_sides();
+        let has_arcs = arcs.iter().any(Option::is_some);
+        let mut dim = if has_arcs { dimensioned_sides(&self.corners) } else { polygon_dim(&self.corners) };
+        // An arc side's curve closes the loop differently from its chord, so it always drives
+        // (its `Diameter`), even where its chord would be the derived side of a parallel group.
+        for (i, arc) in arcs.iter().enumerate() {
+            if arc.is_some() {
+                dim[i] = true;
+            }
+        }
+        // A straight side between two arc sides whose length equals the centres'
+        // separation ties the two radii together (their endpoints' offsets from the centres are
+        // equal), so alongside both driving diameters it must not drive: changing one
+        // `arc_<i>_d` alone would leave no solution. Let the side adjust instead. When the side
+        // is also tangent to both arcs at its ends (a stadium's straight sides are), the
+        // tangents force both radii to half the sides' distance, so the two arcs share one
+        // radius: an `Equal` constraint ties them and only the first drives its `Diameter`,
+        // exactly as a slot's two ends do — changing that one `arc_<i>_d` moves both arcs.
+        let n = self.corners.len();
+        let mut arc_equals: Vec<(usize, usize)> = Vec::new();
+        for i in 0..n {
+            if !dim[i] || arcs.get(i).is_some_and(Option::is_some) {
+                continue;
+            }
+            let (Some(prev), Some(next)) = (arcs.get((i + n - 1) % n).copied().flatten(), arcs.get((i + 1) % n).copied().flatten()) else {
+                continue;
+            };
+            let (a, b) = (self.corners[i], self.corners[(i + 1) % n]);
+            let len = (a[0] - b[0]).hypot(a[1] - b[1]);
+            let dc = (prev.centre[0] - next.centre[0]).hypot(prev.centre[1] - next.centre[1]);
+            let cross = (b[0] - a[0]) * (next.centre[1] - prev.centre[1]) - (b[1] - a[1]) * (next.centre[0] - prev.centre[0]);
+            if cross.abs() <= 1e-9 * len * dc && (len - dc).abs() <= 1e-6 * len.max(1.0) {
+                dim[i] = false;
+                let (prev_side, next_side) = ((i + n - 1) % n, (i + 1) % n);
+                let known = arc_equals.iter().any(|&(x, y)| (x, y) == (prev_side, next_side) || (x, y) == (next_side, prev_side));
+                if !known && line_arc_tangent(b, a, prev.centre, prev.r) && line_arc_tangent(a, b, next.centre, next.r) {
+                    arc_equals.push((prev_side, next_side));
+                    dim[next_side] = false;
+                }
+            }
+        }
+        let outline_lens = side_len_params(&mut b, "outline", &self.corners, arcs, &dim);
+        let outline_angle = if has_arcs { None } else { side_angle_param(&mut b, "outline", &self.corners) };
+        let sketch_geom = if has_arcs {
+            let arc_params = arc_side_params(&mut b, arcs, &dim);
+            let geom: Vec<Option<([f64; 2], f64)>> = arcs.iter().map(|a| a.map(|a| (a.centre, a.r))).collect();
+            polygon_sketch_arcs(&self.corners, &geom, &outline_lens, &arc_params, &arc_equals)
+        } else {
+            polygon_sketch_dimensioned(&self.corners, &outline_lens, outline_angle.as_ref())
+        };
+        let sketch = b.feature("Sketch1", vec![], FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: sketch_geom });
         let extrude = b.feature(
             "Extrude1",
             vec!["Body1".into()],
@@ -222,24 +268,33 @@ fn side_angle_param(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -
     Some(PolygonAngle { side, degrees, param: model })
 }
 
-/// One user parameter `<prefix>_<i>_len` per driving side of `corners` (see [`dimensioned_sides`],
-/// or [`dimensioned_sides_for_angle`] when the polygon has an angle side) and a model parameter
-/// driving its `Length` constraint in the sketch, so the polygon re-dimensions in SolidCraft side
-/// by side, like the rectangle's `base_x`/`base_y`. The side that drives the `Angle` (see
-/// [`dimensioned_angle`]) does not drive a length too, and neither do the further sides
-/// [`dimensioned_sides_for_angle`] releases: with the other sides' lengths and orientations
-/// fixed, the angle determines those lengths, and driving them too would leave no solution when
-/// the angle parameter changes. Returns the model parameters' names, `None` for a side that does
-/// not drive.
-fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Vec<Option<String>> {
-    let n = corners.len();
-    let dim = match dimensioned_angle(corners) {
+/// Which sides of `corners` drive their `Length`: [`dimensioned_sides`], or
+/// [`dimensioned_sides_for_angle`] when the polygon has an angle side (see
+/// [`dimensioned_angle`]).
+fn polygon_dim(corners: &[[f64; 2]]) -> Vec<bool> {
+    match dimensioned_angle(corners) {
         Some(angle) => dimensioned_sides_for_angle(corners, angle),
         None => dimensioned_sides(corners),
-    };
+    }
+}
+
+/// One user parameter `<prefix>_<i>_len` per driving straight side of `corners` and a model
+/// parameter driving its `Length` constraint in the sketch, so the polygon re-dimensions in
+/// SolidCraft side by side, like the rectangle's `base_x`/`base_y`. `arcs` marks the arc sides
+/// (they drive their `Diameter` instead, see [`arc_side_params`]); `dim` says which straight
+/// sides drive — [`polygon_dim`], adjusted for the arc ties in [`ProfileSpec::to_design_on`].
+/// Returns the model parameters' names, `None` for a side that does not drive.
+fn side_len_params(
+    b: &mut DesignBuilder,
+    prefix: &str,
+    corners: &[[f64; 2]],
+    arcs: &[Option<ArcSide>],
+    dim: &[bool],
+) -> Vec<Option<String>> {
+    let n = corners.len();
     (0..n)
         .map(|i| {
-            if !dim[i] {
+            if !dim[i] || arcs.get(i).is_some_and(Option::is_some) {
                 return None;
             }
             let (a, c) = (corners[i], corners[(i + 1) % n]);
@@ -249,6 +304,29 @@ fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) ->
             let model = b.next_model_param_name();
             b.param(Param::model(&model, &user));
             Some(model)
+        })
+        .collect()
+}
+
+/// The parameters of an arc side: when the side drives, a user parameter `arc_<i>_d` plus the
+/// model parameter driving the arc's `Diameter` constraint. The arc's centre is not placed by a
+/// parameter: it is a free sketch point the solver keeps equidistant from the side's two
+/// corners at the driving diameter (see [`polygon_sketch_arcs`]), so changing one `arc_<i>_d`
+/// leaves the sketch solvable.
+fn arc_side_params(b: &mut DesignBuilder, arcs: &[Option<ArcSide>], dim: &[bool]) -> Vec<Option<String>> {
+    let n = arcs.len();
+    (0..n)
+        .map(|i| {
+            let arc = arcs.get(i).copied().flatten()?;
+            if dim[i] {
+                let prefix = format!("arc_{}", i + 1);
+                b.param(Param::user(format!("{prefix}_d"), snap_dim(2.0 * arc.r)));
+                let model = b.next_model_param_name();
+                b.param(Param::model(&model, format!("{prefix}_d")));
+                Some(model)
+            } else {
+                None
+            }
         })
         .collect()
 }
@@ -314,8 +392,11 @@ fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3, a
         return;
     }
     let sketched: Vec<Vec<[f64; 2]>> = cutouts.iter().map(|c| c.iter().map(|p| axis.sketch_point(at, *p).map(snap_mm)).collect()).collect();
-    let lens: Vec<Vec<Option<String>>> =
-        sketched.iter().enumerate().map(|(k, poly)| side_len_params(b, &format!("cutout_{}", k + 1), poly)).collect();
+    let lens: Vec<Vec<Option<String>>> = sketched
+        .iter()
+        .enumerate()
+        .map(|(k, poly)| side_len_params(b, &format!("cutout_{}", k + 1), poly, &vec![None; poly.len()], &polygon_dim(poly)))
+        .collect();
     let angles: Vec<Option<PolygonAngle>> =
         sketched.iter().enumerate().map(|(k, poly)| side_angle_param(b, &format!("cutout_{}", k + 1), poly)).collect();
     let sketch = b.feature(
@@ -508,7 +589,7 @@ fn block_features(
         let p = format!("pocket_{n}");
         b.param(Param::user(format!("{p}_depth"), s.depth));
         let poly: Vec<[f64; 2]> = s.corners.iter().map(|c| axis.sketch_point(at, *c).map(snap_mm)).collect();
-        let lens = side_len_params(b, &p, &poly);
+        let lens = side_len_params(b, &p, &poly, &vec![None; poly.len()], &polygon_dim(&poly));
         let angle = side_angle_param(b, &p, &poly);
         let sketch = b.feature(
             format!("Pocket{n}Sketch"),
