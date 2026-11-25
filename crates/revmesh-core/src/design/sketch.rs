@@ -423,7 +423,7 @@ fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[Option<String>], angle: Op
         }
     }
     let mut links = Vec::new();
-    let axis_line = if let Some(a) = angle {
+    let _axis_line = if let Some(a) = angle {
         let axis = || Some("j1".to_owned());
         points.push(SketchPoint { link: axis(), ..SketchPoint::new(format!("p{}", n + 1), [-100.0, 0.0], true) });
         points.push(SketchPoint { link: axis(), ..SketchPoint::new(format!("p{}", n + 2), [100.0, 0.0], true) });
