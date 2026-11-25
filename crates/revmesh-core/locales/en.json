@@ -11,6 +11,8 @@
   "report.mesh.summary": "A mesh of {triangles} triangles",
   "report.smoothed.title": "Facets smoothed",
   "report.smoothed.message": "Holes and rounded corners are rebuilt as true circles, so the volume changes by {change}% from the mesh's facets.",
+  "report.deviation.title": "Surface deviation per face",
+  "report.deviation.message": "The mesh's faces lie at most this far from the recognised faces: {faces}.",
   "report.unrecognized.title": "Kept as a mesh",
   "report.unrecognized.message": "No parametric features were recognised: {reason}.",
   "report.update.title": "A newer version of revmesh is available",

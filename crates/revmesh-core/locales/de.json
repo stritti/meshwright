@@ -11,6 +11,8 @@
   "report.mesh.summary": "Ein Netz aus {triangles} Dreiecken",
   "report.smoothed.title": "Facetten geglättet",
   "report.smoothed.message": "Bohrungen und verrundete Ecken werden als echte Kreise neu aufgebaut, daher ändert sich das Volumen gegenüber den Facetten des Netzes um {change} %.",
+  "report.deviation.title": "Oberflächenabweichung pro Fläche",
+  "report.deviation.message": "Die Flächen des Netzes liegen höchstens so weit von den erkannten Flächen entfernt: {faces}.",
   "report.unrecognized.title": "Als Netz behalten",
   "report.unrecognized.message": "Es wurden keine parametrischen Features erkannt: {reason}.",
   "report.update.title": "Eine neuere Version von revmesh ist verfügbar",

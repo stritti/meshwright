@@ -43,26 +43,36 @@ fn in_arc_span(p: P2, centre: P2, a: P2, b: P2, slack: f64) -> bool {
 /// costs the same however many corners and holes the plate has.
 pub(super) struct Walls {
     pub(super) pieces: Vec<Wall>,
+    /// Each piece's name for the import report's per-face deviation ("side 3", "hole 1", ...).
+    pub(super) labels: Vec<String>,
     pub(super) cells: HashMap<(i64, i64), Vec<usize>>,
     pub(super) cell: f64,
     pub(super) tol: f64,
 }
 
 impl Walls {
-    /// The walls of the outline `corners` (rounded with `radius`), of the holes' `circles` and,
-    /// as meshed, of the top face's boundary `loops` (a facet's chord of an arc is no wall of the
-    /// true part, but its corners and its subdivisions lie on it).
-    /// `arcs` are further bounded round walls: centre, radius, the corner each rounds and how far
-    /// from that corner it reaches. `arc_sides` are the outline's curved sides, as fitted; their
-    /// endpoint chords are not indexed as straight walls.
-    #[allow(clippy::too_many_arguments)] // every wall kind the plate may have, one index
+    /// The walls of the outline `corners` (rounded with `radius`), of the holes' `circles` (each
+    /// carrying its hole's index in the design's sorted holes, where the design numbers them
+    /// `hole_<n>`) and, as meshed, of the top face's boundary `loops` (a facet's chord of an arc
+    /// is no wall of the true part, but its corners and its subdivisions lie on it).
+    /// `arcs` are further bounded round walls: the slot each end belongs to (its index in the
+    /// design's sorted `slots`, where the design numbers them `slot_<n>`), the end's centre,
+    /// radius, the corner it rounds and how far from that corner it reaches.
+    /// `arc_sides` are the outline's curved sides, as fitted; their endpoint chords are not
+    /// indexed as straight walls. `cutout_loops` are the ideal polygonal cut-outs and
+    /// `slot_sides` the slots' straight sides (the slot's index, one side's start and end), so
+    /// their walls are indexed too.
+    #[allow(clippy::too_many_arguments)] // the wall kinds of one part, each labelled
+    #[allow(clippy::too_many_lines)] // one piece pushed per wall kind, each with its label
     pub(super) fn new(
         corners: &[P2],
         radius: Option<f64>,
-        circles: &[(P2, f64)],
-        arcs: &[(P2, f64, P2, f64)],
+        circles: &[(usize, P2, f64)],
+        arcs: &[(usize, P2, f64, P2, f64)],
         arc_sides: &[Option<ArcSide>],
         loops: &[Vec<P2>],
+        cutout_loops: &[Vec<P2>],
+        slot_sides: &[(usize, P2, P2)],
         size: f64,
         tol: f64,
     ) -> Self {
@@ -86,6 +96,7 @@ impl Walls {
             })
             .collect();
         let mut walls = Vec::new();
+        let mut labels = Vec::new();
         for i in 0..n {
             let (c, b) = (corners[i], corners[(i + 1) % n]);
             // An arc side's endpoint chord is no straight wall: it cuts across the part's
@@ -96,22 +107,57 @@ impl Walls {
                 // The side's straight part, between the tangent points of its two corners' arcs.
                 let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
                 walls.push(Wall::Segment([c[0] + d[0] * t0, c[1] + d[1] * t0], [b[0] - d[0] * t1, b[1] - d[1] * t1]));
+                labels.push(format!("side {}", i + 1));
             }
             if r > 0.0 {
                 walls.push(Wall::Arc { centre: rounds[i].1, r, corner: c, t: rounds[i].0 });
+                labels.push(format!("corner {} round", i + 1));
             }
         }
-        walls.extend(circles.iter().map(|&(c, r)| Wall::Circle(c, r)));
-        walls.extend(arcs.iter().map(|&(centre, r, corner, t)| Wall::Arc { centre, r, corner, t }));
-        let n = corners.len();
-        walls.extend(
-            arc_sides
-                .iter()
-                .enumerate()
-                .filter_map(|(i, a)| a.map(|a| Wall::ArcSide { centre: a.centre, r: a.r, a: corners[i], b: corners[(i + 1) % n] })),
-        );
-        for ring in loops {
-            walls.extend((0..ring.len()).map(|i| Wall::Segment(ring[i], ring[(i + 1) % ring.len()])));
+        // Each circle is labelled with its hole's number in the design (`hole_<n>`), carried
+        // from the sorted hole specifications.
+        for &(own, c, r) in circles {
+            walls.push(Wall::Circle(c, r));
+            labels.push(format!("hole {}", own + 1));
+        }
+        // Each arc is labelled with the slot that owns it (the design's `slot_<n>`), its two
+        // ends counted within that slot.
+        let mut ends: HashMap<usize, usize> = HashMap::new();
+        for &(slot, centre, r, corner, t) in arcs {
+            walls.push(Wall::Arc { centre, r, corner, t });
+            let end = ends.entry(slot).or_insert(0);
+            *end += 1;
+            labels.push(format!("slot {} end {}", slot + 1, *end));
+        }
+        // Each arc side of the outline is a wall itself, labelled `arc side <i>`.
+        for (i, side) in arc_sides.iter().enumerate() {
+            if let Some(a) = side {
+                walls.push(Wall::ArcSide { centre: a.centre, r: a.r, a: corners[i], b: corners[(i + 1) % n] });
+                labels.push(format!("arc side {}", i + 1));
+            }
+        }
+        for (m, ring) in loops.iter().enumerate() {
+            let what = if m == 0 { "outline as meshed" } else { "cut-out" };
+            for i in 0..ring.len() {
+                walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
+                labels.push(if m == 0 { format!("outline as meshed, facet {}", i + 1) } else { format!("{what} {}, side {}", m, i + 1) });
+            }
+        }
+        // The ideal straight cut-out walls, labelled by the cut-out's number and side.
+        for (m, ring) in cutout_loops.iter().enumerate() {
+            for i in 0..ring.len() {
+                walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
+                labels.push(format!("cut-out {}, side {}", m + 1, i + 1));
+            }
+        }
+        // Each slot's two straight sides, labelled with the slot's number in the design
+        // (`slot_<n>`), the sides counted within it.
+        let mut sides: HashMap<usize, usize> = HashMap::new();
+        for &(slot, a, b) in slot_sides {
+            walls.push(Wall::Segment(a, b));
+            let s = sides.entry(slot).or_insert(0);
+            *s += 1;
+            labels.push(format!("slot {} side {}", slot + 1, *s));
         }
         // About 256 cells across the plate, never finer than a few tolerances.
         let cell = (size / WALL_CELLS_ACROSS).max(WALL_CELL_MIN_TOL * tol);
@@ -155,7 +201,7 @@ impl Walls {
                 }
             }
         }
-        Self { pieces: walls, cells, cell, tol }
+        Self { pieces: walls, labels, cells, cell, tol }
     }
 
     /// Whether the straight edge from `a` to `b` (both on the walls, relative to the plate's
@@ -180,17 +226,137 @@ impl Walls {
         })
     }
 
+    /// How far `p` lies from the nearest wall piece, with that piece's index — for the import
+    /// report's per-face deviation (a facet chord of a round wall bows inward by its sagitta).
+    /// The walls are looked up in the cells around `p` and around each of `near` (a chord's
+    /// middle through its ends, which lie on the walls, as `holds_chord` does); a sample no
+    /// neighbouring cell knows is measured against every wall, so none is silently dropped.
+    pub(super) fn deviation(&self, p: P2, near: &[P2]) -> Option<(f64, usize)> {
+        let mut best: Option<(f64, usize)> = None;
+        let lookup = |q: P2, best: &mut Option<(f64, usize)>| {
+            let key = ((q[0] / self.cell).floor() as i64, (q[1] / self.cell).floor() as i64);
+            for dx in [-1, 0, 1] {
+                for dy in [-1, 0, 1] {
+                    if let Some(candidates) = self.cells.get(&(key.0 + dx, key.1 + dy)) {
+                        for &k in candidates {
+                            self.measure(p, k, best);
+                        }
+                    }
+                }
+            }
+        };
+        lookup(p, &mut best);
+        for &q in near {
+            lookup(q, &mut best);
+        }
+        if best.is_none() {
+            for k in 0..self.pieces.len() {
+                self.measure(p, k, &mut best);
+            }
+        }
+        best
+    }
+
+    /// The distance from `p` to wall piece `k`, kept when it is the nearest so far.
+    fn measure(&self, p: P2, k: usize, best: &mut Option<(f64, usize)>) {
+        let d = match self.pieces[k] {
+            Wall::Segment(a, b) => segment_distance(p, a, b),
+            Wall::Arc { centre, r, corner, t } => {
+                if distance(p, corner) <= t + self.tol {
+                    (distance(p, centre) - r).abs()
+                } else {
+                    f64::INFINITY
+                }
+            }
+            Wall::ArcSide { centre, r, a, b } => {
+                if in_arc_span(p, centre, a, b, self.tol / r) {
+                    (distance(p, centre) - r).abs()
+                } else {
+                    f64::INFINITY
+                }
+            }
+            Wall::Circle(centre, r) => (distance(p, centre) - r).abs(),
+        };
+        if d < best.map_or(f64::INFINITY, |(b, _)| b) {
+            *best = Some((d, k));
+        }
+    }
+
     /// Whether `p` (relative to the plate's corner) lies on one of the walls.
     pub(super) fn holds(&self, p: P2) -> bool {
         let key = ((p[0] / self.cell).floor() as i64, (p[1] / self.cell).floor() as i64);
+        self.cells.get(&key).is_some_and(|candidates| candidates.iter().any(|&k| self.holds_piece(k, p)))
+    }
+
+    /// Whether point `p` lies on wall piece `k`, within the tolerance.
+    fn holds_piece(&self, k: usize, p: P2) -> bool {
         let tol = self.tol;
-        self.cells.get(&key).is_some_and(|candidates| {
-            candidates.iter().any(|&k| match self.pieces[k] {
-                Wall::Segment(a, b) => segment_distance(p, a, b) <= tol,
-                Wall::Arc { centre, r, corner, t } => (distance(p, centre) - r).abs() <= tol && distance(p, corner) <= t + tol,
-                Wall::ArcSide { centre, r, a, b } => (distance(p, centre) - r).abs() <= tol && in_arc_span(p, centre, a, b, tol / r),
-                Wall::Circle(centre, r) => (distance(p, centre) - r).abs() <= tol,
-            })
-        })
+        match self.pieces[k] {
+            Wall::Segment(a, b) => segment_distance(p, a, b) <= tol,
+            Wall::Arc { centre, r, corner, t } => (distance(p, centre) - r).abs() <= tol && distance(p, corner) <= t + tol,
+            Wall::ArcSide { centre, r, a, b } => (distance(p, centre) - r).abs() <= tol && in_arc_span(p, centre, a, b, tol / r),
+            Wall::Circle(centre, r) => (distance(p, centre) - r).abs() <= tol,
+        }
+    }
+
+    /// The deviation of a chord's middle from the wall that owns the chord: among the walls
+    /// holding both ends `a` and `b`, the nearest to `middle`. A neighbouring wall that happens
+    /// to lie nearer the middle (a hole beside a rounded corner, say) must not take the chord
+    /// over. Falls back to the plain lookup when no wall holds both ends.
+    pub(super) fn deviation_chord(&self, a: P2, b: P2, middle: P2) -> Option<(f64, usize)> {
+        // Candidate owners come from the endpoints' grid cells, as in `holds_chord`, not from a
+        // scan of every piece (a perforated plate would make reporting quadratic in its holes).
+        let mut candidates: Vec<usize> = Vec::new();
+        for &q in &[a, b] {
+            let key = ((q[0] / self.cell).floor() as i64, (q[1] / self.cell).floor() as i64);
+            for dx in [-1, 0, 1] {
+                for dy in [-1, 0, 1] {
+                    if let Some(list) = self.cells.get(&(key.0 + dx, key.1 + dy)) {
+                        for &k in list {
+                            if !candidates.contains(&k) {
+                                candidates.push(k);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut best: Option<(f64, usize)> = None;
+        for k in candidates {
+            if !self.holds_piece(k, a) || !self.holds_piece(k, b) {
+                continue;
+            }
+            let d = self.chord_deviation(k, a, b, middle);
+            if d < best.map_or(f64::INFINITY, |(bd, _)| bd) {
+                best = Some((d, k));
+            }
+        }
+        best.or_else(|| self.deviation(middle, &[a, b]))
+    }
+
+    /// The deviation of a chord's middle from the wall piece `k` owning its ends: within the
+    /// arc's span from `a` to `b` (the short way, whichever direction the chord's endpoint order
+    /// gives), not merely within the corner's reach, so a corner round's chord measures against
+    /// its own arc.
+    fn chord_deviation(&self, k: usize, a: P2, b: P2, middle: P2) -> f64 {
+        match self.pieces[k] {
+            Wall::Segment(x, y) => segment_distance(middle, x, y),
+            Wall::Arc { centre, r, .. } => {
+                let ang = |p: P2| (p[1] - centre[1]).atan2(p[0] - centre[0]);
+                let span = (ang(b) - ang(a)).rem_euclid(2.0 * PI);
+                let at = (ang(middle) - ang(a)).rem_euclid(2.0 * PI);
+                let slack = self.tol / r;
+                let in_span = if span <= PI { at <= span + slack } else { at + slack >= span };
+                if in_span { (distance(middle, centre) - r).abs() } else { f64::INFINITY }
+            }
+            Wall::ArcSide { centre, r, a, b } => {
+                if in_arc_span(middle, centre, a, b, self.tol / r) {
+                    (distance(middle, centre) - r).abs()
+                } else {
+                    f64::INFINITY
+                }
+            }
+            Wall::Circle(centre, r) => (distance(middle, centre) - r).abs(),
+        }
     }
 }

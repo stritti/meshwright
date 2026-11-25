@@ -56,8 +56,11 @@
       `Pocket<n>` cut with `pocket_<n>_<i>_len` per side
       (`recognize/to_design.rs::block_features`; the levels in `plate/prism.rs::step_levels`),
       and with 3.12 combined extrusions
-   4. per-face surface deviation in the import report, computed in the sandbox (today: volume
-      within 1% at import, Hausdorff in `cargo xtask check`)
+   4. (done for plates and profiles along Z) per-face surface deviation in the import report,
+      computed in the sandbox at import: each recognised face's label with the farthest its mesh
+      points lie from the ideal surface (`plate::face_deviations`, `Walls::deviation`; the volume
+      within 1% stays the gate, Hausdorff in `cargo xtask check`; combined and stacked parts
+      follow)
 6. **More parts, fitted robustly** — from the code review of the recognisers against the
    references (the extracted know-how is packaged in the `revmesh-recognition-knowhow` agent
    skill; the concept → code mapping with the sources is [Comparable tools → Concepts from the

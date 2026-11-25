@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::design::{Design, DesignBuilder, FeatureKind, MeshData};
 use crate::i18n::Locale;
 use crate::mesh::Mesh;
-use crate::recognize::{Recognition, recognize};
+use crate::recognize::{Axis, Recognition, recognize};
 use crate::report::{LossItem, LossReport, Severity};
 use crate::stl::{self, StlError};
 
@@ -64,28 +64,48 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
     let locale = options.locale;
     if options.mode == Mode::Auto {
         let recognised = match recognize(&mesh) {
-            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", offset), plate.describe_in(locale), plate.volume())),
+            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", offset), plate.describe_in(locale), plate.volume(), true)),
             Recognition::Profile { profile, offset, axis } => {
-                Ok((profile.to_design_on("", offset, axis), profile.describe_in(locale), profile.volume()))
+                // The deviation report is measured on a Z prism; another axis is rotated into Z
+                // for recognition, so the report would not match the exported design.
+                Ok((profile.to_design_on("", offset, axis), profile.describe_in(locale), profile.volume(), axis == Axis::Z))
             }
-            Recognition::Combined { spec, offset } => Ok((spec.to_design_at("", offset), spec.describe_in(locale), spec.volume())),
+            Recognition::Combined { spec, offset } => Ok((spec.to_design_at("", offset), spec.describe_in(locale), spec.volume(), false)),
+            // Stacked and combined parts are no single Z prism; their reports follow (roadmap).
             Recognition::Stack { spec, offset, axis } => {
-                Ok((spec.to_design_on("", offset, axis), spec.describe_in(locale, axis), spec.volume()))
+                Ok((spec.to_design_on("", offset, axis), spec.describe_in(locale, axis), spec.volume(), false))
             }
             Recognition::Unrecognized { reason } => Err(reason),
         };
         match recognised {
-            Ok((design, summary, volume)) => {
+            Ok((design, summary, volume, z_prism)) => {
                 let mut report = LossReport::new(summary);
                 let change = volume / mesh.volume() - 1.0;
                 if change.abs() > SMOOTHING_NOTE {
                     report.push(LossItem {
                         severity: Severity::Info,
                         title: locale.text("report.smoothed.title").into(),
-                        subject: body,
+                        subject: body.clone(),
                         message: locale
                             .format("report.smoothed.message", &[("change", &locale.decimal(&format!("{:+.2}", change * 100.0)))]),
                         code: "revmesh.smoothed",
+                    });
+                }
+                // Roadmap 5.4: the per-face surface deviation between the mesh and the
+                // recognised faces, computed in the sandbox (empty for parts that are no Z prism).
+                let deviations = if z_prism { crate::plate::face_deviations(&mesh) } else { Vec::new() };
+                if !deviations.is_empty() {
+                    let faces = deviations
+                        .iter()
+                        .map(|(label, d)| format!("{label}: {} mm", locale.decimal(&crate::design::fmt_number(*d))))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    report.push(LossItem {
+                        severity: Severity::Info,
+                        title: locale.text("report.deviation.title").into(),
+                        subject: body,
+                        message: locale.format("report.deviation.message", &[("faces", &faces)]),
+                        code: "revmesh.deviation",
                     });
                 }
                 return ImportResult { design, report };
@@ -227,7 +247,13 @@ mod tests {
         assert_eq!(types, ["sketch", "extrude", "move", "hole", "fillet"]);
         assert_eq!(result.report.summary, "A 60 x 40 x 5 mm plate with 1 hole and 4 mm rounded corners");
         let codes: Vec<&str> = result.report.items.iter().map(|i| i.code).collect();
-        assert_eq!(codes, ["revmesh.smoothed"]);
+        assert_eq!(codes, ["revmesh.smoothed", "revmesh.deviation"]);
+        // Roadmap 5.4: the per-face deviation lists the hole's facets bowing inside its circle.
+        let deviation = &result.report.items[1];
+        assert!(deviation.message.contains("hole 1: "), "{}", deviation.message);
+        let hole_dev: f64 =
+            deviation.message.split("hole 1: ").nth(1).and_then(|s| s.split(" mm").next()).and_then(|s| s.parse().ok()).expect("a number");
+        assert!(hole_dev > 0.0 && hole_dev < 0.1, "the facets' sagitta, in mm: {hole_dev}");
         // The plate stays where it is in the file: centred on the origin, as mesh2cad writes it.
         let params: Vec<(&str, &str)> =
             result.design.params.iter().filter(|p| !p.model).map(|p| (p.name.as_str(), p.expr.as_str())).collect();

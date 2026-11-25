@@ -232,13 +232,14 @@ pub(super) fn face_outlines(faces: &Faces, steps: &[(f64, Vec<[P2; 3]>)], tol: f
 
 /// The holes, slots, cut-outs and pockets a plate has, from the two faces' boundary loops.
 pub(super) struct PlateCutouts {
-    /// The through holes' circles, as fitted.
-    pub(super) circles: Vec<(P2, f64)>,
+    /// The through holes' circles, as fitted: the owning hole's index in the sorted `holes`
+    /// (the design numbers them `hole_<n>`), the centre and the radius.
+    pub(super) circles: Vec<(usize, P2, f64)>,
     /// The loops the walls stand on, as meshed: the outline and the cut-outs'.
     pub(super) wall_loops: Vec<Vec<P2>>,
-    /// The slots' two end arcs (centre, radius, corner, reach), bounded round walls the wall
-    /// check uses too.
-    pub(super) slot_arcs: Vec<(P2, f64, P2, f64)>,
+    /// The slots' two end arcs (the slot's index in the sorted `slots`, centre, radius, corner,
+    /// reach), bounded round walls the wall check uses too.
+    pub(super) slot_arcs: Vec<(usize, P2, f64, P2, f64)>,
     /// Every hole, sorted from left to right.
     pub(super) holes: Vec<HoleSpec>,
     /// The straight slots, in mesh2cad's order.
@@ -407,12 +408,17 @@ pub(super) fn pair_slots(
     if top.len() != bottom.len() || !top.iter().all(|(_, g, _)| bottom.iter().any(|(_, other, _)| g.matches(other, tol))) {
         return Err("a slot does not go straight through (blind and slanted slots are not recognised yet)".into());
     }
-    for (spec, g, k) in top {
-        out.slot_arcs.extend(g.halves());
-        out.wall_loops.push(face_loops.loops[*k].clone());
-        out.slots.push(spec.clone());
+    // Sort the slots with their geometry and loop, in mesh2cad's order, so each end arc keeps
+    // the number its slot gets in the design (`slot_<n>`).
+    let mut fitted = top.to_vec();
+    fitted.sort_by(|a, b| {
+        a.0.y.total_cmp(&b.0.y).then(a.0.x.total_cmp(&b.0.x)).then(a.0.angle.total_cmp(&b.0.angle)).then(a.0.w.total_cmp(&b.0.w))
+    });
+    for (i, (spec, g, k)) in fitted.into_iter().enumerate() {
+        out.slot_arcs.extend(g.halves().into_iter().map(|(centre, r, corner, t)| (i, centre, r, corner, t)));
+        out.wall_loops.push(face_loops.loops[k].clone());
+        out.slots.push(spec);
     }
-    out.slots.sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)).then(a.angle.total_cmp(&b.angle)).then(a.w.total_cmp(&b.w)));
     Ok(())
 }
 
@@ -441,7 +447,7 @@ pub(super) fn pair_through_holes<'a>(
         paired[j] = true;
         let (_, (bottom_centre, bottom_r), bottom_index) = &bottoms[j];
         if (top_r - bottom_r).abs() <= tol {
-            out.circles.push((*centre, *top_r));
+            out.circles.push((0, *centre, *top_r)); // the owning index is set once `holes` is sorted
             out.wall_loops.push(loops[*loop_index].clone());
             out.holes.push(hole.clone());
             continue;
@@ -514,6 +520,20 @@ pub(super) fn floor_mouths(
         out.blinds.push(b);
     }
     out.holes.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    // Each through hole's circle carries its hole's index in the sorted holes, so the wall
+    // labels name the design's `hole_<n>`, not the order the circles were fitted in.
+    for c in &mut out.circles {
+        let best = out
+            .holes
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (i, distance([h.x, h.y], c.1)))
+            .filter(|(_, d)| *d <= tol)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((i, _)) = best {
+            c.0 = i;
+        }
+    }
     out.pockets.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     out.outline_pockets.sort_by(|a, b| a.corners[0][1].total_cmp(&b.corners[0][1]).then(a.corners[0][0].total_cmp(&b.corners[0][0])));
     Ok(())
@@ -650,6 +670,168 @@ pub(super) fn check_prism(
     Ok(())
 }
 
+/// The wall index over the outline's sides and the cut-outs' walls, as `check_walls` checks
+/// them: on a rounded rim the top outline is the inner rectangle, which lies inside the rounded
+/// box, so its segments must not count as walls — only the cut-outs' walls stay.
+fn walls_of(
+    corners: &[P2],
+    radius: Option<f64>,
+    arc_sides: &[Option<ArcSide>],
+    cutouts: &PlateCutouts,
+    scale: f64,
+    tol: f64,
+    rim: Option<&Rim>,
+) -> Walls {
+    let (wall_corners, wall_radius, wall_loops): (&[P2], Option<f64>, &[Vec<P2>]) =
+        if rim.is_some() { (&[], None, &cutouts.wall_loops[1..]) } else { (corners, radius, &cutouts.wall_loops[..]) };
+    Walls::new(
+        wall_corners,
+        wall_radius,
+        &cutouts.circles,
+        &cutouts.slot_arcs,
+        arc_sides,
+        wall_loops,
+        &[],
+        &slot_sides_of(cutouts),
+        scale,
+        tol,
+    )
+}
+
+/// Each slot's two straight sides as segments — the slot's index in the sorted `slots` (the
+/// design's `slot_<n>`) and one side's start and end — so their walls can be indexed like the
+/// cut-outs'.
+fn slot_sides_of(cutouts: &PlateCutouts) -> Vec<(usize, P2, P2)> {
+    let mut out = Vec::new();
+    for (i, s) in cutouts.slots.iter().enumerate() {
+        let (sin, cos) = s.angle.to_radians().sin_cos();
+        let (u, v) = ([cos, sin], [-sin, cos]);
+        let (half, r) = (s.len / 2.0, s.w / 2.0);
+        let at = |sgn: f64, off: f64| [s.x + sgn * half * u[0] + off * v[0], s.y + sgn * half * u[1] + off * v[1]];
+        out.push((i, at(1.0, -r), at(-1.0, -r)));
+        out.push((i, at(1.0, r), at(-1.0, r)));
+    }
+    out
+}
+
+/// The mesh's per-face surface deviation from the recognised plate: each wall piece's label with
+/// the farthest its sampled mesh points lie from it (a facet chord of a round wall bows inward by
+/// its sagitta; planar faces lie exactly on theirs). Empty when the mesh is no Z prism, or for a
+/// box rounded all over, whose rounded surfaces are not measured. Best effort: any pipeline
+/// error yields no report rather than failing the import.
+pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
+    let run = || -> Result<Vec<(String, f64)>, String> {
+        let bounds = mesh.bounds().ok_or("the mesh has no triangles")?;
+        let size = bounds.size();
+        let scale = size[0].max(size[1]).max(size[2]);
+        let tol = tolerance(scale);
+        if size.iter().any(|s| *s <= tol) {
+            return Err("the mesh is flat".into());
+        }
+        let faces = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
+        let steps = step_levels(&faces, size[2], tol)?;
+        let face_loops = face_outlines(&faces, &steps, tol)?;
+        let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
+        let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
+        // A box rounded all over: its rounded surfaces are not indexed, so no deviation to
+        // report (measuring them is left for the roadmap), with or without openings.
+        if rim.is_some() {
+            return Ok(Vec::new());
+        }
+        let mut cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
+        add_steps(&mut cutouts, &steps, size[2], tol)?;
+        // Against the ideal walls only, not the meshed boundary loops (a facet's own chord would
+        // measure zero): outline sides, arc sides and corner rounds, the holes' circles, the
+        // slots' arcs and straight sides, the cut-outs' straight sides.
+        let walls = Walls::new(
+            &corners,
+            radius,
+            &cutouts.circles,
+            &cutouts.slot_arcs,
+            &side_arcs,
+            &[],
+            &cutouts.cutouts,
+            &slot_sides_of(&cutouts),
+            scale,
+            tol,
+        );
+        // No wall of the part is indexed: no deviation to report.
+        if walls.pieces.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut worst: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+        let mut note = |label: &str, d: f64| {
+            let e = worst.entry(label.to_owned()).or_insert(0.0);
+            if d > *e {
+                *e = d;
+            }
+        };
+        // The faces themselves lie in their planes by construction.
+        note("top face", 0.0);
+        note("bottom face", 0.0);
+        // Wall corners and chord middles: their distance to the nearest ideal wall. `faces`
+        // keeps every point relative to the mesh's lowest corner, as the walls are.
+        // Samples of unsupported features (blind or stepped holes, whose surfaces are not
+        // indexed) are excluded rather than attributed to distant outer walls.
+        let in_unsupported = |p: Vec3| cutouts.stepped.iter().any(|s| s.holds(p, tol)) || cutouts.blinds.iter().any(|b| b.holds(p, tol));
+        let footprint_unsupported = |q: P2| {
+            cutouts.stepped.iter().any(|s| distance(q, s.centre) <= s.head_r + tol)
+                || cutouts.blinds.iter().any(|b| b.foot.contains(q, tol))
+        };
+        for p in &faces.between {
+            if in_unsupported(*p) {
+                continue;
+            }
+            if let Some((d, k)) = walls.deviation([p[0], p[1]], &[]) {
+                note(&walls.labels[k], d);
+            }
+        }
+        for p in &faces.rim {
+            // Bottom-rim mouths of unsupported features (a bottom blind hole's, a step's) are
+            // excluded like the other sample kinds, not attributed to distant outer walls.
+            if footprint_unsupported(*p) {
+                continue;
+            }
+            if let Some((d, k)) = walls.deviation(*p, &[]) {
+                note(&walls.labels[k], d);
+            }
+        }
+        let mut note_chord = |a: P2, b: P2, middle: P2| {
+            // A chord of an unsupported feature (a blind or stepped hole's bore or mouth) has
+            // no indexed surface: skip it rather than attributing it to a distant outer wall.
+            if footprint_unsupported(a) || footprint_unsupported(middle) {
+                return;
+            }
+            for p in [a, b] {
+                if let Some((d, k)) = walls.deviation(p, &[]) {
+                    note(&walls.labels[k], d);
+                }
+            }
+            // The chord's middle is measured against the wall owning its ends (a coarse round
+            // wall's middle lies several cells inside its circle, so the wall is found through
+            // the ends), not against a neighbouring feature that happens to lie nearer.
+            if let Some((d, k)) = walls.deviation_chord(a, b, middle) {
+                note(&walls.labels[k], d);
+            }
+        };
+        for &(a, b, middle, _) in &faces.chords {
+            note_chord(a, b, [middle[0], middle[1]]);
+        }
+        // The top boundary loops' chords too: `split_faces` skips edges lying wholly on the top
+        // face, so a coarsely tessellated top rim's chords would otherwise not be sampled.
+        for ring in std::iter::once(&face_loops.outline).chain(face_loops.loops.iter()) {
+            for i in 0..ring.len() {
+                let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+                if distance(a, b) > tol {
+                    note_chord(a, b, [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1])]);
+                }
+            }
+        }
+        Ok(worst.into_iter().collect())
+    };
+    run().unwrap_or_default()
+}
+
 /// The facets and corners between the faces must belong to the walls or to a stepped or blind
 /// hole: anywhere else they are a step, a pocket, a boss, or a wall that leans (a sheared prism
 /// has the same areas and volume as a straight one).
@@ -690,12 +872,7 @@ pub(super) fn check_walls(
     }) {
         return Err(NOT_FLAT.into());
     }
-    // On a rounded rim the top outline is the inner rectangle, which lies inside the rounded
-    // box: its segments must not count as walls, or an off-surface corner projecting onto them
-    // would pass. Only the cut-outs' walls stay; the rim's own corners are checked in 3D.
-    let (wall_corners, wall_radius, wall_loops): (&[P2], Option<f64>, &[Vec<P2>]) =
-        if rim.is_some() { (&[], None, &cutouts.wall_loops[1..]) } else { (corners, radius, &cutouts.wall_loops[..]) };
-    let walls = Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, arc_sides, wall_loops, scale, tol);
+    let walls = walls_of(corners, radius, arc_sides, cutouts, scale, tol, rim);
     let in_step = |p: Vec3| cutouts.stepped.iter().any(|s| s.holds(p, tol)) || cutouts.blinds.iter().any(|b| b.holds(p, tol));
     if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p) && !on_rim(*p, 0.0)) {
         return Err(NOT_FLAT.into());

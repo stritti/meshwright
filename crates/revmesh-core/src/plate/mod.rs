@@ -52,6 +52,7 @@ use std::f64::consts::PI;
 
 use bosses::{Shape, strip_bosses};
 use holes::Footprint;
+pub(crate) use prism::face_deviations;
 use prism::recognize_prism;
 
 use crate::mesh::{Mesh, snap_mm};
