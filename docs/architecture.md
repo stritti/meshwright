@@ -38,7 +38,7 @@ crates/
     tests/data/        fixtures and golden designs
   revmesh-plugin/   the component: craft:plugin@0.2.0, importer-plugin world
     wit/plugin.wit     vendored from SolidCraft v0.49.0
-plugin/revmesh/     the package: plugin.json, the built .wasm, SolidCraft test cases
+plugin/revmesh/     the package: plugin.json, icons/ (the SVG SolidCraft shows in its Plugins menu), the built .wasm, SolidCraft test cases
 xtask/                 component wrapping, packaging, plugin tests
 ```
 

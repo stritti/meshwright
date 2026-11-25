@@ -93,7 +93,9 @@ fn dist(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(packages)
 }
 
-/// Zips `plugin.json`, localized to `locale`, and the component.
+/// Zips `plugin.json`, localized to `locale`, the component and the package's images (the files
+/// under `icons/` that the manifest's `x-solidcraft-icon` annotations name, shown in SolidCraft's
+/// Plugins menu), leaving out tests and hidden files.
 fn zip_package(root: &Path, locale: Locale) -> Result<PathBuf, String> {
     let mut manifest = manifest(root)?;
     let version = manifest["version"].as_str().ok_or("plugin.json has no version")?.to_owned();
@@ -108,7 +110,23 @@ fn zip_package(root: &Path, locale: Locale) -> Result<PathBuf, String> {
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let component = fs::read(root.join(PACKAGE_DIR).join(&module)).map_err(|e| format!("{module}: {e}"))?;
-    for (name, bytes) in [("plugin.json", manifest.as_slice()), (module.as_str(), component.as_slice())] {
+    let mut files: Vec<(String, Vec<u8>)> = vec![("plugin.json".to_owned(), manifest), (module, component)];
+    let icons = root.join(PACKAGE_DIR).join("icons");
+    if icons.is_dir() {
+        let mut entries: Vec<PathBuf> = fs::read_dir(&icons)
+            .map_err(|e| format!("{}: {e}", icons.display()))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+        entries.sort();
+        for path in entries {
+            let name =
+                path.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| format!("{}: no file name", path.display()))?;
+            let name = format!("icons/{name}");
+            files.push((name.clone(), fs::read(&path).map_err(|e| format!("{name}: {e}"))?));
+        }
+    }
+    for (name, bytes) in &files {
         zip.start_file(name, options).map_err(|e| format!("zip: {e}"))?;
         zip.write_all(bytes).map_err(|e| format!("zip: {e}"))?;
     }
