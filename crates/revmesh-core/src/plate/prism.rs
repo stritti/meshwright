@@ -745,12 +745,17 @@ pub(super) fn recognition(
     let PlateCutouts { mut holes, slots, cutouts, pockets, outline_pockets, .. } = cutouts;
     // A through hole in a pocket's or step's region goes only up to that level, not through the
     // whole plate: from the bottom face it is blind, as deep as the level lies above it. A blind
-    // hole already measured beneath the region keeps its own depth.
+    // hole already measured beneath the region keeps its own depth. A hole whose counterbore,
+    // countersink or round opens on the level would be drilled from the plate's top face, not
+    // from the level, so it is not recognised: the mesh is kept.
     for h in &mut holes {
-        if h.blind.is_none()
-            && let Some(p) = outline_pockets.iter().find(|p| !p.bottom && p.contains([h.x, h.y], tol))
-        {
-            h.blind = Some(Blind { depth: snap_mm(size[2] - p.depth), bottom: true });
+        if let Some(p) = outline_pockets.iter().find(|p| !p.bottom && p.contains([h.x, h.y], tol)) {
+            if h.head.is_some_and(|head| !head.bottom()) {
+                return Err("a hole with a counterbore, countersink or round opening on a step's level is not recognised yet".into());
+            }
+            if h.blind.is_none() {
+                h.blind = Some(Blind { depth: snap_mm(size[2] - p.depth), bottom: true });
+            }
         }
     }
     // A rectangle with cut-outs is an outline, as mesh2cad writes it (`extrude_len`, the

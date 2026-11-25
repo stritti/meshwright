@@ -36,7 +36,8 @@
    2. arcs in outlines and cut-outs (`SketchCurve::Arc` with a `Diameter` parameter) instead of
       only fillet features — round outlines and D-shaped cut-outs, today a mesh
    3. (done for pockets of any straight-sided outline and for steps down from the top face,
-      several levels deep, along Z; steps along X or Y and the combined extrusions' sketches
+      several levels deep, along Z, but not for headed holes opening on a step's level — those
+      stay a mesh or a stack; steps along X or Y and the combined extrusions' sketches
       follow — a part stepped along X or Y is a stack of outlines along that axis, recognised
       by the stack recogniser) one sketch per face level: generalise `split_faces` beyond
       bottom and top — arbitrary pockets and steps, both written as `Pocket<n>Sketch` +

@@ -99,7 +99,8 @@ the mesh's volume within 1%, otherwise the mesh is kept. The import report notes
 volume changed because round facets became true circles. Not recognised yet (kept as a mesh, with the
 reason): curved sides and round outlines, corners with different radii or only some rounded,
 D-shaped and other curved cut-outs, blind or slanted slots, corners rounded almost all the way along their sides,
-steps along X or Y, pockets with curved sides, bosses with a draft, a round or a hole, other shapes on the top face, blind holes with a drill
+steps along X or Y, pockets with curved sides, bosses with a draft, a round or a hole, other shapes on the top face, a counterbore, countersink or
+rounded rim opening on a step's level, blind holes with a drill
 point or a counterbore, and parts rotated off X, Y and Z. Blind holes, like counterbored and
 countersunk ones, stay single holes, not patterns.
 

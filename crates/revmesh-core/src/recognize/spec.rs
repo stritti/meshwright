@@ -233,6 +233,16 @@ pub enum HoleHead {
     },
 }
 
+impl HoleHead {
+    /// Whether it opens on the bottom face (else on the top's).
+    #[must_use]
+    pub fn bottom(&self) -> bool {
+        match self {
+            Self::Counterbore { bottom, .. } | Self::Countersink { bottom, .. } | Self::Round { bottom, .. } => *bottom,
+        }
+    }
+}
+
 impl HoleSpec {
     /// The material the hole removes from a plate `z` thick, in mm³.
     #[must_use]
