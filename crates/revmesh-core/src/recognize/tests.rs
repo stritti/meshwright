@@ -568,10 +568,12 @@ fn outline_arc_sides_become_sketch_arcs() {
     let (expr, is_model) = param(model).expect("model param");
     assert!(is_model);
     assert_eq!(expr, "arc_3_d");
-    // The driving line sides (the bottom and the right, sides 1 and 2) keep their Length
-    // constraints; the arc side and the derived left side carry none.
+    // Only the right side (side 2) keeps its Length: the bottom (side 1) is derived — the
+    // semicircular arc side is tangent to both vertical sides, so their separation, the bottom's
+    // length, is the arc's diameter, and driving both would over-constrain the sketch (the same
+    // tie a stadium's straight sides have). The arc side and the left side carry no Length.
     let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
-    assert_eq!(lengths, [0, 1]);
+    assert_eq!(lengths, [1]);
     for &l in &lengths {
         assert_eq!(curves[l as usize]["type"], "line", "a Length only on a line side");
     }
@@ -1235,16 +1237,18 @@ fn arc_sided_cut_out_gets_its_own_arc_sketch() {
     let (expr, user) = param("cutout_1_arc_3_d").expect("the arc's user param");
     assert!(!user);
     assert_eq!(expr, "20 mm");
-    // The driving straight sides: the bottom and the right (sides 1 and 2) keep their Lengths;
-    // the left side (side 4) is derived through the vertical closure, the arc side drives its
-    // Diameter instead of a Length.
-    assert_eq!(param("cutout_1_1_len").map(|(e, _)| e), Some("20 mm"));
+    // The right side (side 2) keeps its Length; the bottom (side 1) is derived: the arc is
+    // tangent to both vertical sides, so their separation — the bottom's length — is the arc's
+    // diameter, and driving both would leave no solution when one parameter changes (the same
+    // tie a stadium's straight sides have). The left side (side 4) is derived through the
+    // vertical closure, the arc side drives its Diameter instead of a Length.
+    assert!(param("cutout_1_1_len").is_none(), "the side opposite the tangent-tangent arc is derived");
     assert_eq!(param("cutout_1_2_len").map(|(e, _)| e), Some("20 mm"));
     assert!(param("cutout_1_3_len").is_none(), "the arc side carries no Length");
     assert!(param("cutout_1_4_len").is_none(), "the longest vertical side is derived");
     assert!(param("cutout_1_1_angle").is_none(), "an arc-sided cut-out carries no angle, as the outline's");
     let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
-    assert_eq!(lengths, [0, 1]);
+    assert_eq!(lengths, [1]);
     // The semicircle meets both vertical sides tangentially: one Tangent per junction.
     assert_eq!(constraints.iter().filter(|c| c["type"] == "tangent").count(), 2);
     // The arc's centre is a free sketch point at the fitted centre.
@@ -1296,7 +1300,11 @@ fn a_straight_cut_out_beside_an_arc_sided_one_gets_its_own_sketch() {
     let has = |name: &str| params.iter().any(|p| p["name"] == name);
     assert!(has("cutout_1_1_len") && has("cutout_1_2_len"), "the triangle's driving sides");
     assert!(has("cutout_1_3_angle"), "the triangle's angle side keeps its angle in its own sketch");
-    assert!(has("cutout_2_1_len") && has("cutout_2_arc_3_d") && !has("cutout_2_3_len"));
+    assert!(has("cutout_2_2_len") && has("cutout_2_arc_3_d"), "the vertical side and the arc's diameter drive");
+    assert!(
+        !has("cutout_2_1_len") && !has("cutout_2_3_len") && !has("cutout_2_4_len"),
+        "the bottom is derived (the arc's diameter), the arc side and the left side carry none"
+    );
     let triangle = &features[3]["sketch"];
     assert_eq!(triangle["curves"].as_array().expect("curves").iter().filter(|c| c["type"] == "arc").count(), 0);
     assert_eq!(triangle["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "angle").count(), 1);

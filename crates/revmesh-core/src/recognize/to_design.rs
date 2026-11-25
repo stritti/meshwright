@@ -250,7 +250,13 @@ fn polygon_dim(corners: &[[f64; 2]]) -> Vec<bool> {
 /// solution — let the side adjust instead. When the side is also tangent to both arcs at its
 /// ends (a stadium's straight sides are), the tangents force both radii to half the sides'
 /// distance, so the two arcs share one radius: an `Equal` constraint ties them and only the
-/// first drives its `Diameter`, exactly as a slot's two ends do.
+/// first drives its `Diameter`, exactly as a slot's two ends do. And an arc side tangent to both
+/// its neighbouring straight sides, which run parallel, spans them at its diameter: in a
+/// four-sided loop the opposite side connects their far ends square to them and so has that same
+/// length, so alongside the arc's driving `Diameter` it must not drive (a semicircular top on a
+/// rectangle — the two tangents force the neighbouring sides' separation to the diameter, and
+/// changing one parameter alone would leave no solution).
+#[allow(clippy::many_single_char_names)] // points a..f, directions u, v, w, as in the geometry
 fn arc_polygon_dim(corners: &[[f64; 2]], arcs: &[Option<ArcSide>]) -> (Vec<bool>, Vec<(usize, usize)>) {
     let mut dim = dimensioned_sides(corners);
     for (i, arc) in arcs.iter().enumerate() {
@@ -280,6 +286,37 @@ fn arc_polygon_dim(corners: &[[f64; 2]], arcs: &[Option<ArcSide>]) -> (Vec<bool>
                 dim[next_side] = false;
             }
         }
+    }
+    // The tangent-tangent arc of the doc comment: release the opposite side of a four-sided loop.
+    for j in 0..n {
+        let Some(arc) = arcs.get(j).copied().flatten() else { continue };
+        if !dim[j] {
+            continue;
+        }
+        let (prev, next) = ((j + n - 1) % n, (j + 1) % n);
+        if arcs.get(prev).is_some_and(Option::is_some) || arcs.get(next).is_some_and(Option::is_some) {
+            continue;
+        }
+        let (a, b) = (corners[prev], corners[j]);
+        let (c, d) = (corners[next], corners[(j + 2) % n]);
+        if !line_arc_tangent(a, b, arc.centre, arc.r) || !line_arc_tangent(c, d, arc.centre, arc.r) {
+            continue;
+        }
+        let (u, w) = ([b[0] - a[0], b[1] - a[1]], [d[0] - c[0], d[1] - c[1]]);
+        let (lu, lw) = (u[0].hypot(u[1]), w[0].hypot(w[1]));
+        if (u[0] * w[1] - u[1] * w[0]).abs() > 1e-9 * lu * lw {
+            continue; // the neighbouring sides are not parallel
+        }
+        let opp = (j + 2) % n;
+        if arcs.get(opp).is_some_and(Option::is_some) || (opp + 1) % n != prev {
+            continue; // no single opposite side connects their far ends (the loop is not four-sided)
+        }
+        let (e, f) = (corners[opp], corners[(opp + 1) % n]);
+        let v = [f[0] - e[0], f[1] - e[1]];
+        if (v[0] * u[0] + v[1] * u[1]).abs() > 1e-9 * v[0].hypot(v[1]) * lu {
+            continue; // the opposite side is not square to them, so its length is not the diameter
+        }
+        dim[opp] = false;
     }
     (dim, arc_equals)
 }
