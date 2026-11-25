@@ -175,7 +175,6 @@ fn eval_after_param_change(cli: &str, param: &str, value: f64, design_path: &Pat
 /// `cutout_*`, `pocket_*` or `arc_*` (a side's length, a cut-out's, a pocket's, an arc side's
 /// diameter or centre); if there are none, the first driving extrude/box length
 /// (`base_*`/`extrude_*`).
-
 fn driving_lengths(design: &revmesh_core::design::Design) -> Vec<(String, f64)> {
     let plain = |p: &revmesh_core::design::Param| -> Option<(String, f64)> {
         if p.model {
@@ -188,9 +187,7 @@ fn driving_lengths(design: &revmesh_core::design::Design) -> Vec<(String, f64)> 
         .params
         .iter()
         .filter_map(plain)
-        .filter(|(name, _)| {
-            ["outline_", "cutout_", "pocket_", "arc_"].iter().any(|p| name.starts_with(p))
-        })
+        .filter(|(name, _)| ["outline_", "cutout_", "pocket_", "arc_"].iter().any(|p| name.starts_with(p)))
         .collect();
     if !sides.is_empty() {
         return sides;

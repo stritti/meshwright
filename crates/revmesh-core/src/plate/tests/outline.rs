@@ -312,6 +312,7 @@ fn short_sides_between_large_rounds() {
 #[test]
 fn arc_run_starts_after_a_sharp_junction() {
     let expected = ProfileSpec {
+        outline_pockets: vec![],
         corners: vec![[0.0, 0.0], [60.0, 0.0], [90.0, 40.0], [30.0, 40.0]],
         z: 5.0,
         holes: vec![],
@@ -335,6 +336,7 @@ fn arc_run_starts_after_a_sharp_junction() {
 fn chord_and_arc_close_a_two_corner_outline() {
     let (cx, cy, r) = (20.0, 20.0, 20.0);
     let shape = ProfileSpec {
+        outline_pockets: vec![],
         corners: vec![[cx + r, cy], [cx, cy + r]],
         z: 4.0,
         holes: vec![],
@@ -350,6 +352,7 @@ fn chord_and_arc_close_a_two_corner_outline() {
     let (profile, offset) = found_profile(&mesh);
     assert_eq!(offset, [cx, cy, 0.0]);
     let expected = ProfileSpec {
+        outline_pockets: vec![],
         corners: vec![[r, 0.0], [0.0, r]],
         z: 4.0,
         holes: vec![],
@@ -370,6 +373,7 @@ fn chord_and_arc_close_a_two_corner_outline() {
 #[test]
 fn banded_arc_walls_pass_the_wall_checks() {
     let spec = ProfileSpec {
+        outline_pockets: vec![],
         corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
         z: 5.0,
         holes: vec![],
@@ -391,6 +395,7 @@ fn banded_arc_walls_pass_the_wall_checks() {
 #[test]
 fn arc_radius_covers_its_snapped_chord() {
     let spec = ProfileSpec {
+        outline_pockets: vec![],
         corners: vec![[0.0, 0.0], [60.0008, 0.0], [60.0008, 40.0], [0.0, 40.0]],
         z: 5.0,
         holes: vec![],
@@ -435,6 +440,7 @@ fn a_concave_arc_side_is_refused() {
 #[test]
 fn adjoining_short_straight_sides_are_trimmed_from_the_arc_fit() {
     let expected = ProfileSpec {
+        outline_pockets: vec![],
         corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 5.0], [0.0, 5.0]],
         z: 4.0,
         holes: vec![],

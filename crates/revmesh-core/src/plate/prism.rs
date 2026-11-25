@@ -687,8 +687,19 @@ pub(super) fn recognition(
                 a.r = a.r.max(chord / 2.0);
             }
         }
-        let profile =
-            ProfileSpec { corners, arcs, z, holes, slots, pads: vec![], pockets, outline_pockets, bosses: vec![], cutouts, outline_fillet_r };
+        let profile = ProfileSpec {
+            corners,
+            arcs,
+            z,
+            holes,
+            slots,
+            pads: vec![],
+            pockets,
+            outline_pockets,
+            bosses: vec![],
+            cutouts,
+            outline_fillet_r,
+        };
         let volume = profile.volume();
         // The pipeline runs in a frame where the extrusion axis is Z.
         (Recognition::Profile { profile, offset, axis: crate::recognize::Axis::Z }, volume)
