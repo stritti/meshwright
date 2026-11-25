@@ -108,7 +108,20 @@ impl PlateSpec {
         }
         cutout_features(&mut b, &self.cutouts, at, axis);
         let mut pending_rims = Vec::new();
-        hole_features(&mut b, &self.holes, at, axis, "base_z0 + base_t", "base_z0", self.z, extrude, &[], 0, &mut pending_rims);
+        hole_features(
+            &mut b,
+            &self.holes,
+            at,
+            axis,
+            "base_z0 + base_t",
+            "base_z0",
+            self.z,
+            extrude,
+            &[],
+            0,
+            crate::plate::tolerance(self.x.max(self.y).max(self.z)),
+            &mut pending_rims,
+        );
         slot_features(&mut b, &self.slots, at, axis);
         boss_features(&mut b, &self.bosses, at, self.z, axis, "base_z0 + base_t", extrude);
         block_features(&mut b, &self.pads, &self.pockets, &[], at, axis, "base_z0 + base_t", "base_z0", &mut pending_rims);
@@ -208,6 +221,14 @@ impl ProfileSpec {
         }
         cutout_features(&mut b, &self.cutouts, at, axis);
         let mut pending_rims = Vec::new();
+        let scale = {
+            let (mut lo, mut hi) = (self.corners[0], self.corners[0]);
+            for c in &self.corners {
+                lo = [lo[0].min(c[0]), lo[1].min(c[1])];
+                hi = [hi[0].max(c[0]), hi[1].max(c[1])];
+            }
+            (hi[0] - lo[0]).max(hi[1] - lo[1]).max(self.z)
+        };
         hole_features(
             &mut b,
             &self.holes,
@@ -219,6 +240,7 @@ impl ProfileSpec {
             extrude,
             &self.outline_pockets,
             self.pockets.len(),
+            crate::plate::tolerance(scale),
             &mut pending_rims,
         );
         slot_features(&mut b, &self.slots, at, axis);
@@ -827,11 +849,10 @@ struct HoleCtx<'a> {
     /// `pocket_<rect_pockets + i + 1>_depth` (as `block_features` numbers them).
     outline_pockets: &'a [OutlinePocketSpec],
     rect_pockets: usize,
+    /// The recognition tolerance (see `plate::tolerance`), so a hole is matched to a step's
+    /// region exactly as the recogniser matched it.
+    tol: f64,
 }
-
-/// How far a hole's centre may lie from a step's edge to count as opening on its level, in mm:
-/// the recogniser matched within its tolerance, and the output values snap to micrometres.
-const STEP_TOL: f64 = 0.01;
 
 /// A rounded rim on a step's level, to be written once the pocket that makes the level exists:
 /// the rim's fillet edge is named after that pocket's start face (`F<Pocket n>:start`).
@@ -867,6 +888,7 @@ fn hole_features(
     extrude: u32,
     outline_pockets: &[OutlinePocketSpec],
     rect_pockets: usize,
+    tol: f64,
     pending_rims: &mut Vec<PendingRim>,
 ) {
     // Drilled from the +axis face: against the axis. (Built component-wise, so no -0.0.)
@@ -875,7 +897,7 @@ fn hole_features(
         d[axis.index()] = -1.0;
         d
     };
-    let ctx = HoleCtx { at, axis, top, bottom, z, down, extrude, outline_pockets, rect_pockets };
+    let ctx = HoleCtx { at, axis, top, bottom, z, down, extrude, outline_pockets, rect_pockets, tol };
     let mut counts = [0, 0, 0, 0]; // singles, rows, grids, circles
     for (p, group) in hole_groups(holes) {
         match group {
@@ -910,7 +932,7 @@ fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: u
     // A head opening on a step's level (the pocket's floor faces up like a top face): drill from
     // the level, not from the plate's top face above the pocket.
     let level =
-        ctx.outline_pockets.iter().enumerate().find(|(_, pk)| !pk.bottom && pk.contains([h.x, h.y], STEP_TOL)).map(|(i, pk)| (i, pk.depth));
+        ctx.outline_pockets.iter().enumerate().find(|(_, pk)| !pk.bottom && pk.contains([h.x, h.y], ctx.tol)).map(|(i, pk)| (i, pk.depth));
     let on_level = h.head.is_some_and(|head| !head.bottom()) && level.is_some();
     let level_face = level.map(|(i, _)| format!("{} - pocket_{}_depth", ctx.top, ctx.rect_pockets + i + 1));
     let (face_w, face, direction) = if on_level {

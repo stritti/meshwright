@@ -1229,6 +1229,46 @@ fn a_counterbore_opening_on_a_step_level_is_drilled_from_the_level() {
     assert_eq!(hole["hole"]["cb_depth"].as_str().expect("depth"), "hole_1_cbore_depth");
 }
 
+/// A headed hole just outside a step's region (within 0.01 mm of its edge, but outside the
+/// recognition tolerance of 0.001 mm on a 60 mm part) opens on the plate's top face, not on the
+/// step's level: the level match uses the recogniser's own tolerance (codex finding on #85).
+#[test]
+fn a_headed_hole_beside_a_step_edge_is_drilled_from_the_top_face() {
+    use super::spec::HoleHead;
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 6.0,
+        holes: vec![HoleSpec {
+            x: 29.999,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Counterbore { d: 10.0, depth: 1.0, bottom: false }),
+            blind: None,
+        }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: vec![OutlinePocketSpec {
+            corners: vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]],
+            depth: 3.0,
+            bottom: false,
+        }],
+        bosses: vec![],
+        slots: vec![],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("the hole");
+    assert_eq!(
+        hole["at"][2].as_str().expect("face"),
+        "extrude_0 + extrude_len",
+        "drilled from the top face, the hole lies outside the step's region: {hole}"
+    );
+    assert_eq!(hole["position"], serde_json::json!([29.999, 20.0, 6.0]));
+}
+
 /// A rounded rim on a step's level: the hole is drilled from the level, and the rim's fillet
 /// sits on the pocket's start edge, so it is written only after that pocket exists (5.3).
 #[test]

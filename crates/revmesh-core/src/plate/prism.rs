@@ -642,8 +642,10 @@ pub(super) fn stepped_hole(
         Stepped { centre, bore_r, head_r, bore, mouth, face_z, inward, depth: 0.0, counterbore: false, rounded: false, round_slack: 0.0 };
     // Its corners between the faces tell the kind: a counterbore has some on its wide wall,
     // down to its floor; a countersink's cone meets the bore at the bore's corners nearest
-    // the face.
-    let inside = |p: &Vec3| p[2] > tol && p[2] < height - tol;
+    // the face. The ceiling is the mouth's own face: a mouth opening on a step's level has its
+    // vertices at that level, and they are the mouth, not a floor.
+    let ceiling = if on_top { face_z } else { height };
+    let inside = |p: &Vec3| p[2] > tol && p[2] < ceiling - tol;
     let mine: Vec<Vec3> =
         faces.between.iter().chain(faces.caps.iter().flatten()).copied().filter(|p| inside(p) && s.reaches([p[0], p[1]], tol)).collect();
     let depth = |p: &Vec3| (p[2] - face_z) * inward;

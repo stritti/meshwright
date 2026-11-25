@@ -148,7 +148,7 @@ const ANGLE_HUNDREDTHS: f64 = 100.0;
 
 /// How far a corner may lie from where the recogniser expects it, in millimetres, for a part
 /// whose largest size is `scale`. STL coordinates have about seven significant digits.
-fn tolerance(scale: f64) -> f64 {
+pub(crate) fn tolerance(scale: f64) -> f64 {
     (scale * REL_TOLERANCE).max(MIN_TOLERANCE)
 }
 
