@@ -1,10 +1,11 @@
 //! A stack of outlines, each extruded over its own span along one axis, and its design.
 
 use super::axis::Axis;
+use super::to_design::dimensioned_polygon_params;
 
 use crate::Locale;
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, Operation, Param, Plane, Profiles, fmt_number, polygon_sketch, polygons_sketch,
+    Design, DesignBuilder, Extent, FeatureKind, Operation, Param, Plane, Profiles, fmt_number, polygons_sketch_dimensioned,
 };
 use crate::mesh::{Vec3, snap_mm};
 
@@ -78,7 +79,9 @@ impl StackSpec {
     /// `axis`, as mesh2cad writes a union of extrusions: per band `k` the parameters
     /// `extrude_<a><k>_len` and `extrude_<a><k>_0` (where it starts; a band above the first
     /// starts where the one below ends, so changing a length moves the bands above), a sketch of
-    /// its section on the axis's plane, and an extrusion along the plane's normal from its start,
+    /// its section on the axis's plane — dimensioned like a plate's outline, the band's outline
+    /// by `outline_<k>_<i>_len` and `outline_<k>_<i>_angle`, its openings by
+    /// `cutout_<n>_<i>_len`/`_angle` — and an extrusion along the plane's normal from its start,
     /// the first a new body and the next joined to it; then a move to where the part is.
     #[must_use]
     pub fn to_design_on(&self, name: &str, at: Vec3, axis: Axis) -> Design {
@@ -93,19 +96,31 @@ impl StackSpec {
                 b.param(Param::user_expr(format!("extrude_{a}{n}_0"), format!("extrude_{a}{k}_0 + extrude_{a}{k}_len")));
             }
         }
+        // The openings are numbered across the bands, in design order.
+        let mut cutout_n = 0;
         for (k, band) in self.bands.iter().enumerate() {
             let n = k + 1;
+            // The openings in the band's sketch, its outline's lines l1..l<m> first.
+            let polygons = [vec![band.outline.clone()], band.cutouts.clone()].concat();
+            let mut lens = Vec::with_capacity(polygons.len());
+            let mut angles = Vec::with_capacity(polygons.len());
+            for (i, poly) in polygons.iter().enumerate() {
+                let prefix = if i == 0 {
+                    format!("outline_{n}")
+                } else {
+                    cutout_n += 1;
+                    format!("cutout_{cutout_n}")
+                };
+                let (l, angle) = dimensioned_polygon_params(&mut b, &prefix, poly);
+                lens.push(l);
+                angles.push(angle);
+            }
             let sketch = b.feature(
                 format!("Sketch{n}"),
                 vec![],
                 FeatureKind::Sketch {
                     plane: Plane::Origin { name: axis.plane() },
-                    // The openings in the band's sketch, its outline's lines l1..l<m> first.
-                    sketch: if band.cutouts.is_empty() {
-                        polygon_sketch(&band.outline)
-                    } else {
-                        polygons_sketch(&[vec![band.outline.clone()], band.cutouts.clone()].concat())
-                    },
+                    sketch: polygons_sketch_dimensioned(&polygons, &lens, &angles),
                 },
             );
             let extent = Extent::positive(format!("extrude_{a}{n}_len"));

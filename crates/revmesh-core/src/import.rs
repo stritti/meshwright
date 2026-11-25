@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::design::{Design, DesignBuilder, FeatureKind, MeshData};
 use crate::i18n::Locale;
 use crate::mesh::Mesh;
-use crate::recognize::{Axis, Recognition, recognize};
+use crate::recognize::{Recognition, recognize};
 use crate::report::{LossItem, LossReport, Severity};
 use crate::stl::{self, StlError};
 
@@ -63,22 +63,20 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
     let body = body_name(file_name);
     let locale = options.locale;
     if options.mode == Mode::Auto {
-        let recognised = match recognize(&mesh) {
-            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", offset), plate.describe_in(locale), plate.volume(), true)),
+        let found = recognize(&mesh);
+        let recognised = match &found {
+            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", *offset), plate.describe_in(locale), plate.volume())),
             Recognition::Profile { profile, offset, axis } => {
-                // The deviation report is measured on a Z prism; another axis is rotated into Z
-                // for recognition, so the report would not match the exported design.
-                Ok((profile.to_design_on("", offset, axis), profile.describe_in(locale), profile.volume(), axis == Axis::Z))
+                Ok((profile.to_design_on("", *offset, *axis), profile.describe_in(locale), profile.volume()))
             }
-            Recognition::Combined { spec, offset } => Ok((spec.to_design_at("", offset), spec.describe_in(locale), spec.volume(), false)),
-            // Stacked and combined parts are no single Z prism; their reports follow (roadmap).
+            Recognition::Combined { spec, offset } => Ok((spec.to_design_at("", *offset), spec.describe_in(locale), spec.volume())),
             Recognition::Stack { spec, offset, axis } => {
-                Ok((spec.to_design_on("", offset, axis), spec.describe_in(locale, axis), spec.volume(), false))
+                Ok((spec.to_design_on("", *offset, *axis), spec.describe_in(locale, *axis), spec.volume()))
             }
-            Recognition::Unrecognized { reason } => Err(reason),
+            Recognition::Unrecognized { reason } => Err(reason.clone()),
         };
         match recognised {
-            Ok((design, summary, volume, z_prism)) => {
+            Ok((design, summary, volume)) => {
                 let mut report = LossReport::new(summary);
                 let change = volume / mesh.volume() - 1.0;
                 if change.abs() > SMOOTHING_NOTE {
@@ -91,9 +89,9 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
                         code: "revmesh.smoothed",
                     });
                 }
-                // Roadmap 5.4: the per-face surface deviation between the mesh and the
-                // recognised faces, computed in the sandbox (empty for parts that are no Z prism).
-                let deviations = if z_prism { crate::plate::face_deviations(&mesh) } else { Vec::new() };
+                // The per-face surface deviation between the mesh and the recognised faces,
+                // computed in the sandbox for every recognised kind (roadmap 5.4).
+                let deviations = crate::recognize::deviations(&mesh, &found);
                 if !deviations.is_empty() {
                     let faces = deviations
                         .iter()
@@ -275,6 +273,34 @@ mod tests {
         assert_eq!(json["features"][2]["translate"], serde_json::json!(["base_cx - base_x / 2", "base_cy - base_y / 2", "base_z0"]));
         assert_eq!(json["features"][3]["position"], serde_json::json!([0.0, 0.0, 5.0]));
         assert_eq!(json["features"][4]["edges"][0], serde_json::json!([-30.0, -20.0, 2.5]));
+    }
+
+    /// Roadmap 5.4: a stack's import report lists the per-band wall deviations, labelled
+    /// `band <k> side <i>`; a combined part's lists them per extrusion (`extrude <a> side <i>`,
+    /// `extrude <a> cut <n> side <i>`, `extrude <a> hole <n>`).
+    #[test]
+    fn stack_and_combined_imports_report_per_part_deviations() {
+        let bytes = include_bytes!("../../../plugin/revmesh/tests/stack.stl");
+        let result = import(bytes, "stack.stl", &ImportOptions::default()).expect("imports");
+        let item = result.report.items.iter().find(|i| i.code == "revmesh.deviation").expect("a deviation item");
+        assert!(item.message.contains("band 1 side 1"), "{}", item.message);
+        assert!(item.message.contains("band 3 side 1"), "{}", item.message);
+
+        let bytes = include_bytes!("../../../plugin/revmesh/tests/combined-cuts.stl");
+        let result = import(bytes, "combined-cuts.stl", &ImportOptions::default()).expect("imports");
+        let item = result.report.items.iter().find(|i| i.code == "revmesh.deviation").expect("a deviation item");
+        assert!(item.message.contains("extrude x cut 1 side 1"), "{}", item.message);
+        assert!(item.message.contains("extrude y cut 2 side 1"), "{}", item.message);
+    }
+
+    /// A box rounded all over reports its rounded surface's deviation (roadmap 5.4).
+    #[test]
+    fn rounded_box_import_reports_its_rounded_surface() {
+        let mesh = crate::synth::rounded_box(60.0, 40.0, 30.0, 5.0, 16, [0.0; 3]);
+        let bytes = stl::write_binary(&mesh);
+        let result = import(&bytes, "rounded.stl", &ImportOptions::default()).expect("imports");
+        let item = result.report.items.iter().find(|i| i.code == "revmesh.deviation").expect("a deviation item");
+        assert!(item.message.contains("rounded surface"), "{}", item.message);
     }
 
     /// Counterbores and countersinks become SolidCraft's own hole kinds with mesh2cad's names; a

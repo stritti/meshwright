@@ -1,10 +1,15 @@
-use super::spec::{ArcSide, BossSpec, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+use super::spec::{ArcSide, BossSpec, CutoutSpec, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 use super::{Axis, Recognition, recognize};
 
 use crate::design::{Design, dimensioned_sides, fmt_number};
 use crate::mesh::Mesh;
 use crate::mesh::tests::tetrahedron;
 use crate::synth;
+
+/// A straight-sided cut-out from its corners (counter-clockwise).
+fn cutout(corners: &[[f64; 2]]) -> CutoutSpec {
+    CutoutSpec { corners: corners.to_vec(), arcs: Vec::new() }
+}
 
 /// A closed, outward-facing box from the origin to `(x, y, z)`, offset by `at`.
 pub(crate) fn block(x: f64, y: f64, z: f64, at: [f64; 3]) -> Mesh {
@@ -160,7 +165,7 @@ fn cut_outs_are_cut_after_the_fillet() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
-        cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
+        cutouts: vec![cutout(&[[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]])],
         outline_fillet_r: None,
         edge_fillet_r: None,
     };
@@ -185,7 +190,7 @@ fn cut_outs_are_cut_after_the_fillet() {
         pockets: vec![],
         outline_pockets: Vec::new(),
         bosses: vec![],
-        cutouts: vec![vec![[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]]],
+        cutouts: vec![cutout(&[[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]])],
         arcs: Vec::new(),
         outline_fillet_r: Some(5.0),
     };
@@ -209,7 +214,7 @@ fn outline_and_cutout_sides_are_dimensioned() {
         pockets: vec![],
         outline_pockets: Vec::new(),
         bosses: vec![],
-        cutouts: vec![vec![[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]],
+        cutouts: vec![cutout(&[[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]])],
         arcs: Vec::new(),
         outline_fillet_r: None,
     };
@@ -416,7 +421,7 @@ fn right_triangle_releases_a_leg_length_for_the_angle() {
         pockets: vec![],
         outline_pockets: Vec::new(),
         bosses: vec![],
-        cutouts: vec![vec![[10.0, 10.0], [30.0, 10.0], [30.0, 20.0]]],
+        cutouts: vec![cutout(&[[10.0, 10.0], [30.0, 10.0], [30.0, 20.0]])],
         arcs: vec![None; 3],
         outline_fillet_r: None,
     };
@@ -563,10 +568,12 @@ fn outline_arc_sides_become_sketch_arcs() {
     let (expr, is_model) = param(model).expect("model param");
     assert!(is_model);
     assert_eq!(expr, "arc_3_d");
-    // The driving line sides (the bottom and the right, sides 1 and 2) keep their Length
-    // constraints; the arc side and the derived left side carry none.
+    // Only the right side (side 2) keeps its Length: the bottom (side 1) is derived — the
+    // semicircular arc side is tangent to both vertical sides, so their separation, the bottom's
+    // length, is the arc's diameter, and driving both would over-constrain the sketch (the same
+    // tie a stadium's straight sides have). The arc side and the left side carry no Length.
     let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
-    assert_eq!(lengths, [0, 1]);
+    assert_eq!(lengths, [1]);
     for &l in &lengths {
         assert_eq!(curves[l as usize]["type"], "line", "a Length only on a line side");
     }
@@ -1179,4 +1186,253 @@ fn a_bottom_rounded_hole_beneath_a_step_is_drilled_from_the_bottom() {
     assert_eq!(hole["depth"].as_str().expect("depth"), "hole_1_depth", "blind to the step's level");
     let rim = features.iter().find(|f| f["name"] == "Hole1Rim").expect("the rim fillet");
     assert!(rim["edge_names"][0].as_str().expect("edge").contains(":start"), "the rim is on the bore's bottom edge: {rim}");
+}
+
+/// A counterbore opening on a step's level is drilled from that level — the pocket's start face,
+/// one `pocket_<n>_depth` below the top — not from the plate's top face (roadmap 5.3).
+#[test]
+fn a_counterbore_opening_on_a_step_level_is_drilled_from_the_level() {
+    use super::spec::{Blind, HoleHead};
+    let step = |depth: f64| OutlinePocketSpec { corners: vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]], depth, bottom: false };
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 6.0,
+        holes: vec![HoleSpec {
+            x: 45.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Counterbore { d: 10.0, depth: 1.0, bottom: false }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: vec![step(3.0)],
+        bosses: vec![],
+        slots: vec![],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("the hole");
+    assert_eq!(
+        hole["at"],
+        serde_json::json!(["hole_1_x", "hole_1_y", "extrude_0 + extrude_len - pocket_1_depth"]),
+        "drilled from the step's level"
+    );
+    assert_eq!(hole["position"], serde_json::json!([45.0, 20.0, 3.0]));
+    assert_eq!(hole["direction"], serde_json::json!([0.0, 0.0, -1.0]));
+    assert_eq!(hole["depth"].as_str().expect("depth"), "hole_1_depth", "blind from the level down through the bottom");
+    assert_eq!(hole["hole"]["type"], "counterbore");
+    assert_eq!(hole["hole"]["cb_diameter"].as_str().expect("d"), "hole_1_cbore_d");
+    assert_eq!(hole["hole"]["cb_depth"].as_str().expect("depth"), "hole_1_cbore_depth");
+}
+
+/// A headed hole just outside a step's region (within 0.01 mm of its edge, but outside the
+/// recognition tolerance of 0.001 mm on a 60 mm part) opens on the plate's top face, not on the
+/// step's level: the level match uses the recogniser's own tolerance (codex finding on #85).
+#[test]
+fn a_headed_hole_beside_a_step_edge_is_drilled_from_the_top_face() {
+    use super::spec::HoleHead;
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 6.0,
+        holes: vec![HoleSpec {
+            x: 29.999,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Counterbore { d: 10.0, depth: 1.0, bottom: false }),
+            blind: None,
+        }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: vec![OutlinePocketSpec {
+            corners: vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]],
+            depth: 3.0,
+            bottom: false,
+        }],
+        bosses: vec![],
+        slots: vec![],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("the hole");
+    assert_eq!(
+        hole["at"][2].as_str().expect("face"),
+        "extrude_0 + extrude_len",
+        "drilled from the top face, the hole lies outside the step's region: {hole}"
+    );
+    assert_eq!(hole["position"], serde_json::json!([29.999, 20.0, 6.0]));
+}
+
+/// A rounded rim on a step's level: the hole is drilled from the level, and the rim's fillet
+/// sits on the pocket's start edge, so it is written only after that pocket exists (5.3).
+#[test]
+fn a_rounded_rim_on_a_step_level_fillets_the_pockets_start_edge() {
+    use super::spec::{Blind, HoleHead};
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 6.0,
+        holes: vec![HoleSpec {
+            x: 45.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Round { r: 1.0, bottom: false }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: vec![OutlinePocketSpec {
+            corners: vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]],
+            depth: 3.0,
+            bottom: false,
+        }],
+        bosses: vec![],
+        slots: vec![],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
+    assert_eq!(
+        names,
+        ["Sketch1", "Extrude1", "Move1", "Hole1", "Pocket1Sketch", "Pocket1", "Hole1Rim"],
+        "the rim after its pocket: {names:?}"
+    );
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("the hole");
+    assert_eq!(hole["at"][2].as_str().expect("face"), "extrude_0 + extrude_len - pocket_1_depth", "drilled from the step's level");
+    let rim = features.iter().find(|f| f["name"] == "Hole1Rim").expect("the rim fillet");
+    assert_eq!(rim["edge_names"][0], "F6:start|F4:bore:side:0", "the pocket's start edge and the bore: {rim}");
+    assert_eq!(rim["edges"][0], serde_json::json!([48.0, 20.0, 3.0]));
+    assert_eq!(rim["radius"].as_str().expect("r"), "hole_1_rim_r");
+}
+
+/// Roadmap 5.2, cut-outs: a cut-out with an arc side gets its own sketch `Cutout<n>Sketch` and a
+/// cut through everything `Cutout<n>` (not the shared `CutoutsSketch`), the arc side drawn as an
+/// `arc` curve whose `Diameter` is driven by `cutout_<n>_arc_<i>_d`, its centre a free sketch
+/// point — exactly as an outline's arc side, with `cutout_<n>_<i>_len` on the driving straight
+/// sides and `Tangent` at the arc's tangent junctions.
+#[test]
+fn arc_sided_cut_out_gets_its_own_arc_sketch() {
+    // A 20 x 20 square whose top side bulges out as a radius-10 semicircle about [20, 30].
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: Vec::new(),
+        bosses: vec![],
+        cutouts: vec![CutoutSpec {
+            corners: vec![[10.0, 10.0], [30.0, 10.0], [30.0, 30.0], [10.0, 30.0]],
+            arcs: vec![None, None, Some(ArcSide { centre: [20.0, 30.0], r: 10.0 }), None],
+        }],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
+    assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Cutout1Sketch", "Cutout1"], "one sketch and cut per arc-sided cut-out");
+    let sketch = &features[3]["sketch"];
+    let curves = sketch["curves"].as_array().expect("curves");
+    let arc_curves: Vec<&serde_json::Value> = curves.iter().filter(|c| c["type"] == "arc").collect();
+    assert_eq!(arc_curves.len(), 1, "the arc side is one arc curve: {curves:?}");
+    assert_eq!(arc_curves[0]["id"].as_str().expect("id"), "a1");
+    assert_eq!(curves.iter().filter(|c| c["type"] == "line").count(), 3);
+    let constraints = sketch["constraints"].as_array().expect("constraints");
+    let diams: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "diameter").collect();
+    assert_eq!(diams.len(), 1, "one Diameter, on the arc");
+    assert_eq!(diams[0]["value"].as_f64().expect("value"), 20.0);
+    let params = json["params"].as_array().expect("params");
+    let param = |name: &str| {
+        params.iter().find(|p| p["name"] == name).map(|p| (p["expr"].as_str().expect("expr"), p["model"].as_bool().expect("model")))
+    };
+    let model = diams[0]["param"].as_str().expect("param");
+    let (expr, is_model) = param(model).expect("the diameter's model param");
+    assert!(is_model);
+    assert_eq!(expr, "cutout_1_arc_3_d");
+    let (expr, user) = param("cutout_1_arc_3_d").expect("the arc's user param");
+    assert!(!user);
+    assert_eq!(expr, "20 mm");
+    // The right side (side 2) keeps its Length; the bottom (side 1) is derived: the arc is
+    // tangent to both vertical sides, so their separation — the bottom's length — is the arc's
+    // diameter, and driving both would leave no solution when one parameter changes (the same
+    // tie a stadium's straight sides have). The left side (side 4) is derived through the
+    // vertical closure, the arc side drives its Diameter instead of a Length.
+    assert!(param("cutout_1_1_len").is_none(), "the side opposite the tangent-tangent arc is derived");
+    assert_eq!(param("cutout_1_2_len").map(|(e, _)| e), Some("20 mm"));
+    assert!(param("cutout_1_3_len").is_none(), "the arc side carries no Length");
+    assert!(param("cutout_1_4_len").is_none(), "the longest vertical side is derived");
+    assert!(param("cutout_1_1_angle").is_none(), "an arc-sided cut-out carries no angle, as the outline's");
+    let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    assert_eq!(lengths, [1]);
+    // The semicircle meets both vertical sides tangentially: one Tangent per junction.
+    assert_eq!(constraints.iter().filter(|c| c["type"] == "tangent").count(), 2);
+    // The arc's centre is a free sketch point at the fitted centre.
+    let centre = sketch["points"]
+        .as_array()
+        .expect("points")
+        .iter()
+        .find(|p| p["pos"] == serde_json::json!([20.0, 30.0]))
+        .expect("the centre point");
+    assert!(!centre["fixed"].as_bool().expect("fixed"));
+    assert!(centre["exprs"].is_null());
+    let cut = &features[4];
+    assert_eq!((cut["operation"].as_str(), &cut["extent"]["through_all"]), (Some("cut"), &serde_json::json!(true)));
+    // The volume counts the arc's circular segment beyond its chord (a semicircle: theta = pi).
+    let segment = 0.5 * 10.0 * 10.0 * (std::f64::consts::PI - std::f64::consts::PI.sin());
+    assert!((spec.volume() - (60.0 * 40.0 - (400.0 + segment)) * 5.0).abs() < 1e-9, "{}", spec.volume());
+}
+
+/// When one cut-out has an arc side, every cut-out gets its own sketch and cut — the
+/// straight-sided one dimensioned as before, just in `Cutout<n>Sketch` instead of the shared
+/// `CutoutsSketch`.
+#[test]
+fn a_straight_cut_out_beside_an_arc_sided_one_gets_its_own_sketch() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: Vec::new(),
+        bosses: vec![],
+        cutouts: vec![
+            cutout(&[[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]]),
+            CutoutSpec {
+                corners: vec![[30.0, 10.0], [50.0, 10.0], [50.0, 30.0], [30.0, 30.0]],
+                arcs: vec![None, None, Some(ArcSide { centre: [40.0, 30.0], r: 10.0 }), None],
+            },
+        ],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
+    assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Cutout1Sketch", "Cutout1", "Cutout2Sketch", "Cutout2"]);
+    assert!(features.iter().all(|f| f["name"] != "CutoutsSketch"), "no shared cut-outs sketch: {names:?}");
+    let params = json["params"].as_array().expect("params");
+    let has = |name: &str| params.iter().any(|p| p["name"] == name);
+    assert!(has("cutout_1_1_len") && has("cutout_1_2_len"), "the triangle's driving sides");
+    assert!(has("cutout_1_3_angle"), "the triangle's angle side keeps its angle in its own sketch");
+    assert!(has("cutout_2_2_len") && has("cutout_2_arc_3_d"), "the vertical side and the arc's diameter drive");
+    assert!(
+        !has("cutout_2_1_len") && !has("cutout_2_3_len") && !has("cutout_2_4_len"),
+        "the bottom is derived (the arc's diameter), the arc side and the left side carry none"
+    );
+    let triangle = &features[3]["sketch"];
+    assert_eq!(triangle["curves"].as_array().expect("curves").iter().filter(|c| c["type"] == "arc").count(), 0);
+    assert_eq!(triangle["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "angle").count(), 1);
+    let arc_cutout = &features[5]["sketch"];
+    assert_eq!(arc_cutout["curves"].as_array().expect("curves").iter().filter(|c| c["type"] == "arc").count(), 1);
 }

@@ -389,15 +389,241 @@ fn stepped_plate_with_counterbore(bore: f64, head: f64, floor: f64, head_on_leve
     Mesh::new(t)
 }
 
-/// A counterbore opening on a step's level is refused by the plate recogniser: the hole would
-/// be drilled from the plate's top face, not from the level. (The part may still be recognised
-/// exactly by another recogniser, as a stack of bands, or kept as a mesh.)
+/// A counterbore opening on a step's level is drilled from that level, not from the plate's top
+/// face: it is recognised exactly, its bore blind from the bottom as deep as the level lies
+/// above it (roadmap 5.3).
 #[test]
-fn a_counterbore_opening_on_a_step_level_is_refused() {
+fn a_counterbore_opening_on_a_step_level_is_recognised() {
+    use crate::recognize::{Blind, HoleHead};
     let mesh = stepped_plate_with_counterbore(6.0, 10.0, 2.0, true);
     assert!(mesh.volume() > 0.0, "mesh wound inside out");
-    let why = crate::plate::recognize_plate(&mesh, true).expect_err("the plate recogniser refuses a headed hole on a step's level");
-    assert!(why.contains("step's level"), "{why}");
+    let step = vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile.outline_pockets, [OutlinePocketSpec { corners: step, depth: 3.0, bottom: false }]);
+    assert_eq!(
+        profile.holes,
+        [HoleSpec {
+            x: 45.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Counterbore { d: 10.0, depth: 1.0, bottom: false }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }]
+    );
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
+}
+
+/// A 60 x 40 x 6 plate with the step x >= 30 at Z = 3 and a countersunk hole at (45, 20)
+/// opening on the step's level: an Ø`bore` bore from the bottom face up to Z = `floor`, and a
+/// cone from there to the Ø`head` mouth on the level.
+fn stepped_plate_with_countersink_on_level(bore: f64, head: f64, floor: f64) -> Mesh {
+    let bottom = [[0.0, 0.0], [30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0], [0.0, 40.0]];
+    let high = [[0.0, 0.0], [30.0, 0.0], [30.0, 40.0], [0.0, 40.0]];
+    let step = [[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
+    let at = |p: P2, z: f64| [p[0], p[1], z];
+    let ring = |d: f64| synth::rings(&[HoleSpec { x: 45.0, y: 20.0, d, head: None, blind: None }], 16).remove(0);
+    let (bore_ring, mouth_ring) = (ring(bore), ring(head));
+    let mut t = Vec::new();
+    for [a, b, c] in synth::triangulate(&bottom, std::slice::from_ref(&bore_ring)) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    t.extend(ring_walls(&bottom, 0.0, 3.0));
+    for [a, b, c] in synth::triangulate(&step, std::slice::from_ref(&mouth_ring)) {
+        t.push([at(a, 3.0), at(b, 3.0), at(c, 3.0)]);
+    }
+    t.extend(ring_walls(&high, 3.0, 6.0));
+    for [a, b, c] in synth::triangulate(&high, &[]) {
+        t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+    }
+    let cw = |r: &[P2]| r.iter().rev().copied().collect::<Vec<P2>>();
+    // The bore's wall up to the cone's foot, then the cone up to the mouth on the level.
+    t.extend(ring_walls(&cw(&bore_ring), 0.0, floor));
+    let m = bore_ring.len();
+    for i in 0..m {
+        let (a, b) = (at(cw(&bore_ring)[i], floor), at(cw(&bore_ring)[(i + 1) % m], floor));
+        let (c, d) = (at(cw(&mouth_ring)[(i + 1) % m], 3.0), at(cw(&mouth_ring)[i], 3.0));
+        t.extend([[a, b, c], [a, c, d]]);
+    }
+    Mesh::new(t)
+}
+
+/// A countersink opening on a step's level is measured from that level (not from the plate's
+/// top face), so its cone's depth and angle come out right: it is recognised exactly (5.3).
+#[test]
+fn a_countersink_opening_on_a_step_level_is_recognised() {
+    use crate::recognize::{Blind, HoleHead};
+    // Ø6 bore, Ø10 mouth, cone from Z = 1 to the level Z = 3: a 90° countersink 2 mm deep.
+    let mesh = stepped_plate_with_countersink_on_level(6.0, 10.0, 1.0);
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let step = vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile.outline_pockets, [OutlinePocketSpec { corners: step, depth: 3.0, bottom: false }]);
+    assert_eq!(
+        profile.holes,
+        [HoleSpec {
+            x: 45.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Countersink { d: 10.0, angle: 90.0, bottom: false }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }]
+    );
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
+}
+
+/// A 60 x 40 x 6 plate with the step x >= 30 at Z = 3 and a hole at (45, 20) whose rim is rounded
+/// on the step's level: an Ø`bore` bore from the bottom face up to Z = `3 - f`, then a quarter
+/// torus of radius `f` out to the Ø`bore + 2f` mouth on the level, in `steps` rings.
+fn stepped_plate_with_round_on_level(bore: f64, f: f64, steps: usize) -> Mesh {
+    let bottom = [[0.0, 0.0], [30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0], [0.0, 40.0]];
+    let high = [[0.0, 0.0], [30.0, 0.0], [30.0, 40.0], [0.0, 40.0]];
+    let step = [[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
+    let at = |p: P2, z: f64| [p[0], p[1], z];
+    let ring_at = |r: f64| -> Vec<P2> {
+        (0..16).map(|i| 2.0 * std::f64::consts::PI * f64::from(i) / 16.0).map(|a| [45.0 + r * a.cos(), 20.0 + r * a.sin()]).collect()
+    };
+    let head_r = bore / 2.0 + f;
+    let bore_ring = ring_at(bore / 2.0);
+    let mouth_ring = ring_at(head_r);
+    let mut t = Vec::new();
+    for [a, b, c] in synth::triangulate(&bottom, std::slice::from_ref(&bore_ring)) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    t.extend(ring_walls(&bottom, 0.0, 3.0));
+    for [a, b, c] in synth::triangulate(&step, std::slice::from_ref(&mouth_ring)) {
+        t.push([at(a, 3.0), at(b, 3.0), at(c, 3.0)]);
+    }
+    t.extend(ring_walls(&high, 3.0, 6.0));
+    for [a, b, c] in synth::triangulate(&high, &[]) {
+        t.push([at(a, 6.0), at(b, 6.0), at(c, 6.0)]);
+    }
+    let cw = |r: &[P2]| r.iter().rev().copied().collect::<Vec<P2>>();
+    // The bore's wall up to the round's foot, then the quarter torus in `steps` rings.
+    t.extend(ring_walls(&cw(&bore_ring), 0.0, 3.0 - f));
+    let mut rings: Vec<Vec<P2>> = (0..=steps)
+        .map(|k| {
+            let alpha = -std::f64::consts::PI + std::f64::consts::FRAC_PI_2 * k as f64 / steps as f64;
+            let r = head_r + f * alpha.cos();
+            ring_at(r)
+        })
+        .collect();
+    // The torus starts at the bore's rim (radius bore_r at depth f) and ends at the mouth.
+    rings[0] = bore_ring.clone();
+    rings[steps] = mouth_ring.clone();
+    for k in 0..steps {
+        let (lo, hi) = (cw(&rings[k]), cw(&rings[k + 1]));
+        let z_lo = 3.0 - (f + f * (-std::f64::consts::PI + std::f64::consts::FRAC_PI_2 * k as f64 / steps as f64).sin());
+        let z_hi = 3.0 - (f + f * (-std::f64::consts::PI + std::f64::consts::FRAC_PI_2 * (k + 1) as f64 / steps as f64).sin());
+        for i in 0..16 {
+            let (a, b) = (at(lo[i], z_lo), at(lo[(i + 1) % 16], z_lo));
+            let (c, d) = (at(hi[(i + 1) % 16], z_hi), at(hi[i], z_hi));
+            t.extend([[a, b, c], [a, c, d]]);
+        }
+    }
+    Mesh::new(t)
+}
+
+/// A rounded rim opening on a step's level is measured from that level and recognised exactly:
+/// the round's radius comes from the torus, not from a depth below the plate's top (5.3).
+#[test]
+fn a_rounded_rim_opening_on_a_step_level_is_recognised() {
+    use crate::recognize::{Blind, HoleHead};
+    // Ø6 bore, 1 mm rim round: the mouth is Ø8 on the level Z = 3, the torus foot at Z = 2.
+    let mesh = stepped_plate_with_round_on_level(6.0, 1.0, 4);
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let step = vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
+    let (profile, _) = found_profile(&mesh);
+    assert_eq!(profile.outline_pockets, [OutlinePocketSpec { corners: step, depth: 3.0, bottom: false }]);
+    assert_eq!(
+        profile.holes,
+        [HoleSpec {
+            x: 45.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Round { r: 1.0, bottom: false }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }]
+    );
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
+}
+
+/// A 60 x 40 x 6 plate with two disconnected steps down to Z = 3 (the ends x <= 15 and x >= 45,
+/// a raised middle between) and a counterbored hole at (52, 20) on the second region's level:
+/// an Ø6 bore and an Ø10 mouth whose floor lies at Z = 2.
+fn two_disconnected_steps_with_counterbore() -> Mesh {
+    let at = |p: P2, z: f64| [p[0], p[1], z];
+    let ring = |d: f64| synth::rings(&[HoleSpec { x: 52.0, y: 20.0, d, head: None, blind: None }], 16).remove(0);
+    let (bore_ring, head_ring) = (ring(6.0), ring(10.0));
+    let full = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+    let a = [[0.0, 0.0], [15.0, 0.0], [15.0, 40.0], [0.0, 40.0]];
+    let m = [[15.0, 0.0], [45.0, 0.0], [45.0, 40.0], [15.0, 40.0]];
+    let b = [[45.0, 0.0], [60.0, 0.0], [60.0, 40.0], [45.0, 40.0]];
+    let mut t = Vec::new();
+    for [p, q, r] in synth::triangulate(&full, std::slice::from_ref(&bore_ring)) {
+        t.push([at(p, 0.0), at(r, 0.0), at(q, 0.0)]);
+    }
+    for [p, q, r] in synth::triangulate(&a, &[]) {
+        t.push([at(p, 3.0), at(q, 3.0), at(r, 3.0)]);
+    }
+    for [p, q, r] in synth::triangulate(&b, std::slice::from_ref(&head_ring)) {
+        t.push([at(p, 3.0), at(q, 3.0), at(r, 3.0)]);
+    }
+    for [p, q, r] in synth::triangulate(&m, &[]) {
+        t.push([at(p, 6.0), at(q, 6.0), at(r, 6.0)]);
+    }
+    // Outer walls, per segment at its own height: the ends' sides up to the step, the middle's
+    // full height, the middle's inner walls from the step's level up.
+    let wall = |p: P2, q: P2, lo: f64, hi: f64, t: &mut Vec<[[f64; 3]; 3]>| {
+        t.extend([[at(p, lo), at(q, lo), at(q, hi)], [at(p, lo), at(q, hi), at(p, hi)]]);
+    };
+    for (p, q, hi) in [([0.0, 0.0], [15.0, 0.0], 3.0), ([15.0, 0.0], [45.0, 0.0], 6.0), ([45.0, 0.0], [60.0, 0.0], 3.0)] {
+        wall(p, q, 0.0, hi, &mut t);
+    }
+    for (p, q, hi) in [([60.0, 40.0], [45.0, 40.0], 3.0), ([45.0, 40.0], [15.0, 40.0], 6.0), ([15.0, 40.0], [0.0, 40.0], 3.0)] {
+        wall(p, q, 0.0, hi, &mut t);
+    }
+    wall([0.0, 40.0], [0.0, 0.0], 0.0, 3.0, &mut t);
+    wall([60.0, 0.0], [60.0, 40.0], 0.0, 3.0, &mut t);
+    wall([15.0, 40.0], [15.0, 0.0], 3.0, 6.0, &mut t);
+    wall([45.0, 0.0], [45.0, 40.0], 3.0, 6.0, &mut t);
+    // The counterbore: floor annulus at Z = 2, head wall to the level, bore wall to the bottom.
+    for [p, q, r] in synth::triangulate(&head_ring, std::slice::from_ref(&bore_ring)) {
+        t.push([at(p, 2.0), at(q, 2.0), at(r, 2.0)]);
+    }
+    let cw = |r: &[P2]| r.iter().rev().copied().collect::<Vec<P2>>();
+    t.extend(ring_walls(&cw(&bore_ring), 0.0, 2.0));
+    t.extend(ring_walls(&cw(&head_ring), 2.0, 3.0));
+    Mesh::new(t)
+}
+
+/// Two disconnected step regions at one level both get that level: a counterbore opening on the
+/// second region's level is measured from there (1 mm deep), not from the plate's top (codex
+/// finding on #85).
+#[test]
+fn a_counterbore_on_the_second_disconnected_step_region_is_recognised() {
+    use crate::recognize::{Blind, HoleHead};
+    let mesh = two_disconnected_steps_with_counterbore();
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let (profile, _) = found_profile(&mesh);
+    let pocket = |corners: Vec<[f64; 2]>| OutlinePocketSpec { corners, depth: 3.0, bottom: false };
+    assert_eq!(
+        profile.outline_pockets,
+        [
+            pocket(vec![[0.0, 0.0], [15.0, 0.0], [15.0, 40.0], [0.0, 40.0]]),
+            pocket(vec![[45.0, 0.0], [60.0, 0.0], [60.0, 40.0], [45.0, 40.0]]),
+        ]
+    );
+    assert_eq!(
+        profile.holes,
+        [HoleSpec {
+            x: 52.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Counterbore { d: 10.0, depth: 1.0, bottom: false }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }]
+    );
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
 }
 
 /// A counterbore opening on the bottom face of a hole in a step's level is drilled from the

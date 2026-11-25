@@ -42,8 +42,10 @@ fn writes_joined_extrusions() {
         .iter()
         .map(|p| (p["name"].as_str().expect("name"), p["expr"].as_str().expect("expr")))
         .collect();
+    // The extrusions keep mesh2cad's names, first.
+    let extrude: Vec<(&str, &str)> = params.iter().copied().filter(|(n, _)| n.starts_with("extrude_")).collect();
     assert_eq!(
-        params,
+        extrude,
         [
             ("extrude_z1_len", "10 mm"),
             ("extrude_z1_0", "3 mm"),
@@ -53,7 +55,21 @@ fn writes_joined_extrusions() {
             ("extrude_z3_0", "extrude_z2_0 + extrude_z2_len"),
         ]
     );
+    // Each band's outline is dimensioned side by side, as `outline_<k>_<i>_len` (and
+    // `outline_<k>_<i>_angle` on the diamond's longest slanted side).
+    let user = |name: &str| params.iter().find(|(n, _)| *n == name).map(|(_, e)| *e);
+    assert_eq!(user("outline_1_1_len"), Some("60 mm"));
+    assert_eq!(user("outline_1_2_len"), Some("40 mm"));
+    assert_eq!(user("outline_2_1_len"), Some("20 mm"));
+    assert_eq!(user("outline_2_6_len"), Some("15 mm"));
+    assert_eq!(user("outline_3_1_len"), Some("12.7279 mm"));
+    assert_eq!(user("outline_3_4_angle"), Some("225 deg"));
     let features = json["features"].as_array().expect("features");
+    // The sketches carry the Length/Angle constraints behind those parameters.
+    let constraints = |k: usize| features[k]["sketch"]["constraints"].as_array().expect("constraints");
+    let count = |k: usize, kind: &str| constraints(k).iter().filter(|c| c["type"] == kind).count();
+    assert_eq!([count(0, "length"), count(2, "length"), count(4, "length")], [2, 4, 2]);
+    assert_eq!([count(0, "angle"), count(2, "angle"), count(4, "angle")], [0, 0, 1]);
     let ops: Vec<&str> = features.iter().filter_map(|f| f["operation"].as_str()).collect();
     assert_eq!(ops, ["new_body", "join", "join"]);
     assert_eq!(features[1]["extent"].get("start_offset"), None);
@@ -102,4 +118,23 @@ fn a_stack_of_blocks_is_an_intersection_first() {
     let [cut] = spec.cuts.as_slice() else { panic!("{:?}", spec.cuts) };
     assert_eq!((cut.axis, cut.from, cut.to), (Axis::X, 25.0, 60.0));
     assert!((spec.volume() - 35_000.0).abs() < 1e-6);
+}
+
+/// Roadmap 5.4: a stack's walls are measured per band, labelled `band <k> side <i>` in the
+/// stack's axis frame — along Z, and along X and Y when the part lies that way.
+#[test]
+fn deviations_are_reported_per_band() {
+    for axis in [Axis::Z, Axis::X, Axis::Y] {
+        let mesh = if axis == Axis::Z { stack() } else { axis.unrotate_mesh(&stack()) };
+        let found = recognize(&mesh);
+        let devs = crate::recognize::deviations(&mesh, &found);
+        let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+        assert!(labels.contains(&"band 1 side 1"), "{axis:?}: {labels:?}");
+        assert!(labels.contains(&"band 2 side 1"), "{axis:?}: {labels:?}");
+        assert!(labels.contains(&"band 3 side 1"), "{axis:?}: {labels:?}");
+        // The fixture's walls are straight, so every sampled point lies on its wall.
+        for (l, d) in &devs {
+            assert!(*d < 0.01, "{axis:?} {l}: {d}");
+        }
+    }
 }
