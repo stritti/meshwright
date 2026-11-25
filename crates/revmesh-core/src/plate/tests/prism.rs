@@ -517,3 +517,101 @@ fn deviation_samples_the_top_rims_coarse_chords() {
     let want = r * (1.0 - (PI / 8.0).cos());
     assert!((hole.1 - want).abs() < 0.01, "hole 1 measures the coarse top chords' sagitta {want}: {hole:?}");
 }
+
+/// A box rounded all over with a through opening: its rounded surfaces are not indexed, so the
+/// report is suppressed rather than attributing them to the hole ~30 mm away (codex finding on
+/// #74).
+#[test]
+fn deviation_of_a_rounded_box_with_a_hole_is_empty() {
+    let mesh = rounded_box_with_openings(60.0, 40.0, 30.0, 5.0, &[circle_loop(30.0, 20.0, 8.0, 32)], 32);
+    assert!(crate::plate::face_deviations(&mesh).is_empty(), "a rounded box's surfaces are not measured yet");
+}
+
+/// A step down from the top face is registered before measuring: the step's internal wall chords
+/// (here the wall at x = 30) are excluded, not attributed to an outer side 20 mm away (codex
+/// finding on #74).
+#[test]
+fn deviation_of_a_stepped_plates_internal_wall_is_excluded() {
+    let deviations = crate::plate::face_deviations(&super::blocks::stepped_plate(None));
+    for (label, d) in &deviations {
+        if label.starts_with("side") {
+            assert!(*d < 0.01, "the step's internal wall must not inflate {label}: {d}");
+        }
+    }
+}
+
+/// A blind hole drilled from the bottom face: its mouth's bottom-rim points are excluded like the
+/// other sample kinds, not attributed to outer sides ~99 mm away (codex finding on #74). Same
+/// mesh as the top blind hole above, mirrored through z.
+#[test]
+fn deviation_of_a_bottom_blind_holes_mouth_is_not_attributed_to_outer_walls() {
+    let (z, floor) = (5.0, 2.5);
+    let outline = [[0.0, 0.0], [200.0, 0.0], [200.0, 200.0], [0.0, 200.0]];
+    let ring = synth::rings(&[HoleSpec { x: 100.0, y: 100.0, d: 2.0, head: None, blind: None }], 16).remove(0);
+    let lift = |p: P2, h: f64| [p[0], p[1], h];
+    let mut t: Vec<crate::mesh::Triangle> = Vec::new();
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&ring)) {
+        t.push([lift(a, z), lift(b, z), lift(c, z)]);
+    }
+    for [a, b, c] in synth::triangulate(&outline, &[]) {
+        t.push([lift(a, 0.0), lift(c, 0.0), lift(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (outline[i], outline[(i + 1) % 4]);
+        t.push([lift(a, 0.0), lift(b, 0.0), lift(b, z)]);
+        t.push([lift(a, 0.0), lift(b, z), lift(a, z)]);
+    }
+    let m = ring.len();
+    for i in 0..m {
+        let (a, b) = (ring[(i + 1) % m], ring[i]);
+        t.push([lift(a, floor), lift(b, floor), lift(b, z)]);
+        t.push([lift(a, floor), lift(b, z), lift(a, z)]);
+    }
+    for i in 1..m - 1 {
+        t.push([lift(ring[0], floor), lift(ring[i], floor), lift(ring[i + 1], floor)]);
+    }
+    // Mirror the top blind hole through z (reversing each triangle to keep the winding): the
+    // mouth moves to the bottom face.
+    let mesh = Mesh::new(
+        t.into_iter()
+            .map(|[a, b, c]| {
+                let m = |p: [f64; 3]| [p[0], p[1], z - p[2]];
+                [m(c), m(b), m(a)]
+            })
+            .collect(),
+    );
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let deviations = crate::plate::face_deviations(&mesh);
+    for (label, d) in &deviations {
+        if label.starts_with("side") {
+            assert!(*d < 0.01, "the bottom blind hole's mouth must not inflate {label}: {d}");
+        }
+    }
+}
+
+/// A clockwise chord (its endpoints sorted lexicographically) still measures against its owning
+/// arc: with the hole at (10, 90) the hole reports its own 0.510 mm sagitta, not 0.965 mm, and
+/// the corner keeps 1.218 mm (codex finding on #74).
+#[test]
+fn deviation_of_a_clockwise_chord_stays_with_its_own_wall() {
+    let s = PlateSpec {
+        x: 100.0,
+        y: 100.0,
+        z: 6.0,
+        holes: vec![HoleSpec { x: 10.0, y: 90.0, d: 13.4, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_r: Some(16.0),
+        edge_fillet_r: None,
+    };
+    let deviations = crate::plate::face_deviations(&synth::plate(&s, 8, [0.0; 3]));
+    let hole = deviations.iter().find(|(l, _)| l == "hole 1").unwrap_or_else(|| panic!("no hole 1 in {deviations:?}"));
+    let want_hole = 6.7 * (1.0 - (PI / 8.0).cos());
+    assert!((hole.1 - want_hole).abs() < 0.05, "the hole measures its own sagitta {want_hole}, clockwise chord or not: {hole:?}");
+    let corner = deviations.iter().find(|(l, _)| l.contains("round")).unwrap_or_else(|| panic!("no corner round in {deviations:?}"));
+    let want_corner = 16.0 * (1.0 - (PI / 8.0).cos());
+    assert!((corner.1 - want_corner).abs() < 0.05, "the corner keeps its chord's sagitta {want_corner}: {corner:?}");
+}

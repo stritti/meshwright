@@ -716,9 +716,9 @@ fn slot_sides_of(cutouts: &PlateCutouts) -> Vec<(usize, P2, P2)> {
 
 /// The mesh's per-face surface deviation from the recognised plate: each wall piece's label with
 /// the farthest its sampled mesh points lie from it (a facet chord of a round wall bows inward by
-/// its sagitta; planar faces lie exactly on theirs). Empty when the mesh is no Z prism, or when
-/// none of its walls is indexed (a box rounded all over, whose rounded surfaces are not
-/// measured). Best effort: any pipeline error yields no report rather than failing the import.
+/// its sagitta; planar faces lie exactly on theirs). Empty when the mesh is no Z prism, or for a
+/// box rounded all over, whose rounded surfaces are not measured. Best effort: any pipeline
+/// error yields no report rather than failing the import.
 pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
     let run = || -> Result<Vec<(String, f64)>, String> {
         let bounds = mesh.bounds().ok_or("the mesh has no triangles")?;
@@ -733,14 +733,19 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         let face_loops = face_outlines(&faces, &steps, tol)?;
         let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
         let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
-        let cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
+        // A box rounded all over: its rounded surfaces are not indexed, so no deviation to
+        // report (measuring them is left for the roadmap), with or without openings.
+        if rim.is_some() {
+            return Ok(Vec::new());
+        }
+        let mut cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
+        add_steps(&mut cutouts, &steps, size[2], tol)?;
         // Against the ideal walls only, not the meshed boundary loops (a facet's own chord would
         // measure zero): outline sides, arc sides and corner rounds, the holes' circles, the
         // slots' arcs and straight sides, the cut-outs' straight sides.
-        let (wall_corners, wall_radius): (&[P2], Option<f64>) = if rim.is_some() { (&[], None) } else { (&corners, radius) };
         let walls = Walls::new(
-            wall_corners,
-            wall_radius,
+            &corners,
+            radius,
             &cutouts.circles,
             &cutouts.slot_arcs,
             &side_arcs,
@@ -750,7 +755,7 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
             scale,
             tol,
         );
-        // No wall of the part is indexed (a box rounded all over): no deviation to report.
+        // No wall of the part is indexed: no deviation to report.
         if walls.pieces.is_empty() {
             return Ok(Vec::new());
         }
@@ -782,6 +787,11 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
             }
         }
         for p in &faces.rim {
+            // Bottom-rim mouths of unsupported features (a bottom blind hole's, a step's) are
+            // excluded like the other sample kinds, not attributed to distant outer walls.
+            if footprint_unsupported(*p) {
+                continue;
+            }
             if let Some((d, k)) = walls.deviation(*p, &[]) {
                 note(&walls.labels[k], d);
             }

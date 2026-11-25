@@ -304,35 +304,59 @@ impl Walls {
     /// to lie nearer the middle (a hole beside a rounded corner, say) must not take the chord
     /// over. Falls back to the plain lookup when no wall holds both ends.
     pub(super) fn deviation_chord(&self, a: P2, b: P2, middle: P2) -> Option<(f64, usize)> {
+        // Candidate owners come from the endpoints' grid cells, as in `holds_chord`, not from a
+        // scan of every piece (a perforated plate would make reporting quadratic in its holes).
+        let mut candidates: Vec<usize> = Vec::new();
+        for &q in &[a, b] {
+            let key = ((q[0] / self.cell).floor() as i64, (q[1] / self.cell).floor() as i64);
+            for dx in [-1, 0, 1] {
+                for dy in [-1, 0, 1] {
+                    if let Some(list) = self.cells.get(&(key.0 + dx, key.1 + dy)) {
+                        for &k in list {
+                            if !candidates.contains(&k) {
+                                candidates.push(k);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let mut best: Option<(f64, usize)> = None;
-        for k in 0..self.pieces.len() {
+        for k in candidates {
             if !self.holds_piece(k, a) || !self.holds_piece(k, b) {
                 continue;
             }
-            // The middle lies within the arc's span from `a` to `b`, not merely within the
-            // corner's reach, so a corner round's chord measures against its own arc.
-            let d = match self.pieces[k] {
-                Wall::Segment(x, y) => segment_distance(middle, x, y),
-                Wall::Arc { centre, r, .. } => {
-                    let ang = |p: P2| (p[1] - centre[1]).atan2(p[0] - centre[0]);
-                    let (u, w) = ([a[0] - centre[0], a[1] - centre[1]], [b[0] - centre[0], b[1] - centre[1]]);
-                    let span = (u[0] * w[1] - u[1] * w[0]).atan2(u[0] * w[0] + u[1] * w[1]).abs();
-                    let in_span = (ang(middle) - ang(a)).rem_euclid(2.0 * PI) <= span + self.tol / r;
-                    if in_span { (distance(middle, centre) - r).abs() } else { f64::INFINITY }
-                }
-                Wall::ArcSide { centre, r, a, b } => {
-                    if in_arc_span(middle, centre, a, b, self.tol / r) {
-                        (distance(middle, centre) - r).abs()
-                    } else {
-                        f64::INFINITY
-                    }
-                }
-                Wall::Circle(centre, r) => (distance(middle, centre) - r).abs(),
-            };
+            let d = self.chord_deviation(k, a, b, middle);
             if d < best.map_or(f64::INFINITY, |(bd, _)| bd) {
                 best = Some((d, k));
             }
         }
         best.or_else(|| self.deviation(middle, &[a, b]))
+    }
+
+    /// The deviation of a chord's middle from the wall piece `k` owning its ends: within the
+    /// arc's span from `a` to `b` (the short way, whichever direction the chord's endpoint order
+    /// gives), not merely within the corner's reach, so a corner round's chord measures against
+    /// its own arc.
+    fn chord_deviation(&self, k: usize, a: P2, b: P2, middle: P2) -> f64 {
+        match self.pieces[k] {
+            Wall::Segment(x, y) => segment_distance(middle, x, y),
+            Wall::Arc { centre, r, .. } => {
+                let ang = |p: P2| (p[1] - centre[1]).atan2(p[0] - centre[0]);
+                let span = (ang(b) - ang(a)).rem_euclid(2.0 * PI);
+                let at = (ang(middle) - ang(a)).rem_euclid(2.0 * PI);
+                let slack = self.tol / r;
+                let in_span = if span <= PI { at <= span + slack } else { at + slack >= span };
+                if in_span { (distance(middle, centre) - r).abs() } else { f64::INFINITY }
+            }
+            Wall::ArcSide { centre, r, a, b } => {
+                if in_arc_span(middle, centre, a, b, self.tol / r) {
+                    (distance(middle, centre) - r).abs()
+                } else {
+                    f64::INFINITY
+                }
+            }
+            Wall::Circle(centre, r) => (distance(middle, centre) - r).abs(),
+        }
     }
 }

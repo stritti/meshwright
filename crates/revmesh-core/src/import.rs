@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::design::{Design, DesignBuilder, FeatureKind, MeshData};
 use crate::i18n::Locale;
 use crate::mesh::Mesh;
-use crate::recognize::{Recognition, recognize};
+use crate::recognize::{Axis, Recognition, recognize};
 use crate::report::{LossItem, LossReport, Severity};
 use crate::stl::{self, StlError};
 
@@ -64,18 +64,21 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
     let locale = options.locale;
     if options.mode == Mode::Auto {
         let recognised = match recognize(&mesh) {
-            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", offset), plate.describe_in(locale), plate.volume())),
+            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", offset), plate.describe_in(locale), plate.volume(), true)),
             Recognition::Profile { profile, offset, axis } => {
-                Ok((profile.to_design_on("", offset, axis), profile.describe_in(locale), profile.volume()))
+                // The deviation report is measured on a Z prism; another axis is rotated into Z
+                // for recognition, so the report would not match the exported design.
+                Ok((profile.to_design_on("", offset, axis), profile.describe_in(locale), profile.volume(), axis == Axis::Z))
             }
-            Recognition::Combined { spec, offset } => Ok((spec.to_design_at("", offset), spec.describe_in(locale), spec.volume())),
+            Recognition::Combined { spec, offset } => Ok((spec.to_design_at("", offset), spec.describe_in(locale), spec.volume(), false)),
+            // Stacked and combined parts are no single Z prism; their reports follow (roadmap).
             Recognition::Stack { spec, offset, axis } => {
-                Ok((spec.to_design_on("", offset, axis), spec.describe_in(locale, axis), spec.volume()))
+                Ok((spec.to_design_on("", offset, axis), spec.describe_in(locale, axis), spec.volume(), false))
             }
             Recognition::Unrecognized { reason } => Err(reason),
         };
         match recognised {
-            Ok((design, summary, volume)) => {
+            Ok((design, summary, volume, z_prism)) => {
                 let mut report = LossReport::new(summary);
                 let change = volume / mesh.volume() - 1.0;
                 if change.abs() > SMOOTHING_NOTE {
@@ -90,7 +93,7 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
                 }
                 // Roadmap 5.4: the per-face surface deviation between the mesh and the
                 // recognised faces, computed in the sandbox (empty for parts that are no Z prism).
-                let deviations = crate::plate::face_deviations(&mesh);
+                let deviations = if z_prism { crate::plate::face_deviations(&mesh) } else { Vec::new() };
                 if !deviations.is_empty() {
                     let faces = deviations
                         .iter()

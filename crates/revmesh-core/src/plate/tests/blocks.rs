@@ -160,7 +160,7 @@ fn ring_walls(ring: &[P2], lo: f64, hi: f64) -> Vec<[[f64; 3]; 3]> {
 /// A 60 x 40 x 6 plate with a step: the region x >= 30 lies at Z = 3, meshed the way an exporter
 /// meshes it (the lower box's walls up to Z = 3, the upper box's from there, the step's level as
 /// a cap). The outline is the whole footprint; the step is a pocket cut from the top (5.3).
-fn stepped_plate(hole: Option<Vec<P2>>) -> Mesh {
+pub(super) fn stepped_plate(hole: Option<Vec<P2>>) -> Mesh {
     let bottom = [[0.0, 0.0], [30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0], [0.0, 40.0]];
     let high = [[0.0, 0.0], [30.0, 0.0], [30.0, 40.0], [0.0, 40.0]];
     let step = [[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]];
