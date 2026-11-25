@@ -417,34 +417,22 @@ fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Opt
     }
 }
 
-/// What drives an arc side's sketch: the user parameters placing its centre, and the model
-/// parameter driving its `Diameter` constraint when the arc side drives.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ArcDims {
-    /// The user parameter placing the arc centre's X.
-    pub centre_x: String,
-    /// The user parameter placing the arc centre's Y.
-    pub centre_y: String,
-    /// The model parameter driving the arc's `Diameter` constraint, if the side drives.
-    pub diameter: Option<String>,
-}
-
 /// A closed polygon through `corners` (counter-clockwise) where side `i` is the arc about
 /// `arcs[i].0` with radius `arcs[i].1` when `Some`, else a straight line — like
 /// [`polygon_sketch_dimensioned`], with a `Length` constraint on each driving line side
-/// (`lens[i]`) and a `Diameter` constraint on each driving arc side, each arc's centre placed by
-/// its [`ArcDims`] parameters. `arcs` and `arc_dims` are parallel to `corners`.
-///
-/// # Panics
-///
-/// If an arc side has no entry in `arc_dims`.
+/// (`lens[i]`) and a `Diameter` constraint on each driving arc side (`arc_params[i]`, the model
+/// parameter behind the side's `arc_<i>_d` user parameter). An arc side's centre is a free
+/// sketch point: the solver places it equidistant from the side's two corners at the driving
+/// diameter, so the centre follows the corners when a parameter changes — like a slot's arc
+/// centres, which are free points too — and the sketch stays solvable. `arcs` and `arc_params`
+/// are parallel to `corners`.
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn polygon_sketch_arcs(
     corners: &[[f64; 2]],
     arcs: &[Option<([f64; 2], f64)>],
     lens: &[Option<String>],
-    arc_dims: &[Option<ArcDims>],
+    arc_params: &[Option<String>],
 ) -> Sketch {
     let n = corners.len();
     let mut points = vec![SketchPoint::new("origin", [0.0, 0.0], true)];
@@ -452,11 +440,9 @@ pub fn polygon_sketch_arcs(
     let mut centre_of = vec![None; n];
     for (i, arc) in arcs.iter().enumerate() {
         if let Some((centre, _)) = arc {
-            let mut p = SketchPoint::new(format!("p{}", points.len()), *centre, true);
-            let dims = arc_dims[i].as_ref().expect("an arc side has dims");
-            p.exprs = Some(PointExprs { x: dims.centre_x.clone(), y: dims.centre_y.clone() });
-            centre_of[i] = Some(points.len());
-            points.push(p);
+            let idx = points.len();
+            centre_of[i] = Some(idx);
+            points.push(SketchPoint::new(format!("p{idx}"), *centre, false));
         }
     }
     let mut curves: Vec<SketchCurve> = Vec::new();
@@ -469,7 +455,7 @@ pub fn polygon_sketch_arcs(
             n_arcs += 1;
             let curve = curves.len();
             curves.push(SketchCurve::Arc { id: format!("a{n_arcs}"), c: ci, a: i + 1, b: (i + 1) % n + 1, construction: false });
-            if let Some(param) = arc_dims[i].as_ref().and_then(|d| d.diameter.clone()) {
+            if let Some(param) = arc_params.get(i).and_then(Clone::clone) {
                 constraints.push(Constraint::Diameter {
                     id: format!("k{}", constraints.len() + 1),
                     c: curve,

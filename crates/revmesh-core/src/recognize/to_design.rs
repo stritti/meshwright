@@ -6,7 +6,7 @@ use super::spec::{
 };
 
 use crate::design::{
-    ArcDims, Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
+    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
     dimensioned_sides, polygon_sketch_arcs, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Vec3, snap_dim, snap_mm};
@@ -145,7 +145,8 @@ impl ProfileSpec {
     /// The profile as a parametric history with its bounding box's lowest corner at `at`,
     /// extruded along `axis`, as mesh2cad writes an extruded outline: parameters `extrude_len`
     /// (the thickness), `extrude_0` (where it starts along the axis), `outline_<i>_len` per
-    /// straight side, `arc_<i>_d` per arc side with its centre `arc_<i>_cx`/`arc_<i>_cy`,
+    /// straight side, `arc_<i>_d` per arc side (its centre a free sketch point the solver places
+    /// equidistant from the side's two corners),
     /// `hole_<n>_<a>/_<b>/_d` for the profile plane's world axis letters and `outline_fillet_r`;
     /// a sketch of the outline on the axis's plane (see [`Axis::plane`]), every side dimensioned
     /// by its own parameter (a line side's `Length`, an arc side's `Diameter`), an extrusion along
@@ -174,7 +175,7 @@ impl ProfileSpec {
                 dim[i] = true;
             }
         }
-        // A straight side between two fixed-centre arc sides whose length equals the centres'
+        // A straight side between two arc sides whose length equals the centres'
         // separation ties the two radii together (their endpoints' offsets from the centres are
         // equal), so alongside both driving diameters it must not drive: changing one
         // `arc_<i>_d` alone would leave no solution. Let the side adjust instead.
@@ -196,9 +197,9 @@ impl ProfileSpec {
         }
         let outline_lens = side_len_params(&mut b, "outline", &self.corners, arcs, &dim);
         let sketch_geom = if has_arcs {
-            let arc_dims = arc_side_params(&mut b, &self.corners, arcs, &dim);
+            let arc_params = arc_side_params(&mut b, arcs, &dim);
             let geom: Vec<Option<([f64; 2], f64)>> = arcs.iter().map(|a| a.map(|a| (a.centre, a.r))).collect();
-            polygon_sketch_arcs(&self.corners, &geom, &outline_lens, &arc_dims)
+            polygon_sketch_arcs(&self.corners, &geom, &outline_lens, &arc_params)
         } else {
             polygon_sketch_dimensioned(&self.corners, &outline_lens)
         };
@@ -264,25 +265,25 @@ fn side_len_params(
         .collect()
 }
 
-/// The parameters of an arc side: user parameters placing its centre, and — when the side drives —
-/// a user parameter `arc_<i>_d` plus the model parameter driving the arc's `Diameter` constraint.
-fn arc_side_params(b: &mut DesignBuilder, corners: &[[f64; 2]], arcs: &[Option<ArcSide>], dim: &[bool]) -> Vec<Option<ArcDims>> {
-    let n = corners.len();
+/// The parameters of an arc side: when the side drives, a user parameter `arc_<i>_d` plus the
+/// model parameter driving the arc's `Diameter` constraint. The arc's centre is not placed by a
+/// parameter: it is a free sketch point the solver keeps equidistant from the side's two
+/// corners at the driving diameter (see [`polygon_sketch_arcs`]), so changing one `arc_<i>_d`
+/// leaves the sketch solvable.
+fn arc_side_params(b: &mut DesignBuilder, arcs: &[Option<ArcSide>], dim: &[bool]) -> Vec<Option<String>> {
+    let n = arcs.len();
     (0..n)
         .map(|i| {
             let arc = arcs.get(i).copied().flatten()?;
-            let prefix = format!("arc_{}", i + 1);
-            b.param(Param::user(format!("{prefix}_cx"), snap_mm(arc.centre[0])));
-            b.param(Param::user(format!("{prefix}_cy"), snap_mm(arc.centre[1])));
-            let diameter = if dim[i] {
+            if dim[i] {
+                let prefix = format!("arc_{}", i + 1);
                 b.param(Param::user(format!("{prefix}_d"), snap_dim(2.0 * arc.r)));
                 let model = b.next_model_param_name();
                 b.param(Param::model(&model, format!("{prefix}_d")));
                 Some(model)
             } else {
                 None
-            };
-            Some(ArcDims { centre_x: format!("{prefix}_cx"), centre_y: format!("{prefix}_cy"), diameter })
+            }
         })
         .collect()
 }

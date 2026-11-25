@@ -173,7 +173,7 @@ fn eval_after_param_change(cli: &str, param: &str, value: f64, design_path: &Pat
 
 /// The user parameters that drive sketch sides — plain `"<n> mm"` values named `outline_*`,
 /// `cutout_*`, `pocket_*` or `arc_*` (a side's length, a cut-out's, a pocket's, an arc side's
-/// diameter or centre); if there are none, the first driving extrude/box length
+/// diameter); if there are none, the first driving extrude/box length
 /// (`base_*`/`extrude_*`).
 fn driving_lengths(design: &revmesh_core::design::Design) -> Vec<(String, f64)> {
     let plain = |p: &revmesh_core::design::Param| -> Option<(String, f64)> {

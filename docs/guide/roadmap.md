@@ -34,7 +34,8 @@
       `cutout_<n>_<i>_len`) in `polygon_sketch_dimensioned`/`polygons_sketch_dimensioned`
       (`crates/revmesh-core/src/design/sketch.rs`); an `Angle` per slanted side still to do
    2. (done for outlines; cut-outs follow) arc sides in outlines as `SketchCurve::Arc` with a
-      `Diameter` constraint driven by `arc_<i>_d`, the centre placed by `arc_<i>_cx`/`arc_<i>_cy`
+      `Diameter` constraint driven by `arc_<i>_d`, the centre a free sketch point the solver
+      places equidistant from the side's corners (like a slot's arc centres)
       (`polygon_sketch_arcs`, `crates/revmesh-core/src/design/sketch.rs`; recognised as
       `ProfileSpec::arcs` in `plate/outline.rs::outline_shape`) — round outlines and D-shaped
       cut-outs stay a mesh

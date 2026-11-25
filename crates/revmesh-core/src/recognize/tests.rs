@@ -362,8 +362,9 @@ fn outline_pockets_get_their_own_sketch_and_cut() {
 }
 
 /// Roadmap 5.2: an arc side of the outline becomes a sketch arc `a<n>` with a `Diameter`
-/// constraint driven by its own model parameter, which the user parameter `arc_<i>_d` drives,
-/// the arc's centre placed by the user parameters `arc_<i>_cx`/`arc_<i>_cy`; the straight sides
+/// constraint driven by its own model parameter, which the user parameter `arc_<i>_d` drives;
+/// the arc's centre is a free sketch point (not fixed, placed by no parameter), so the solver
+/// keeps it equidistant from the side's corners at the driving diameter; the straight sides
 /// stay dimensioned lines (the arc side carries no `Length`).
 #[test]
 fn outline_arc_sides_become_sketch_arcs() {
@@ -385,8 +386,7 @@ fn outline_arc_sides_become_sketch_arcs() {
     let param = |name: &str| {
         params.iter().find(|p| p["name"] == name).map(|p| (p["expr"].as_str().expect("expr"), p["model"].as_bool().expect("model")))
     };
-    assert_eq!(param("arc_3_cx"), Some(("30 mm", false)));
-    assert_eq!(param("arc_3_cy").map(|(e, _)| e), Some("40 mm"));
+    assert!(param("arc_3_cx").is_none() && param("arc_3_cy").is_none(), "no centre parameters: the centre is derived");
     let (expr, model) = param("arc_3_d").expect("the arc side's diameter user param");
     assert!(!model, "a user param, not a model param");
     assert_eq!(expr, "60 mm");
@@ -410,20 +410,22 @@ fn outline_arc_sides_become_sketch_arcs() {
     for &l in &lengths {
         assert_eq!(curves[l as usize]["type"], "line", "a Length only on a line side");
     }
-    // The arc's centre is a sketch point placed by the centre parameters.
+    // The arc's centre is a free sketch point at the fitted centre: the solver places it, no
+    // parameter does.
     let points = sketch["points"].as_array().expect("points");
-    let centre = points.iter().find(|p| p["exprs"]["x"] == "arc_3_cx").expect("the arc's centre point");
-    assert_eq!(centre["exprs"]["y"].as_str().expect("y"), "arc_3_cy");
-    assert!(centre["fixed"].as_bool().expect("fixed"));
+    let centre =
+        points.iter().find(|p| p["pos"][0].as_f64() == Some(30.0) && p["pos"][1].as_f64() == Some(40.0)).expect("the arc's centre point");
+    assert!(!centre["fixed"].as_bool().expect("fixed"), "the centre is free");
+    assert!(centre["exprs"].is_null(), "no expressions place the centre");
 }
 
-/// In a stadium — two arc sides with fixed centres joined by straight sides as long as the
-/// centres are apart — the straight sides do not drive: their length equals the centres'
-/// separation, which ties the two radii, so driving it alongside both diameters would leave no
-/// solution when one `arc_<i>_d` changes (codex finding on #68). The diameters stay the only
-/// driving sketch dimensions.
+/// In a stadium — two arc sides joined by straight sides as long as the centres are apart — the
+/// straight sides do not drive: their length equals the centres' separation, which ties the two
+/// radii, so driving it alongside both diameters would leave no solution when one `arc_<i>_d`
+/// changes (codex finding on #68). The diameters stay the only driving sketch dimensions, and
+/// the centres are free points, so each `arc_<i>_d` change keeps the sketch solvable.
 #[test]
-fn stadium_straight_sides_do_not_drive_beside_fixed_centre_arcs() {
+fn stadium_straight_sides_do_not_drive_beside_arc_sides() {
     let spec = ProfileSpec {
         outline_pockets: vec![],
         corners: vec![[0.0, 10.0], [40.0, 10.0], [40.0, 30.0], [0.0, 30.0]],
@@ -443,7 +445,17 @@ fn stadium_straight_sides_do_not_drive_beside_fixed_centre_arcs() {
         params.iter().filter(|p| !p["model"].as_bool().expect("model")).map(|p| p["name"].as_str().expect("name")).collect();
     assert!(!names.iter().any(|n| n.starts_with("outline_") && n.ends_with("_len")), "no outline length drives: {names:?}");
     assert!(names.contains(&"arc_2_d") && names.contains(&"arc_4_d"), "both diameters drive: {names:?}");
-    assert!(names.contains(&"arc_2_cx") && names.contains(&"arc_2_cy") && names.contains(&"arc_4_cx") && names.contains(&"arc_4_cy"));
+    assert!(!names.iter().any(|n| n.contains("_cx") || n.contains("_cy")), "no centre parameters: {names:?}");
+    // Both arc centres are free sketch points, placed by no parameter.
+    let points = json["features"][0]["sketch"]["points"].as_array().expect("points");
+    for pos in [[40.0, 20.0], [0.0, 20.0]] {
+        let centre = points
+            .iter()
+            .find(|p| p["pos"][0].as_f64() == Some(pos[0]) && p["pos"][1].as_f64() == Some(pos[1]))
+            .expect("the arc's centre point");
+        assert!(!centre["fixed"].as_bool().expect("fixed"), "the centre is free");
+        assert!(centre["exprs"].is_null(), "no expressions place the centre");
+    }
     let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr").to_owned());
     assert_eq!(expr("arc_2_d").as_deref(), Some("20 mm"));
     assert_eq!(expr("arc_4_d").as_deref(), Some("20 mm"));
