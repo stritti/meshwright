@@ -7,7 +7,8 @@ use super::spec::{
 
 use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
-    dimensioned_sides, polygon_sketch_arcs, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
+    dimensioned_sides, line_arc_tangent, polygon_sketch_arcs, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch,
+    slot_sketch,
 };
 use crate::mesh::{Vec3, snap_dim, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
@@ -178,8 +179,13 @@ impl ProfileSpec {
         // A straight side between two arc sides whose length equals the centres'
         // separation ties the two radii together (their endpoints' offsets from the centres are
         // equal), so alongside both driving diameters it must not drive: changing one
-        // `arc_<i>_d` alone would leave no solution. Let the side adjust instead.
+        // `arc_<i>_d` alone would leave no solution. Let the side adjust instead. When the side
+        // is also tangent to both arcs at its ends (a stadium's straight sides are), the
+        // tangents force both radii to half the sides' distance, so the two arcs share one
+        // radius: an `Equal` constraint ties them and only the first drives its `Diameter`,
+        // exactly as a slot's two ends do — changing that one `arc_<i>_d` moves both arcs.
         let n = self.corners.len();
+        let mut arc_equals: Vec<(usize, usize)> = Vec::new();
         for i in 0..n {
             if !dim[i] || arcs.get(i).is_some_and(Option::is_some) {
                 continue;
@@ -193,13 +199,19 @@ impl ProfileSpec {
             let cross = (b[0] - a[0]) * (next.centre[1] - prev.centre[1]) - (b[1] - a[1]) * (next.centre[0] - prev.centre[0]);
             if cross.abs() <= 1e-9 * len * dc && (len - dc).abs() <= 1e-6 * len.max(1.0) {
                 dim[i] = false;
+                let (prev_side, next_side) = ((i + n - 1) % n, (i + 1) % n);
+                let known = arc_equals.iter().any(|&(x, y)| (x, y) == (prev_side, next_side) || (x, y) == (next_side, prev_side));
+                if !known && line_arc_tangent(b, a, prev.centre) && line_arc_tangent(a, b, next.centre) {
+                    arc_equals.push((prev_side, next_side));
+                    dim[next_side] = false;
+                }
             }
         }
         let outline_lens = side_len_params(&mut b, "outline", &self.corners, arcs, &dim);
         let sketch_geom = if has_arcs {
             let arc_params = arc_side_params(&mut b, arcs, &dim);
             let geom: Vec<Option<([f64; 2], f64)>> = arcs.iter().map(|a| a.map(|a| (a.centre, a.r))).collect();
-            polygon_sketch_arcs(&self.corners, &geom, &outline_lens, &arc_params)
+            polygon_sketch_arcs(&self.corners, &geom, &outline_lens, &arc_params, &arc_equals)
         } else {
             polygon_sketch_dimensioned(&self.corners, &outline_lens)
         };

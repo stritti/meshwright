@@ -423,11 +423,12 @@ fn outline_arc_sides_become_sketch_arcs() {
     assert_eq!(tangents.len(), 2, "one Tangent per arc-line junction: {tangents:?}");
 }
 
-/// In a stadium — two arc sides joined by straight sides as long as the centres are apart — the
-/// straight sides do not drive: their length equals the centres' separation, which ties the two
-/// radii, so driving it alongside both diameters would leave no solution when one `arc_<i>_d`
-/// changes (codex finding on #68). The diameters stay the only driving sketch dimensions, and
-/// the centres are free points, so each `arc_<i>_d` change keeps the sketch solvable.
+/// In a stadium — two arc sides joined by straight sides tangent to both (as long as the
+/// centres are apart) — the straight sides do not drive, and the two arcs share one radius via
+/// an `Equal` constraint with only the first driving its `Diameter` (codex finding on #68):
+/// the tangents force both radii to half the sides' distance, so driving both diameters
+/// independently would leave no solution when one `arc_<i>_d` changes. The centres are free
+/// points, so the one driving `arc_<i>_d` change moves both arcs together and re-solves.
 #[test]
 fn stadium_straight_sides_do_not_drive_beside_arc_sides() {
     let spec = ProfileSpec {
@@ -448,7 +449,8 @@ fn stadium_straight_sides_do_not_drive_beside_arc_sides() {
     let names: Vec<&str> =
         params.iter().filter(|p| !p["model"].as_bool().expect("model")).map(|p| p["name"].as_str().expect("name")).collect();
     assert!(!names.iter().any(|n| n.starts_with("outline_") && n.ends_with("_len")), "no outline length drives: {names:?}");
-    assert!(names.contains(&"arc_2_d") && names.contains(&"arc_4_d"), "both diameters drive: {names:?}");
+    let arc_diams: Vec<&str> = names.iter().filter(|n| n.starts_with("arc_") && n.ends_with("_d")).copied().collect();
+    assert_eq!(arc_diams, ["arc_4_d"], "only the first of the tied arc pair drives: {names:?}");
     assert!(!names.iter().any(|n| n.contains("_cx") || n.contains("_cy")), "no centre parameters: {names:?}");
     // Both arc centres are free sketch points, placed by no parameter.
     let points = json["features"][0]["sketch"]["points"].as_array().expect("points");
@@ -461,18 +463,20 @@ fn stadium_straight_sides_do_not_drive_beside_arc_sides() {
         assert!(centre["exprs"].is_null(), "no expressions place the centre");
     }
     let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr").to_owned());
-    assert_eq!(expr("arc_2_d").as_deref(), Some("20 mm"));
     assert_eq!(expr("arc_4_d").as_deref(), Some("20 mm"));
     // The two straight sides carry no Length constraint at all.
     let sketch_constraints = json["features"][0]["sketch"]["constraints"].as_array().expect("constraints");
     let lengths = sketch_constraints.iter().filter(|c| c["type"] == "length").count();
     assert_eq!(lengths, 0, "no Length constraint on the stadium's straight sides");
-    // Each arc is tangent to both straight sides: four Tangent constraints, so changing one
-    // `arc_<i>_d` re-solves to first order (the arcs' centres follow along the tangents).
+    // Each arc is tangent to both straight sides: four Tangent constraints. The tied arcs share
+    // one radius: one `Equal`, and only one `Diameter`, so changing the driving `arc_<i>_d`
+    // moves both arcs and the straight sides apart, re-solving to first order.
     let tangents = sketch_constraints.iter().filter(|c| c["type"] == "tangent").count();
     assert_eq!(tangents, 4, "one Tangent per arc-line junction");
+    let equals = sketch_constraints.iter().filter(|c| c["type"] == "equal").count();
+    assert_eq!(equals, 1, "the two arcs share one radius");
     let diams = sketch_constraints.iter().filter(|c| c["type"] == "diameter").count();
-    assert_eq!(diams, 2, "one Diameter per arc side");
+    assert_eq!(diams, 1, "only the first of the tied arc pair drives its Diameter");
 }
 
 /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face

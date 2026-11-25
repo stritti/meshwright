@@ -422,6 +422,18 @@ fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Opt
 /// (sin 30°); see [`polygon_sketch_arcs`].
 const TANGENT_SIN: f64 = 0.5;
 
+/// Whether the straight side from `line_from` through `corner` is tangent to the arc about
+/// `centre` at `corner`: the side's direction is perpendicular to the arc's radius there,
+/// within the recogniser's gentle-turn limit.
+#[must_use]
+pub fn line_arc_tangent(line_from: [f64; 2], corner: [f64; 2], centre: [f64; 2]) -> bool {
+    let l = (corner[0] - line_from[0]).hypot(corner[1] - line_from[1]);
+    let r = (corner[0] - centre[0]).hypot(corner[1] - centre[1]);
+    let u = [(corner[0] - line_from[0]) / l, (corner[1] - line_from[1]) / l];
+    let n = [(corner[0] - centre[0]) / r, (corner[1] - centre[1]) / r];
+    (u[0] * n[0] + u[1] * n[1]).abs() <= TANGENT_SIN
+}
+
 /// A closed polygon through `corners` (counter-clockwise) where side `i` is the arc about
 /// `arcs[i].0` with radius `arcs[i].1` when `Some`, else a straight line — like
 /// [`polygon_sketch_dimensioned`], with a `Length` constraint on each driving line side
@@ -432,7 +444,9 @@ const TANGENT_SIN: f64 = 0.5;
 /// centres, which are free points too — and the sketch stays solvable. A straight side whose
 /// shared corner with an arc side turns gently is held tangent to the arc (as a slot's sides
 /// are), which keeps a driving diameter change solvable to first order even for a
-/// semicircular side. `arcs` and `arc_params` are parallel to `corners`.
+/// semicircular side. Arc side pairs in `arc_equals` share one radius (`Equal`, as a slot's
+/// ends do) and only the first of a pair drives. `arcs` and `arc_params` are parallel to
+/// `corners`.
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn polygon_sketch_arcs(
@@ -440,6 +454,7 @@ pub fn polygon_sketch_arcs(
     arcs: &[Option<([f64; 2], f64)>],
     lens: &[Option<String>],
     arc_params: &[Option<String>],
+    arc_equals: &[(usize, usize)],
 ) -> Sketch {
     let n = corners.len();
     let mut points = vec![SketchPoint::new("origin", [0.0, 0.0], true)];
@@ -497,23 +512,19 @@ pub fn polygon_sketch_arcs(
     // gentle-turn limit) is tangent to the arc: hold it with a `Tangent` constraint, like a
     // slot's sides. Without it, growing a semicircular side's diameter would need its centre to
     // slide off the chord — second order, which no solver does from the snapped position.
-    let tangent = |line_from: [f64; 2], corner: [f64; 2], centre: [f64; 2]| {
-        let l = (corner[0] - line_from[0]).hypot(corner[1] - line_from[1]);
-        let r = (corner[0] - centre[0]).hypot(corner[1] - centre[1]);
-        let u = [(corner[0] - line_from[0]) / l, (corner[1] - line_from[1]) / l];
-        let n = [(corner[0] - centre[0]) / r, (corner[1] - centre[1]) / r];
-        (u[0] * n[0] + u[1] * n[1]).abs() <= TANGENT_SIN
-    };
     for i in 0..n {
         let Some((centre, _)) = arcs[i] else { continue };
         let prev = (i + n - 1) % n;
-        if arcs[prev].is_none() && tangent(corners[prev], corners[i], centre) {
+        if arcs[prev].is_none() && line_arc_tangent(corners[prev], corners[i], centre) {
             constraints.push(Constraint::Tangent { id: format!("k{}", constraints.len() + 1), a: side_curve[prev], b: side_curve[i] });
         }
         let next = (i + 1) % n;
-        if arcs[next].is_none() && tangent(corners[(i + 2) % n], corners[next], centre) {
+        if arcs[next].is_none() && line_arc_tangent(corners[(i + 2) % n], corners[next], centre) {
             constraints.push(Constraint::Tangent { id: format!("k{}", constraints.len() + 1), a: side_curve[i], b: side_curve[next] });
         }
+    }
+    for &(p, q) in arc_equals {
+        constraints.push(Constraint::Equal { id: format!("k{}", constraints.len() + 1), a: side_curve[p], b: side_curve[q] });
     }
     let counters = Counters { a: n_arcs, j: 0, k: constraints.len(), l: n_lines, p: points.len() - 1 };
     Sketch { points, curves, constraints, links: vec![], counters }
