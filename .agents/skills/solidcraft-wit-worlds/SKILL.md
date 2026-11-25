@@ -8,7 +8,7 @@ license: MIT
 # The craft:plugin WIT interface
 
 The interface is vendored at `crates/revmesh-plugin/wit/plugin.wit` (package `craft:plugin@0.2.0`,
-from SolidCraft 0.49.0 — the release pinned in `SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml`).
+from SolidCraft 0.49.1 — the release pinned in `SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml`).
 SolidCraft links no WASI, so the plugin is a **component** whose imports/exports are these worlds.
 
 ## Worlds

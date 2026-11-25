@@ -1,7 +1,7 @@
 //! # revmesh-plugin
 //!
 //! The SolidCraft side of revmesh: a WebAssembly component in the `importer-plugin` world of
-//! `craft:plugin@0.2.0` (vendored in `wit/plugin.wit`, from SolidCraft 0.49.0). It reads the file
+//! `craft:plugin@0.2.0` (vendored in `wit/plugin.wit`, from SolidCraft 0.49.1). It reads the file
 //! SolidCraft hands it, lets [`revmesh_core`] do the work, and writes the design back.
 //!
 //! Memory is the tight budget (128 MiB by default), so nothing is held twice: the STL is parsed
