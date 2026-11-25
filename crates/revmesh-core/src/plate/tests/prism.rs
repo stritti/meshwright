@@ -488,7 +488,7 @@ fn deviation_of_a_chord_stays_with_its_owning_wall() {
 fn deviation_samples_the_top_rims_coarse_chords() {
     let (z, r) = (6.0, 1.0);
     let outline = [[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]];
-    let bottom_ring: Vec<P2> = (0..16).map(|i| 2.0 * PI * i as f64 / 16.0).map(|a| [50.0 + r * a.cos(), 50.0 + r * a.sin()]).collect();
+    let bottom_ring: Vec<P2> = (0..16).map(|i| 2.0 * PI * f64::from(i) / 16.0).map(|a| [50.0 + r * a.cos(), 50.0 + r * a.sin()]).collect();
     let top_ring: Vec<P2> = (0..8).map(|j| bottom_ring[2 * j]).collect();
     let lift = |p: P2, h: f64| [p[0], p[1], h];
     let mut t: Vec<crate::mesh::Triangle> = Vec::new();

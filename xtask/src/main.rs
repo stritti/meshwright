@@ -93,7 +93,9 @@ fn dist(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(packages)
 }
 
-/// Zips `plugin.json`, localized to `locale`, and the component.
+/// Zips `plugin.json`, localized to `locale`, the component and the package's images (the files
+/// under `icons/` that the manifest's `x-solidcraft-icon` annotations name, shown in SolidCraft's
+/// Plugins menu), leaving out tests and hidden files.
 fn zip_package(root: &Path, locale: Locale) -> Result<PathBuf, String> {
     let mut manifest = manifest(root)?;
     let version = manifest["version"].as_str().ok_or("plugin.json has no version")?.to_owned();
@@ -108,7 +110,23 @@ fn zip_package(root: &Path, locale: Locale) -> Result<PathBuf, String> {
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let component = fs::read(root.join(PACKAGE_DIR).join(&module)).map_err(|e| format!("{module}: {e}"))?;
-    for (name, bytes) in [("plugin.json", manifest.as_slice()), (module.as_str(), component.as_slice())] {
+    let mut files: Vec<(String, Vec<u8>)> = vec![("plugin.json".to_owned(), manifest), (module, component)];
+    let icons = root.join(PACKAGE_DIR).join("icons");
+    if icons.is_dir() {
+        let mut entries: Vec<PathBuf> = fs::read_dir(&icons)
+            .map_err(|e| format!("{}: {e}", icons.display()))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+        entries.sort();
+        for path in entries {
+            let name =
+                path.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| format!("{}: no file name", path.display()))?;
+            let name = format!("icons/{name}");
+            files.push((name.clone(), fs::read(&path).map_err(|e| format!("{name}: {e}"))?));
+        }
+    }
+    for (name, bytes) in &files {
         zip.start_file(name, options).map_err(|e| format!("zip: {e}"))?;
         zip.write_all(bytes).map_err(|e| format!("zip: {e}"))?;
     }
@@ -157,11 +175,11 @@ fn default_cli() -> String {
 ///    (Hausdorff) between the source STL and the rebuilt STL, and applies mesh2cad's gate.
 ///
 /// Fixtures that do not import (the error cases of `plugin test`) are skipped.
-/// Rebuilds the design at `design_path` in SolidCraft after setting `param` to `value + 1 mm`.
-/// `Ok(false)` when the rebuild reports a feature error.
-fn eval_after_param_change(cli: &str, param: &str, value: f64, design_path: &Path, script_path: &Path) -> Result<bool, String> {
+/// Rebuilds the design at `design_path` in SolidCraft after setting `param` to `value + 1 unit`
+/// (`unit` `"mm"` or `"deg"`). `Ok(false)` when the rebuild reports a feature error.
+fn eval_after_param_change(cli: &str, param: &str, value: f64, unit: &str, design_path: &Path, script_path: &Path) -> Result<bool, String> {
     let mut changes = serde_json::Map::new();
-    changes.insert(param.to_string(), serde_json::json!(format!("{} mm", value + 1.0)));
+    changes.insert(param.to_string(), serde_json::json!(format!("{} {}", value + 1.0, unit)));
     let script = serde_json::json!({ "commands": [{ "command": "parameters.change", "params": { "changes": changes } }] });
     fs::write(script_path, script.to_string()).map_err(|e| format!("{}: {e}", script_path.display()))?;
     let out = Command::new(cli)
@@ -192,6 +210,26 @@ fn driving_lengths(design: &revmesh_core::design::Design) -> Vec<(String, f64)> 
         return sides;
     }
     design.params.iter().filter_map(plain).find(|(name, _)| name.starts_with("base_") || name.starts_with("extrude_")).into_iter().collect()
+}
+
+/// The user parameters that drive sketch angles — plain `"<n> deg"` values named `outline_*` or
+/// `cutout_*` and ending in `_angle` (the longest slanted side's angle from the sketch's X axis).
+fn driving_angles(design: &revmesh_core::design::Design) -> Vec<(String, f64)> {
+    design
+        .params
+        .iter()
+        .filter_map(|p| {
+            if p.model {
+                return None;
+            }
+            let value: f64 = p.expr.strip_suffix(" deg")?.parse().ok()?;
+            if (p.name.starts_with("outline_") || p.name.starts_with("cutout_")) && p.name.ends_with("_angle") {
+                Some((p.name.clone(), value))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn check(root: &Path) -> Result<(), String> {
@@ -246,13 +284,18 @@ fn check(root: &Path) -> Result<(), String> {
                 .map_err(|e| format!("{}: {e}", eval_path.display()))?;
         let eval_volume = eval["total"]["volume_mm3"].as_f64().unwrap_or(f64::NAN);
 
-        // Rebuild after parameter changes too: bump each driving sketch-side length by 1 mm (the
-        // first extrude/box length when there are none), each change rebuilt from the original
+        // Rebuild after parameter changes too: bump each driving sketch-side length by 1 mm and
+        // each driving angle by 1 deg (the first extrude/box length when there are none), each
+        // change rebuilt from the original
         // design, so a dimension that is dependent on the others (an over-constrained sketch)
         // fails here as well, not only when the user edits it in SolidCraft.
-        for (param, value) in driving_lengths(&imported.design) {
+        for (param, value, unit) in driving_lengths(&imported.design)
+            .into_iter()
+            .map(|(p, v)| (p, v, "mm"))
+            .chain(driving_angles(&imported.design).into_iter().map(|(p, v)| (p, v, "deg")))
+        {
             let script_path = out.join(format!("{stem}-change.json"));
-            if !eval_after_param_change(&cli, &param, value, &design_path, &script_path)? {
+            if !eval_after_param_change(&cli, &param, value, unit, &design_path, &script_path)? {
                 failures.push(format!("{name}: rebuild after changing {param} reported a feature error"));
                 println!("FAIL {name}: eval after changing {param} failed");
             }

@@ -4,8 +4,9 @@ use super::axis::Axis;
 use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, Profiles, SlotDimensions,
-    dimensioned_sides, polygon_sketch_dimensioned, polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
+    Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, PolygonAngle, Profiles, SlotDimensions,
+    dimensioned_angle, dimensioned_sides, dimensioned_sides_for_angle, polygon_sketch_dimensioned, polygons_sketch_dimensioned,
+    rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Vec3, snap_dim, snap_mm};
 use crate::patterns::{HoleGroup, group_holes};
@@ -143,7 +144,8 @@ impl ProfileSpec {
     /// The profile as a parametric history with its bounding box's lowest corner at `at`,
     /// extruded along `axis`, as mesh2cad writes an extruded outline: parameters `extrude_len`
     /// (the thickness), `extrude_0` (where it starts along the axis), `outline_<i>_len` per side,
-    /// `hole_<n>_<a>/_<b>/_d` for the profile plane's world axis letters and `outline_fillet_r`;
+    /// `outline_<i>_angle` on the longest slanted side, `hole_<n>_<a>/_<b>/_d` for the profile
+    /// plane's world axis letters and `outline_fillet_r`;
     /// a sketch of the outline on the axis's plane (see [`Axis::plane`]), every side dimensioned
     /// by its own parameter, an extrusion along the plane's normal, a move to where the part is,
     /// a fillet of every corner edge parallel to the axis and a hole per hole. The fillet comes
@@ -161,12 +163,13 @@ impl ProfileSpec {
             b.param(Param::user("outline_fillet_r", r));
         }
         let outline_lens = side_len_params(&mut b, "outline", &self.corners);
+        let outline_angle = side_angle_param(&mut b, "outline", &self.corners);
         let sketch = b.feature(
             "Sketch1",
             vec![],
             FeatureKind::Sketch {
                 plane: Plane::Origin { name: axis.plane() },
-                sketch: polygon_sketch_dimensioned(&self.corners, &outline_lens),
+                sketch: polygon_sketch_dimensioned(&self.corners, &outline_lens, outline_angle.as_ref()),
             },
         );
         let extrude = b.feature(
@@ -202,13 +205,38 @@ impl ProfileSpec {
     }
 }
 
-/// One user parameter `<prefix>_<i>_len` per driving side of `corners` (see
-/// [`dimensioned_sides`]) and a model parameter driving its `Length` constraint in the sketch, so
-/// the polygon re-dimensions in SolidCraft side by side, like the rectangle's `base_x`/`base_y`.
-/// Returns the model parameters' names, `None` for a side that does not drive.
+/// One user parameter `<prefix>_<i>_angle` for the polygon's longest slanted side (see
+/// [`dimensioned_angle`]) and a model parameter driving its `Angle` constraint in the sketch, so
+/// a slanted polygon re-angles in SolidCraft too. `None` when no side is slanted.
+fn side_angle_param(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Option<PolygonAngle> {
+    let side = dimensioned_angle(corners)?;
+    let (a, c) = (corners[side], corners[(side + 1) % corners.len()]);
+    // The side's own direction, as drawn: the angle from the X axis in [0, 360) degrees (the
+    // `Angle` constraint turns line `b` as drawn, so collapsing to [0, 180) would mirror a
+    // side pointing below the X axis).
+    let degrees = (c[1] - a[1]).atan2(c[0] - a[0]).to_degrees().rem_euclid(360.0);
+    let user = format!("{prefix}_{}_angle", side + 1);
+    b.param(Param::angle(&user, degrees));
+    let model = b.next_model_param_name();
+    b.param(Param::model_angle(&model, &user));
+    Some(PolygonAngle { side, degrees, param: model })
+}
+
+/// One user parameter `<prefix>_<i>_len` per driving side of `corners` (see [`dimensioned_sides`],
+/// or [`dimensioned_sides_for_angle`] when the polygon has an angle side) and a model parameter
+/// driving its `Length` constraint in the sketch, so the polygon re-dimensions in SolidCraft side
+/// by side, like the rectangle's `base_x`/`base_y`. The side that drives the `Angle` (see
+/// [`dimensioned_angle`]) does not drive a length too, and neither do the further sides
+/// [`dimensioned_sides_for_angle`] releases: with the other sides' lengths and orientations
+/// fixed, the angle determines those lengths, and driving them too would leave no solution when
+/// the angle parameter changes. Returns the model parameters' names, `None` for a side that does
+/// not drive.
 fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Vec<Option<String>> {
     let n = corners.len();
-    let dim = dimensioned_sides(corners);
+    let dim = match dimensioned_angle(corners) {
+        Some(angle) => dimensioned_sides_for_angle(corners, angle),
+        None => dimensioned_sides(corners),
+    };
     (0..n)
         .map(|i| {
             if !dim[i] {
@@ -288,10 +316,12 @@ fn cutout_features(b: &mut DesignBuilder, cutouts: &[Vec<[f64; 2]>], at: Vec3, a
     let sketched: Vec<Vec<[f64; 2]>> = cutouts.iter().map(|c| c.iter().map(|p| axis.sketch_point(at, *p).map(snap_mm)).collect()).collect();
     let lens: Vec<Vec<Option<String>>> =
         sketched.iter().enumerate().map(|(k, poly)| side_len_params(b, &format!("cutout_{}", k + 1), poly)).collect();
+    let angles: Vec<Option<PolygonAngle>> =
+        sketched.iter().enumerate().map(|(k, poly)| side_angle_param(b, &format!("cutout_{}", k + 1), poly)).collect();
     let sketch = b.feature(
         "CutoutsSketch",
         vec![],
-        FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygons_sketch_dimensioned(&sketched, &lens) },
+        FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygons_sketch_dimensioned(&sketched, &lens, &angles) },
     );
     b.feature(
         "Cutouts",
@@ -470,18 +500,23 @@ fn block_features(
         );
     }
     // A pocket of any other outline of straight sides gets its own sketch, every side
-    // dimensioned by `pocket_<n>_<i>_len` (numbered after the rectangular pockets), and a cut
-    // from its face down by `pocket_<n>_depth`.
+    // dimensioned by `pocket_<n>_<i>_len` (numbered after the rectangular pockets), the longest
+    // slanted side angled by `pocket_<n>_<i>_angle`, and a cut from its face down by
+    // `pocket_<n>_depth`.
     for (i, s) in outline_pockets.iter().enumerate() {
         let n = pockets.len() + i + 1;
         let p = format!("pocket_{n}");
         b.param(Param::user(format!("{p}_depth"), s.depth));
         let poly: Vec<[f64; 2]> = s.corners.iter().map(|c| axis.sketch_point(at, *c).map(snap_mm)).collect();
         let lens = side_len_params(b, &p, &poly);
+        let angle = side_angle_param(b, &p, &poly);
         let sketch = b.feature(
             format!("Pocket{n}Sketch"),
             vec![],
-            FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygon_sketch_dimensioned(&poly, &lens) },
+            FeatureKind::Sketch {
+                plane: Plane::Origin { name: axis.plane() },
+                sketch: polygon_sketch_dimensioned(&poly, &lens, angle.as_ref()),
+            },
         );
         let start = if s.bottom { bottom.to_owned() } else { format!("{top} - {p}_depth") };
         b.feature(
@@ -619,8 +654,10 @@ fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: u
         Some(HoleHead::Countersink { bottom, .. }) => {
             (HoleKind::Countersink { cs_diameter: format!("{p}_csk_d"), cs_angle: format!("{p}_csk_angle") }, bottom)
         }
-        // A rounded rim: a plain hole, and a fillet of its edge on that face below.
-        Some(HoleHead::Round { .. }) => (HoleKind::Simple, false),
+        // A rounded rim: a plain hole drilled from the face the rim is on, and a fillet of its
+        // edge on that face below — so a bottom-rimmed hole beneath a step drills from the
+        // bottom, as deep as the level lies above it, not from the top.
+        Some(HoleHead::Round { bottom, .. }) => (HoleKind::Simple, bottom),
     };
     let (face_w, face, direction) = if from_bottom { (0.0, ctx.bottom, ctx.axis.dir()) } else { (ctx.z, ctx.top, ctx.down) };
     let hole = b.feature(

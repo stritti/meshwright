@@ -169,8 +169,10 @@ fn cut_outs_are_cut_after_the_fillet() {
     let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
     assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "CutoutsSketch", "Cutouts"]);
     let sketch = &features[3]["sketch"];
-    assert_eq!(sketch["curves"].as_array().map(Vec::len), Some(3));
-    assert_eq!(sketch["points"][1]["pos"], serde_json::json!([15.0, 10.0]));
+    // Three sides plus the construction line along the sketch's X axis for the angle.
+    assert_eq!(sketch["curves"].as_array().map(Vec::len), Some(4));
+    // Points 1 and 2 are the X axis the angle is measured from; the cut-out's corners follow.
+    assert_eq!(sketch["points"][3]["pos"], serde_json::json!([15.0, 10.0]));
     assert_eq!((features[4]["operation"].as_str(), &features[4]["extent"]["through_all"]), (Some("cut"), &serde_json::json!(true)));
     assert!((spec.volume() - (60.0 * 40.0 - 50.0) * 6.0).abs() < 1e-9);
     assert_eq!(spec.describe(), "A 60 x 40 x 6 mm plate with 1 cut-out");
@@ -217,19 +219,23 @@ fn outline_and_cutout_sides_are_dimensioned() {
     // One user parameter per driving side with the side's length. Sides group by line direction:
     // the horizontal sides 1 and 4 (60 and 30 mm) and the vertical sides 2 and 5 (15 and 40 mm)
     // each form a parallel group, so the longest of each (sides 1 and 5) is derived; the slanted
-    // diagonal (side 3) drives.
-    let sides: [(usize, f64); 3] = [(1, 15.0), (2, (30.0f64).hypot(25.0)), (3, 30.0)];
+    // diagonal (side 3) drives the angle instead of a length — with the other lengths fixed, the
+    // angle determines it, and driving both would over-constrain the sketch.
+    let sides: [(usize, f64); 2] = [(1, 15.0), (3, 30.0)];
     for (i, len) in sides {
         let snapped = (len * 1e4).round() / 1e4;
         let (expr, model) = param(&format!("outline_{}_len", i + 1)).expect("user param");
         assert!(!model);
         assert_eq!(expr, format!("{} mm", fmt_number(snapped)));
     }
-    assert!(param("outline_1_len").is_none() && param("outline_5_len").is_none(), "the longest side per parallel group is derived");
+    assert!(
+        param("outline_1_len").is_none() && param("outline_3_len").is_none() && param("outline_5_len").is_none(),
+        "the longest side per parallel group and the angle side are derived"
+    );
     let sketch = &json["features"][0]["sketch"];
     let constraints = sketch["constraints"].as_array().expect("constraints");
     let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
-    assert_eq!(lengths, [1, 2, 3], "one Length per driving side, none on the derived ones");
+    assert_eq!(lengths, [1, 3], "one Length per driving side, none on the derived ones");
     // The four axis-aligned sides keep their horizontal/vertical constraints.
     assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 4);
     for c in lengths.iter().enumerate() {
@@ -240,17 +246,55 @@ fn outline_and_cutout_sides_are_dimensioned() {
         assert!(is_model);
         assert_eq!(expr, format!("outline_{}_len", i + 1));
     }
-    // The cut-out's three sides are dimensioned the same way, as `cutout_1_<i>_len`.
+    // The cut-out's sides are dimensioned the same way, as `cutout_1_<i>_len`, except its angle
+    // side (side 3, the longest slanted one), which carries `cutout_1_3_angle` instead.
     let cutouts = &json["features"].as_array().expect("features").iter().find(|f| f["name"] == "CutoutsSketch").expect("cutouts sketch");
     let cut_lengths: Vec<&serde_json::Value> =
         cutouts["sketch"]["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "length").collect();
-    assert_eq!(cut_lengths.len(), 3);
+    assert_eq!(cut_lengths.len(), 2);
     for (i, c) in cut_lengths.iter().enumerate() {
         let model = c["param"].as_str().expect("param");
         let (expr, _) = param(model).expect("model param");
         assert_eq!(expr, format!("cutout_1_{}_len", i + 1));
     }
     assert_eq!(param("cutout_1_1_len").map(|(e, _)| e), Some("10 mm"));
+    assert!(param("cutout_1_3_len").is_none(), "the angle side's length is derived");
+    // The shared cut-out sketch counts its linked axis the same way: l4, p4, p5 past its three
+    // corners (codex finding on #72).
+    assert_eq!(cutouts["sketch"]["counters"]["l"].as_u64(), Some(4), "the axis line l4 is counted: {cutouts}");
+    assert_eq!(cutouts["sketch"]["counters"]["p"].as_u64(), Some(5), "the axis points p4, p5 are counted: {cutouts}");
+    // Roadmap 5.1: the longest slanted side carries an `Angle` from the sketch's X axis, driven
+    // by its own user parameter `outline_<i>_angle` (side 3 here, the only slanted side).
+    let (expr, model) = param("outline_3_angle").expect("user angle param");
+    assert!(!model);
+    let deg: f64 = expr.strip_suffix(" deg").expect("deg").parse().expect("number");
+    let want = (40.0_f64 - 15.0).atan2(30.0 - 60.0).to_degrees().rem_euclid(360.0);
+    assert!((deg - want).abs() < 1e-9, "{deg} vs {want}");
+    let angles: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "angle").collect();
+    assert_eq!(angles.len(), 1, "one Angle per outline, on its longest slanted side");
+    // The counters count the linked axis's IDs too (l6, p6, p7), so a later edit allocates fresh
+    // IDs (codex finding on #72).
+    assert_eq!(sketch["counters"]["l"].as_u64(), Some(6), "the axis line l6 is counted: {sketch}");
+    assert_eq!(sketch["counters"]["p"].as_u64(), Some(7), "the axis points p6, p7 are counted: {sketch}");
+    assert_eq!(angles[0]["b"].as_u64(), Some(2), "on side 3 (line index 2)");
+    let (expr, is_model) = param(angles[0]["param"].as_str().expect("param")).expect("model param");
+    assert!(is_model);
+    assert_eq!(expr, "outline_3_angle");
+    let value = angles[0]["value"].as_f64().expect("value");
+    assert!((value - want.to_radians()).abs() < 1e-12, "the constraint's value is in radians");
+    // The X axis is linked in as one construction line, as in the slot's sketch.
+    let links = sketch["links"].as_array().expect("links");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0]["kind"], "project");
+    assert_eq!(links[0]["source"]["type"], "sketch_axis");
+    assert_eq!(links[0]["source"]["name"], "x");
+    assert_eq!(sketch["curves"].as_array().expect("curves").iter().filter(|c| c["construction"] == true).count(), 1);
+    // The cut-out's triangle gets its angle on its longest slanted side, as `cutout_1_3_angle`.
+    let cut_angles: Vec<&serde_json::Value> =
+        cutouts["sketch"]["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "angle").collect();
+    assert_eq!(cut_angles.len(), 1);
+    let (expr, _) = param(cut_angles[0]["param"].as_str().expect("param")).expect("model param");
+    assert_eq!(expr, "cutout_1_3_angle");
 }
 
 /// In a fully axis-aligned outline the longest horizontal and vertical sides are derived through
@@ -283,6 +327,48 @@ fn orthogonal_outline_skips_the_dependent_sides() {
     assert_eq!(lengths, [1, 2, 3, 4], "one Length per driving side, none on the derived ones");
     // All six sides keep their horizontal/vertical constraints.
     assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 6);
+    // No side is slanted, so no angle parameter and no Angle constraint.
+    assert!(!params.iter().any(|p| p["name"].as_str().is_some_and(|n| n.ends_with("_angle"))));
+    assert_eq!(constraints.iter().filter(|c| c["type"] == "angle").count(), 0);
+}
+
+/// The longest slanted side of a polygon is the one that carries the `Angle` constraint; an
+/// axis-aligned polygon has none. Parallel slanted sides share their angle, so only one of them
+/// could drive it anyway.
+#[test]
+fn dimensioned_angle_picks_the_longest_slanted_side() {
+    use crate::design::dimensioned_angle;
+    assert_eq!(dimensioned_angle(&[[0.0, 0.0], [60.0, 0.0], [75.0, 30.0], [10.0, 30.0]]), Some(1));
+    assert_eq!(dimensioned_angle(&[[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]]), None);
+    // A triangle's three slanted sides are three directions; the longest drives the angle.
+    assert_eq!(dimensioned_angle(&[[0.0, 0.0], [100.0, 0.0], [50.0, 0.1]]), Some(2), "the two long slanted sides tie; the last wins");
+}
+
+/// A slanted side pointing below the X axis keeps its own direction in [0, 360) degrees: the
+/// `Angle` constraint turns the line as drawn, so collapsing the angle to [0, 180) would mirror
+/// the side and change the part.
+#[test]
+fn slanted_side_below_the_x_axis_keeps_its_direction() {
+    let spec = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [40.0, 30.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr").to_owned());
+    // Side 3 ([40, 30] to [0, 0]) is the longest slanted side; its direction is 216.87 deg, not 36.87.
+    let deg: f64 = expr("outline_3_angle").expect("angle param").strip_suffix(" deg").expect("deg").parse().expect("number");
+    let want = (0.0_f64 - 30.0).atan2(0.0 - 40.0).to_degrees().rem_euclid(360.0);
+    assert!((deg - want).abs() < 1e-9, "{deg} vs {want}");
+    assert!(deg > 180.0, "the side points below the X axis: {deg}");
 }
 
 /// A parallelogram's two horizontal and two parallel slanted sides each form a group, so one
@@ -291,6 +377,75 @@ fn orthogonal_outline_skips_the_dependent_sides() {
 fn parallelogram_skips_one_side_per_parallel_group() {
     let corners = vec![[0.0, 0.0], [60.0, 0.0], [70.0, 30.0], [10.0, 30.0]];
     assert_eq!(dimensioned_sides(&corners), [true, true, false, false]);
+}
+
+/// With an angle side, a right triangle's legs with their horizontal and vertical constraints
+/// already fix the diagonal's direction, so one leg's length is released too (see
+/// [`dimensioned_sides_for_angle`]): the longer leg (the base, side 1) is derived through loop
+/// closure and only the shorter leg drives — driving both legs plus the angle would
+/// over-constrain the sketch. A triangle with a horizontal base but no right angle needs no
+/// extra release: its other slanted side's direction stays free.
+#[test]
+fn dimensioned_sides_for_angle_releases_a_leg_of_a_right_triangle() {
+    use crate::design::dimensioned_sides_for_angle;
+    assert_eq!(dimensioned_sides_for_angle(&[[0.0, 0.0], [40.0, 0.0], [40.0, 30.0]], 2), [false, true, false]);
+    assert_eq!(dimensioned_sides_for_angle(&[[0.0, 0.0], [60.0, 0.0], [40.0, 30.0]], 2), [true, true, false]);
+    // The pentagon of `outline_and_cutout_sides_are_dimensioned` stays as it is.
+    assert_eq!(
+        dimensioned_sides_for_angle(&[[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [30.0, 40.0], [0.0, 40.0]], 2),
+        [false, true, false, true, false]
+    );
+}
+
+/// A right-triangle outline or cut-out whose diagonal drives the `Angle` gets exactly `2n - 2 = 4`
+/// driving constraints for its three free corners — horizontal and vertical on the legs, one
+/// `Length` on the shorter leg, the `Angle` on the diagonal; the longer leg's (the base's) length
+/// is derived, so bumping `outline_3_angle` by a degree in SolidCraft still has a solution.
+#[test]
+fn right_triangle_releases_a_leg_length_for_the_angle() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: Vec::new(),
+        bosses: vec![],
+        cutouts: vec![vec![[10.0, 10.0], [30.0, 10.0], [30.0, 20.0]]],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let params = json["params"].as_array().expect("params");
+    let param = |name: &str| {
+        params.iter().find(|p| p["name"] == name).map(|p| (p["expr"].as_str().expect("expr"), p["model"].as_bool().expect("model")))
+    };
+    // The outline's base (side 1, 40 mm, the longer leg) and the diagonal (side 3, the angle
+    // side) are derived; the vertical leg (side 2) drives.
+    assert!(param("outline_1_len").is_none() && param("outline_3_len").is_none(), "the base's and the diagonal's lengths are derived");
+    let (expr, model) = param("outline_2_len").expect("user param");
+    assert!(!model);
+    assert_eq!(expr, "30 mm");
+    assert!(param("outline_3_angle").is_some(), "the diagonal carries the angle");
+    let sketch = &json["features"][0]["sketch"];
+    let constraints = sketch["constraints"].as_array().expect("constraints");
+    let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    assert_eq!(lengths, [1], "one Length, on the vertical leg (line index 1)");
+    assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 2);
+    let angles: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "angle").collect();
+    assert_eq!(angles.len(), 1);
+    assert_eq!(angles[0]["b"].as_u64(), Some(2), "the Angle sits on the diagonal (line index 2)");
+    // The right-triangle cut-out the same way: its base (side 1, 20 mm) is derived, its vertical
+    // leg (side 2) drives, the diagonal carries `cutout_1_3_angle`.
+    let cutouts = &json["features"].as_array().expect("features").iter().find(|f| f["name"] == "CutoutsSketch").expect("cutouts sketch");
+    assert!(param("cutout_1_1_len").is_none() && param("cutout_1_3_len").is_none());
+    assert_eq!(param("cutout_1_2_len").map(|(e, _)| e), Some("10 mm"));
+    assert!(param("cutout_1_3_angle").is_some());
+    let cut_constraints = cutouts["sketch"]["constraints"].as_array().expect("constraints");
+    let cut_lengths: Vec<u64> = cut_constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
+    // In the cut-outs' shared sketch the X axis is curve 0, so the cut-out's side 2 is curve 2.
+    assert_eq!(cut_lengths, [2], "one Length, on the cut-out's vertical leg (side 2)");
+    assert_eq!(cut_constraints.iter().filter(|c| c["type"] == "angle").count(), 1);
 }
 
 /// A thin profile keeps its slanted lengths' precision (0.1 µm snap): a 0.1 mm high triangle's
@@ -338,17 +493,20 @@ fn outline_pockets_get_their_own_sketch_and_cut() {
     let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"));
     assert_eq!(expr("pocket_1_w"), Some("8 mm"), "the rectangular pocket is pocket_1");
     assert_eq!(expr("pocket_2_depth"), Some("3 mm"));
-    // No parallel sides in a triangle: all three drive.
+    // No parallel sides in a triangle: two sides drive a length; the longest slanted side
+    // (side 3) drives the angle instead, its length is derived.
     assert_eq!(expr("pocket_2_1_len"), Some("20 mm"));
     assert_eq!(expr("pocket_2_2_len"), Some("18.0278 mm"));
-    assert_eq!(expr("pocket_2_3_len"), Some("18.0278 mm"));
+    assert!(expr("pocket_2_3_len").is_none(), "the angle side's length is derived");
+    assert!(expr("pocket_2_3_angle").is_some(), "the longest slanted side carries the angle");
     let features = json["features"].as_array().expect("features");
     let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
     assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Pocket1", "Pocket2Sketch", "Pocket2"]);
     let sketch = &features[4]["sketch"];
     let constraints = sketch["constraints"].as_array().expect("constraints");
     let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
-    assert_eq!(lengths, [0, 1, 2], "one Length per side of the triangular mouth");
+    assert_eq!(lengths, [0, 1], "one Length per driving side of the triangular mouth");
+    assert_eq!(constraints.iter().filter(|c| c["type"] == "angle").count(), 1, "one Angle on the longest slanted side");
     let cut = &features[5];
     assert_eq!(cut["type"].as_str(), Some("extrude"));
     assert_eq!(cut["operation"].as_str(), Some("cut"));
@@ -794,4 +952,38 @@ fn drafted_and_chamfered_bosses_in_the_design() {
     let cylinder = std::f64::consts::PI * 25.0 * 6.0;
     let cut = |w: f64, h: f64| 2.0 * std::f64::consts::PI * (r - w / 3.0) * w * h / 2.0;
     assert!((spec.volume() - (80.0 * 40.0 * 6.0 + cone + 2.0 * cylinder - cut(1.0, 1.0) - cut(1.5, 0.5))).abs() < 1e-9);
+}
+
+/// A hole with a rounded bottom rim beneath a step carries a bottom-facing blind depth; it
+/// must be drilled from the bottom face, like a bottom counterbore — the Round head's origin
+/// must not be dropped (codex finding on #71). The rim fillet sits on the bore's bottom edge.
+#[test]
+fn a_bottom_rounded_hole_beneath_a_step_is_drilled_from_the_bottom() {
+    use super::spec::{Blind, HoleHead};
+    let spec = PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![HoleSpec {
+            x: 30.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Round { r: 1.0, bottom: true }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+        edge_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("the hole");
+    assert_eq!(hole["direction"], serde_json::json!([0.0, 0.0, 1.0]), "drilled from the bottom face, not the top");
+    assert_eq!(hole["depth"].as_str().expect("depth"), "hole_1_depth", "blind to the step's level");
+    let rim = features.iter().find(|f| f["name"] == "Hole1Rim").expect("the rim fillet");
+    assert!(rim["edge_names"][0].as_str().expect("edge").contains(":start"), "the rim is on the bore's bottom edge: {rim}");
 }
