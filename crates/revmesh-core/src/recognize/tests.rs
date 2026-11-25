@@ -417,6 +417,10 @@ fn outline_arc_sides_become_sketch_arcs() {
         points.iter().find(|p| p["pos"][0].as_f64() == Some(30.0) && p["pos"][1].as_f64() == Some(40.0)).expect("the arc's centre point");
     assert!(!centre["fixed"].as_bool().expect("fixed"), "the centre is free");
     assert!(centre["exprs"].is_null(), "no expressions place the centre");
+    // The arc is semicircular and meets the two vertical sides tangentially: both junctions are
+    // held with a `Tangent` constraint, like a slot's sides, so a diameter change re-solves.
+    let tangents: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "tangent").collect();
+    assert_eq!(tangents.len(), 2, "one Tangent per arc-line junction: {tangents:?}");
 }
 
 /// In a stadium — two arc sides joined by straight sides as long as the centres are apart — the
@@ -460,9 +464,15 @@ fn stadium_straight_sides_do_not_drive_beside_arc_sides() {
     assert_eq!(expr("arc_2_d").as_deref(), Some("20 mm"));
     assert_eq!(expr("arc_4_d").as_deref(), Some("20 mm"));
     // The two straight sides carry no Length constraint at all.
-    let lengths =
-        json["features"][0]["sketch"]["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "length").count();
+    let sketch_constraints = json["features"][0]["sketch"]["constraints"].as_array().expect("constraints");
+    let lengths = sketch_constraints.iter().filter(|c| c["type"] == "length").count();
     assert_eq!(lengths, 0, "no Length constraint on the stadium's straight sides");
+    // Each arc is tangent to both straight sides: four Tangent constraints, so changing one
+    // `arc_<i>_d` re-solves to first order (the arcs' centres follow along the tangents).
+    let tangents = sketch_constraints.iter().filter(|c| c["type"] == "tangent").count();
+    assert_eq!(tangents, 4, "one Tangent per arc-line junction");
+    let diams = sketch_constraints.iter().filter(|c| c["type"] == "diameter").count();
+    assert_eq!(diams, 2, "one Diameter per arc side");
 }
 
 /// A pad is a box joined to the plate on its top face; a pocket a box cut from the top face
