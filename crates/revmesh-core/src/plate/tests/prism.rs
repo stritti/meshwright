@@ -539,6 +539,22 @@ fn deviation_of_a_rounded_box_with_a_hole_separates_surface_and_hole() {
     assert!(surface.1 < 0.1, "the rounded surface is not inflated by the hole: {surface:?}");
 }
 
+/// A box rounded all over with a through slot: the slot's end arcs and straight sides are
+/// indexed as its own walls (`slot 1 end 1`, `slot 1 side 1`), and its samples are not measured
+/// against the rounded envelope (codex finding on #86).
+#[test]
+fn deviation_of_a_rounded_box_with_a_slot_labels_the_slot() {
+    let slot = stadium([30.0, 20.0], 20.0, 6.0, 0.0, 8);
+    let mesh = rounded_box_with_openings(60.0, 40.0, 30.0, 5.0, std::slice::from_ref(&slot), 32);
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let deviations = crate::plate::face_deviations(&mesh);
+    let labels: Vec<&str> = deviations.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("slot 1 end")), "{labels:?}");
+    assert!(labels.iter().any(|l| l.starts_with("slot 1 side")), "{labels:?}");
+    let surface = deviations.iter().find(|(l, _)| l == "rounded surface").unwrap_or_else(|| panic!("no rounded surface in {deviations:?}"));
+    assert!(surface.1 < 0.1, "the slot's walls are not attributed to the envelope: {surface:?}");
+}
+
 /// A step down from the top face is registered before measuring: the step's internal wall chords
 /// (here the wall at x = 30) are excluded, not attributed to an outer side 20 mm away (codex
 /// finding on #74).

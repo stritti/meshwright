@@ -2,7 +2,7 @@
 //! prism and wall checks, and the recognition from the outline's corners.
 
 use super::faces::{Faces, split_faces};
-use super::geometry::{boundary_loops, distance, signed_area};
+use super::geometry::{boundary_loops, distance, segment_distance, signed_area};
 use super::holes::{
     BlindHole, Cutouts, FittedHole, FittedSlot, Stepped, axis_rectangle, cutout_shape, polygon_cutout, round_hole, slot_shape,
 };
@@ -804,8 +804,9 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         // slots' arcs and straight sides, the cut-outs' straight sides. A box rounded all over
         // has no straight side walls: its surface is the rounded envelope around the inner box,
         // measured directly, and only its holes' circles are indexed.
+        let slot_sides = slot_sides_of(&cutouts);
         let walls = if rim.is_some() {
-            Walls::new(&[], None, &cutouts.circles, &cutouts.slot_arcs, &[], &[], &[], &[], &[], 0, scale, tol)
+            Walls::new(&[], None, &cutouts.circles, &cutouts.slot_arcs, &[], &[], &[], &slot_sides, &[], 0, scale, tol)
         } else {
             Walls::new(
                 &corners,
@@ -815,7 +816,7 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
                 &side_arcs,
                 &[],
                 &cutouts.cutouts,
-                &slot_sides_of(&cutouts),
+                &slot_sides,
                 &[],
                 0,
                 scale,
@@ -844,15 +845,21 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         };
         // On a box rounded all over every surface point but a hole's lies on the rounded
         // envelope: measure those against it, the holes' bore points against their circles.
-        let in_hole = |q: P2| cutouts.circles.iter().any(|&(_, c, r)| distance(q, c) <= r + tol);
+        // A sample point of an opening (a hole's circle, a slot's end arc or straight side), so
+        // on a rounded box it is measured against the opening's own walls, not the envelope.
+        let in_opening = |q: P2| {
+            cutouts.circles.iter().any(|&(_, c, r)| distance(q, c) <= r + tol)
+                || cutouts.slot_arcs.iter().any(|&(_, c, r, _, _)| distance(q, c) <= r + tol)
+                || slot_sides.iter().any(|&(_, a, b)| segment_distance(q, a, b) <= tol)
+        };
         let note_point = |worst: &mut std::collections::BTreeMap<String, f64>, p: Vec3| {
             let q = [p[0], p[1]];
             if let Some(rim) = &rim {
-                if in_hole(q)
+                if in_opening(q)
                     && let Some((d, k)) = walls.deviation(q, &[])
                 {
                     note_deviation(worst, &walls.labels[k], d);
-                } else if !in_hole(q) && !footprint_unsupported(q) {
+                } else if !in_opening(q) && !footprint_unsupported(q) {
                     note_deviation(worst, "rounded surface", rim.deviation(p));
                 }
             } else if !in_unsupported(p)
@@ -883,7 +890,7 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
                 return;
             }
             if let Some(rim) = &rim {
-                if in_hole(a) || in_hole(b) || in_hole(middle) {
+                if in_opening(a) || in_opening(b) || in_opening(middle) {
                     for p in [a, b] {
                         if let Some((d, k)) = walls.deviation(p, &[]) {
                             note_deviation(worst, &walls.labels[k], d);
@@ -961,6 +968,13 @@ pub(crate) fn walls_deviations(
         }
         let mut worst: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
         for t in &mesh.triangles {
+            // Only a vertical facet's edges are wall chords: a cap's interior diagonals (a blind
+            // hole's floor's fan, a band's level's) have both ends on a circle but are no wall.
+            let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+            let len = length(n);
+            if len > 0.0 && (n[2] / len).abs() > 0.5 {
+                continue;
+            }
             for (i, j) in [(0, 1), (1, 2), (2, 0)] {
                 let (a, b) = (t[i], t[j]);
                 if a[2] < span.0 - tol || a[2] > span.1 + tol || b[2] < span.0 - tol || b[2] > span.1 + tol {

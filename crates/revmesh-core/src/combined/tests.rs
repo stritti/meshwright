@@ -429,3 +429,19 @@ fn deviations_are_reported_per_extrusion() {
     let hole = devs.iter().find(|(l, _)| l.starts_with("extrude z hole")).expect("a z hole");
     assert!(hole.1 > 0.0 && hole.1 < 0.1, "the bore's tilt: {hole:?}");
 }
+
+/// In the per-extrusion deviation report only vertical facets' edges are sampled, so a blind
+/// bore's floor fan (horizontal, its diagonals with both ends on the bore's circle) is not
+/// measured against the bore (codex finding on #86).
+#[test]
+fn blind_bores_floor_fan_is_not_measured_against_the_bore() {
+    let mesh = box_with_blind_bore(64);
+    let outline = vec![[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]];
+    let circles = vec![(0usize, [10.0, 10.0], 9.0)];
+    let devs = crate::plate::walls_deviations(&mesh, &outline, &[], &[], &circles, 0, (0.0, 10.0), "extrude z");
+    let hole = devs.iter().find(|(l, _)| l.contains("hole 1")).unwrap_or_else(|| panic!("the bore is measured: {devs:?}"));
+    // The 64-gon's wall chords bow inward by their sagitta; the floor's diagonals (~8.5 mm) must
+    // not appear.
+    let sagitta = 9.0 * (1.0 - (std::f64::consts::PI / 64.0).cos());
+    assert!(hole.1 < 0.05, "the bore measures its wall chords' sagitta {sagitta}, not the floor's diagonals: {hole:?}");
+}
