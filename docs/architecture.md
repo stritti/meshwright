@@ -37,7 +37,7 @@ crates/
     src/import.rs      the whole pipeline, and the import options
     tests/data/        fixtures and golden designs
   revmesh-plugin/   the component: craft:plugin@0.2.0, importer-plugin world
-    wit/plugin.wit     vendored from SolidCraft v0.48.1
+    wit/plugin.wit     vendored from SolidCraft v0.49.0
 plugin/revmesh/     the package: plugin.json, the built .wasm, SolidCraft test cases
 xtask/                 component wrapping, packaging, plugin tests
 ```
@@ -83,7 +83,7 @@ of up to 10 minutes, a 64 MiB component and a 256 MiB design. `plugin.json` asks
 Memory decides how large a file can be. The plugin therefore holds nothing twice: the STL is
 parsed chunk by chunk as it is read (`stl::StlReader`), the mesh moves into the design without a
 copy, and the design is serialised straight into 1 MiB writes to SolidCraft, with coordinates in
-single precision. Measured with SolidCraft 0.48: a 1.5 million triangle STL (75 MB) imports as a
+single precision. Measured with SolidCraft 0.49: a 1.5 million triangle STL (75 MB) imports as a
 mesh in about 8 s; 2 million triangles exceed 128 MiB (before streaming, 600,000 already did).
 
 ## Testing levels
