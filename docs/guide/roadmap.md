@@ -85,9 +85,10 @@
       algebraic `fit_circle` — 3-point minimal samples, inliers within tolerance, the
       iteration count adapted to the inlier ratio — behind `round_hole` in `plate/holes.rs`:
       a rim loop with a few corners off the circle is fitted on its inliers when at least
-      `MIN_RING_SEGMENTS` (6) of them are a majority of the loop and their steps stay even,
-      while the ring's own edges keep the original 50° gate, so an exporter's uneven rim
-      reads as a round hole but a real flat stays refused: in a face's own loops fewer than
+      `MIN_RING_SEGMENTS` (6) of them are a strict majority of the loop, their steps stay even
+      and the excluded corners lie within one facet's sagitta of the circle, while the ring's
+      own edges keep the original 50° gate, so an exporter's uneven rim reads as a round
+      hole but a real flat or lobe stays refused: in a face's own loops fewer than
       `MIN_HOLE_SEGMENTS` (8) corners are read as a polygonal cut-out first, so a hexagon stays
       a cut-out there, and a D-shape's flat side and an omitted facet's long step are still
       one long step) robust circle fits on rim loops

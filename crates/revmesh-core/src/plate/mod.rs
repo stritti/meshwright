@@ -76,8 +76,9 @@ pub const MAX_VOLUME_ERROR: f64 = 0.01;
 pub const MIN_HOLE_SEGMENTS: usize = 8;
 
 /// Fewest inliers of a rim loop's fixed-seed RANSAC circle fit for it to read as a round hole
-/// (roadmap 6.2): six facets (a hexagon, 60° a step) read as round where `round_hole` is called
-/// directly (a boss's foot); in a face's loops fewer than eight corners stay polygonal cut-outs.
+/// (roadmap 6.2), and they must be a strict majority of the loop with the excluded corners within
+/// one facet's sagitta of the circle; in a face's loops fewer than `MIN_HOLE_SEGMENTS` corners
+/// stay polygonal cut-outs anyway, and the ring's own edges keep the `MAX_HOLE_STEP` gate.
 const MIN_RING_SEGMENTS: usize = 6;
 
 /// Largest share of its circle one facet of a RANSAC-fitted rim may span (65°, twice over for

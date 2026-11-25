@@ -406,7 +406,7 @@ pub(super) fn round_hole(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)),
     // fixed-seed RANSAC circle finds the rim's inliers and the circle is fitted on those (6.2).
     if let Some((_, _, inliers)) = ransac_circle(ring, tol)
         && inliers.len() >= MIN_RING_SEGMENTS
-        && inliers.len() * 2 >= n
+        && inliers.len() * 2 > n
     {
         let pts: Vec<P2> = inliers.iter().map(|&i| ring[i]).collect();
         if let Some(([cx, cy], r)) = fit_circle(&pts)
@@ -417,11 +417,27 @@ pub(super) fn round_hole(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)),
             // still go once round the centre (a slot's one round end alone does not).
             && steps_even(ring, cx, cy, MAX_HOLE_STEP)
             && steps_even(&pts, cx, cy, 2.0 * MAX_RING_STEP)
+            && excluded_within_facet_sagitta(ring, &inliers, [cx, cy], r, tol)
         {
             return Ok((HoleSpec { x: snap_mm(cx), y: snap_mm(cy), d: snap_mm(2.0 * r), head: None, blind: None }, ([cx, cy], r)));
         }
     }
     first
+}
+
+/// Whether every corner the RANSAC fit excluded lies within one facet's sagitta (plus `tol`)
+/// of the fitted circle: an exporter's noise, not a deliberate lobe or flat, whose corners sit
+/// several sagittas off. The sagitta is that of the longest chord between two kept corners.
+fn excluded_within_facet_sagitta(ring: &[P2], inliers: &[usize], centre: P2, r: f64, tol: f64) -> bool {
+    let n = ring.len();
+    let mut kept = vec![false; n];
+    for &i in inliers {
+        kept[i] = true;
+    }
+    let longest =
+        (0..n).filter(|&i| kept[i] && kept[(i + 1) % n]).map(|i| distance(ring[i], ring[(i + 1) % n])).fold(0.0, f64::max).min(2.0 * r);
+    let sag = r - (r * r - longest * longest / 4.0).sqrt();
+    (0..n).filter(|&i| !kept[i]).all(|i| (distance(ring[i], centre) - r).abs() <= sag + tol)
 }
 
 pub(super) fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {

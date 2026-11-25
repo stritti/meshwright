@@ -568,3 +568,20 @@ fn a_rim_with_one_corner_off_the_circle_is_a_round_hole() {
     assert_eq!(plate.holes, [HoleSpec { x: 40.0, y: 25.0, d: 10.0, head: None, blind: None }]);
     assert_eq!(plate.cutouts, []);
 }
+
+/// A twelve-corner loop whose corners alternate between radii 5 and 6 mm (a six-lobed shape):
+/// the RANSAC fit must not discard half the corners for one circle — the strict majority and
+/// the sagitta bound on the excluded corners refuse it, and it stays a mesh, not a round hole
+/// (roadmap 6.2).
+#[test]
+fn a_lobed_cut_out_is_not_a_round_hole() {
+    let outline = [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]];
+    let ring: Vec<P2> = (0..12)
+        .map(|i| {
+            let a = 2.0 * PI * f64::from(i) / 12.0;
+            let r = if i % 2 == 0 { 5.0 } else { 6.0 };
+            [40.0 + r * a.cos(), 25.0 + r * a.sin()]
+        })
+        .collect();
+    assert!(reason(&synth::prism(&outline, &[ring], 5.0, [0.0; 3])).contains("not round"));
+}
