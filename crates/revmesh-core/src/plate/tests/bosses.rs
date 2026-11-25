@@ -379,3 +379,12 @@ fn chamfered_boss_tops() {
     assert_eq!(chamfer(&[(5.0, 0.0), (5.0, 7.5), (3.5, 8.0)]), Some(BossChamfer { w: 1.5, h: 0.5 }));
     reason(&layered_boss(&[(5.0, 0.0), (5.0, 6.0), (4.6, 7.0), (4.0, 8.0)], 48));
 }
+
+/// A boss whose foot is faceted into only six corners: the RANSAC fit behind `round_hole` reads
+/// it as round (roadmap 6.2) — in a face's own loops a hexagon would stay a cut-out.
+#[test]
+fn a_six_faceted_boss_foot_is_round() {
+    let foot = circle([20.0, 20.0], 5.0, 6);
+    let (plate, _) = found(&standing(&foot, &|p| p, 4.0));
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }]);
+}

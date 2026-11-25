@@ -1,10 +1,13 @@
 //! The holes, slots and cut-outs through a plate: round holes, stepped holes (counterbores,
 //! countersinks), blind holes, pockets, straight slots and cut-outs of straight or arc sides.
 
-use super::geometry::{distance, fit_circle, sagitta, segment_distance, signed_area};
+use super::geometry::{distance, fit_circle, ransac_circle, sagitta, segment_distance, signed_area};
 use super::outline::outline_shape;
 use super::walls::on_wall;
-use super::{ANGLE_HUNDREDTHS, ANGLE_WHOLE_TOL, CHORD_FACET_SPAN, FULL_TURN_TOL, MAX_HOLE_STEP, MAX_STEP_RATIO, MIN_HOLE_SEGMENTS, P2};
+use super::{
+    ANGLE_HUNDREDTHS, ANGLE_WHOLE_TOL, CHORD_FACET_SPAN, FULL_TURN_TOL, MAX_HOLE_STEP, MAX_RING_STEP, MAX_STEP_RATIO, MIN_HOLE_SEGMENTS,
+    MIN_RING_SEGMENTS, P2,
+};
 use crate::mesh::{Vec3, snap_mm};
 use crate::recognize::{CutoutSpec, HoleHead, HoleSpec, SlotSpec};
 use std::f64::consts::PI;
@@ -396,7 +399,24 @@ pub(super) fn round_hole(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)),
         })
         .map(|i| ring[i])
         .collect();
-    if kept.len() == n { first } else { round_ring(&kept, tol) }
+    if kept.len() != n {
+        return round_ring(&kept, tol);
+    }
+    // A few corners off the algebraic fit's circle (an exporter's uneven rim facets): a
+    // fixed-seed RANSAC circle finds the rim's inliers and the circle is fitted on those (6.2).
+    if let Some((_, _, inliers)) = ransac_circle(ring, tol)
+        && inliers.len() >= MIN_RING_SEGMENTS
+        && inliers.len() * 2 >= n
+    {
+        let pts: Vec<P2> = inliers.iter().map(|&i| ring[i]).collect();
+        if let Some(([cx, cy], r)) = fit_circle(&pts)
+            && pts.iter().all(|p| (distance(*p, [cx, cy]) - r).abs() <= tol)
+            && steps_even(&pts, cx, cy, 2.0 * MAX_RING_STEP)
+        {
+            return Ok((HoleSpec { x: snap_mm(cx), y: snap_mm(cy), d: snap_mm(2.0 * r), head: None, blind: None }, ([cx, cy], r)));
+        }
+    }
+    first
 }
 
 pub(super) fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
@@ -413,27 +433,33 @@ pub(super) fn round_ring(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)),
     }
     // Corners on a circle are not enough: a D-shaped cut-out has them too. Its facets must go
     // once round the circle in small, even steps; a flat side is one long step.
+    if !steps_even(ring, cx, cy, MAX_HOLE_STEP) {
+        return Err(not_round());
+    }
+    Ok((HoleSpec { x: snap_mm(cx), y: snap_mm(cy), d: snap_mm(2.0 * r), head: None, blind: None }, ([cx, cy], r)))
+}
+
+/// Whether a loop's corners go once round (`cx`, `cy`), in steps of at most `max_step` and none
+/// of them more than [`MAX_STEP_RATIO`] times the median step: a rim faceted evenly, without a
+/// flat side's long step. Some exporters (SolidCraft among them) space a rim's corners unevenly,
+/// a step up to about twice another.
+fn steps_even(ring: &[P2], cx: f64, cy: f64, max_step: f64) -> bool {
     let n = ring.len();
-    let mut steps: Vec<f64> = (0..n)
+    if n == 0 {
+        return false;
+    }
+    let signed: Vec<f64> = (0..n)
         .map(|i| {
             let (a, b) = (ring[i], ring[(i + 1) % n]);
             let step = (b[1] - cy).atan2(b[0] - cx) - (a[1] - cy).atan2(a[0] - cx);
             (step + PI).rem_euclid(2.0 * PI) - PI
         })
         .collect();
-    let around: f64 = steps.iter().sum();
-    for step in &mut steps {
-        *step = step.abs();
-    }
-    let mut sorted = steps.clone();
-    sorted.sort_by(f64::total_cmp);
-    let median = sorted[n / 2];
-    // Some exporters (SolidCraft among them) space a rim's corners unevenly, a step up to about
-    // twice another; a flat side is several steps long.
-    if (around.abs() - 2.0 * PI).abs() > FULL_TURN_TOL || steps.iter().any(|s| *s > MAX_HOLE_STEP || *s > MAX_STEP_RATIO * median) {
-        return Err(not_round());
-    }
-    Ok((HoleSpec { x: snap_mm(cx), y: snap_mm(cy), d: snap_mm(2.0 * r), head: None, blind: None }, ([cx, cy], r)))
+    let around: f64 = signed.iter().sum();
+    let mut steps: Vec<f64> = signed.iter().map(|s| s.abs()).collect();
+    steps.sort_by(f64::total_cmp);
+    let median = steps[n / 2];
+    (around.abs() - 2.0 * PI).abs() <= FULL_TURN_TOL && signed.iter().all(|s| s.abs() <= max_step && s.abs() <= MAX_STEP_RATIO * median)
 }
 
 /// A straight slot's loop: two round ends of one radius joined by two straight sides, every

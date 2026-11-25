@@ -8,7 +8,10 @@ use super::holes::{
 };
 use super::outline::outline_shape;
 use super::walls::Walls;
-use super::{AREA_MATCH_REL, CAP_NORMAL_MIN, CHORD_FACET_SPAN, MAX_VOLUME_ERROR, NOT_CLOSED, NOT_FLAT, P2, VOLUME_MATCH_REL, tolerance};
+use super::{
+    AREA_MATCH_REL, CAP_NORMAL_MIN, CHORD_FACET_SPAN, MAX_VOLUME_ERROR, MIN_HOLE_SEGMENTS, NOT_CLOSED, NOT_FLAT, P2, VOLUME_MATCH_REL,
+    tolerance,
+};
 use crate::mesh::{Mesh, Vec3, cross, length, snap_mm, sub};
 use crate::recognize::{
     ArcSide, Blind, CutoutSpec, HoleSpec, OutlinePocketSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec,
@@ -326,6 +329,19 @@ pub(super) fn pair_cutouts(faces: &Faces, face_loops: &FaceLoops, height: f64, t
 pub(super) fn fit_loops(loops: &[Vec<P2>], tol: f64) -> Result<Cutouts, String> {
     let (mut holes, mut slots, mut polygons) = (Vec::new(), Vec::new(), Vec::new());
     for (k, l) in loops.iter().enumerate().filter(|(_, l)| signed_area(l) < 0.0) {
+        if l.len() < MIN_HOLE_SEGMENTS {
+            // Few corners: a polygonal cut-out first — a hexagon is a cut-out, not a hole — and
+            // a round loop only through the RANSAC fit behind round_hole (roadmap 6.2).
+            if let Some(poly) = cutout_shape(l, tol) {
+                polygons.push((poly, k));
+                continue;
+            }
+            match round_hole(l, tol) {
+                Ok((h, c)) => holes.push((h, c, k)),
+                Err(why) => return Err(why),
+            }
+            continue;
+        }
         match round_hole(l, tol) {
             Ok((h, c)) => holes.push((h, c, k)),
             Err(why) => {
