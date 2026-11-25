@@ -34,3 +34,14 @@ one created with `actions/create-github-app-token` if the project grows more mai
 Protect `main` and require the status check **CI ok**, which only passes when every quality
 gate in `.github/workflows/ci.yml` passed. Require pull requests and squash merging, so the PR
 title (checked by `pr-title.yml`) becomes the commit release-please reads.
+
+## Leaving the beta phase
+
+While `release-please-config.json` sets `"prerelease": true` with `"prerelease-type": "beta"`,
+every release is a pre-release (`v0.1.0-beta.N`) and GitHub marks it as one. To go stable, set
+`"prerelease": false` and pin the first stable version with `"release-as": "0.1.0"` in the same
+change: the next run on `main` then opens `chore: release 0.1.0`, and merging it tags `v0.1.0`
+as a normal release. Remove `release-as` again once `v0.1.0` exists — left in the config it
+would pin every later release to that version. `Release-As: 0.1.0` as a footer on a single
+commit on `main` works too, but does not end the beta phase on its own: while `prerelease` is
+true, release-please keeps marking releases as pre-releases.
