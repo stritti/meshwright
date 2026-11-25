@@ -35,7 +35,8 @@
       with its own parameter (`outline_<i>_angle`, `cutout_<n>_<i>_angle`) in
       `polygon_sketch_dimensioned`/`polygons_sketch_dimensioned`
       (`crates/revmesh-core/src/design/sketch.rs`; parallel slanted sides share their angle and a
-      loop's turns sum to 360°, so one angle per polygon is the independent one)
+      loop's turns sum to 360°, so one angle per polygon is the independent one — and that side's
+      length is then derived, driving both would over-constrain the sketch)
    2. arcs in outlines and cut-outs (`SketchCurve::Arc` with a `Diameter` parameter) instead of
       only fillet features — round outlines and D-shaped cut-outs, today a mesh
    3. (done for pockets of any straight-sided outline, one level deep, from the top or the

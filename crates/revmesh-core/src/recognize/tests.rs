@@ -219,19 +219,23 @@ fn outline_and_cutout_sides_are_dimensioned() {
     // One user parameter per driving side with the side's length. Sides group by line direction:
     // the horizontal sides 1 and 4 (60 and 30 mm) and the vertical sides 2 and 5 (15 and 40 mm)
     // each form a parallel group, so the longest of each (sides 1 and 5) is derived; the slanted
-    // diagonal (side 3) drives.
-    let sides: [(usize, f64); 3] = [(1, 15.0), (2, (30.0f64).hypot(25.0)), (3, 30.0)];
+    // diagonal (side 3) drives the angle instead of a length — with the other lengths fixed, the
+    // angle determines it, and driving both would over-constrain the sketch.
+    let sides: [(usize, f64); 2] = [(1, 15.0), (3, 30.0)];
     for (i, len) in sides {
         let snapped = (len * 1e4).round() / 1e4;
         let (expr, model) = param(&format!("outline_{}_len", i + 1)).expect("user param");
         assert!(!model);
         assert_eq!(expr, format!("{} mm", fmt_number(snapped)));
     }
-    assert!(param("outline_1_len").is_none() && param("outline_5_len").is_none(), "the longest side per parallel group is derived");
+    assert!(
+        param("outline_1_len").is_none() && param("outline_3_len").is_none() && param("outline_5_len").is_none(),
+        "the longest side per parallel group and the angle side are derived"
+    );
     let sketch = &json["features"][0]["sketch"];
     let constraints = sketch["constraints"].as_array().expect("constraints");
     let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
-    assert_eq!(lengths, [1, 2, 3], "one Length per driving side, none on the derived ones");
+    assert_eq!(lengths, [1, 3], "one Length per driving side, none on the derived ones");
     // The four axis-aligned sides keep their horizontal/vertical constraints.
     assert_eq!(constraints.iter().filter(|c| c["type"] == "horizontal" || c["type"] == "vertical").count(), 4);
     for c in lengths.iter().enumerate() {
@@ -242,17 +246,19 @@ fn outline_and_cutout_sides_are_dimensioned() {
         assert!(is_model);
         assert_eq!(expr, format!("outline_{}_len", i + 1));
     }
-    // The cut-out's three sides are dimensioned the same way, as `cutout_1_<i>_len`.
+    // The cut-out's sides are dimensioned the same way, as `cutout_1_<i>_len`, except its angle
+    // side (side 3, the longest slanted one), which carries `cutout_1_3_angle` instead.
     let cutouts = &json["features"].as_array().expect("features").iter().find(|f| f["name"] == "CutoutsSketch").expect("cutouts sketch");
     let cut_lengths: Vec<&serde_json::Value> =
         cutouts["sketch"]["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "length").collect();
-    assert_eq!(cut_lengths.len(), 3);
+    assert_eq!(cut_lengths.len(), 2);
     for (i, c) in cut_lengths.iter().enumerate() {
         let model = c["param"].as_str().expect("param");
         let (expr, _) = param(model).expect("model param");
         assert_eq!(expr, format!("cutout_1_{}_len", i + 1));
     }
     assert_eq!(param("cutout_1_1_len").map(|(e, _)| e), Some("10 mm"));
+    assert!(param("cutout_1_3_len").is_none(), "the angle side's length is derived");
     // Roadmap 5.1: the longest slanted side carries an `Angle` from the sketch's X axis, driven
     // by its own user parameter `outline_<i>_angle` (side 3 here, the only slanted side).
     let (expr, model) = param("outline_3_angle").expect("user angle param");

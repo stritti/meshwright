@@ -224,10 +224,16 @@ fn side_angle_param(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -
 /// One user parameter `<prefix>_<i>_len` per driving side of `corners` (see
 /// [`dimensioned_sides`]) and a model parameter driving its `Length` constraint in the sketch, so
 /// the polygon re-dimensions in SolidCraft side by side, like the rectangle's `base_x`/`base_y`.
-/// Returns the model parameters' names, `None` for a side that does not drive.
+/// The side that drives the `Angle` (see [`dimensioned_angle`]) does not drive a length too: with
+/// the other sides' lengths fixed, the angle determines it, and driving both would leave no
+/// solution when the angle parameter changes. Returns the model parameters' names, `None` for a
+/// side that does not drive.
 fn side_len_params(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Vec<Option<String>> {
     let n = corners.len();
-    let dim = dimensioned_sides(corners);
+    let mut dim = dimensioned_sides(corners);
+    if let Some(s) = dimensioned_angle(corners) {
+        dim[s] = false;
+    }
     (0..n)
         .map(|i| {
             if !dim[i] {
