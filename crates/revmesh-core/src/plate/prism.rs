@@ -222,11 +222,15 @@ pub(super) fn face_outlines(faces: &Faces, steps: &[(f64, Vec<[P2; 3]>)], height
         top.extend(ts.iter().copied());
     }
     let loops = boundary_loops(&top, tol)?;
-    // Each loop's level: a loop inside a step's region lies at the step's height.
+    // Each loop's level: a loop inside a step's region lies at the step's height. A level may
+    // hold several disconnected regions (two lowered ends of a raised middle,
+    // say): keep every region's outer loop, or a hole on the second region would get the
+    // plate's top height instead of its level.
     let step_rings: Vec<(f64, Footprint)> = steps
         .iter()
-        .filter_map(|(z, ts)| {
-            boundary_loops(ts, tol).ok()?.into_iter().find(|l| signed_area(l) > 0.0).map(|ring| (*z, Footprint::Polygon { ring }))
+        .filter_map(|(z, ts)| boundary_loops(ts, tol).ok().map(|ls| (*z, ls)))
+        .flat_map(|(z, ls)| {
+            ls.into_iter().filter(|l| signed_area(l) > 0.0).map(move |ring| (z, Footprint::Polygon { ring })).collect::<Vec<_>>()
         })
         .collect();
     let loop_z = loops.iter().map(|l| step_rings.iter().find(|(_, f)| f.contains(l[0], tol)).map_or(height, |(z, _)| *z)).collect();
