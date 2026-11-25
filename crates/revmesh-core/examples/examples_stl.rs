@@ -50,6 +50,7 @@ fn profile(corners: Vec<[f64; 2]>, z: f64, holes: Vec<HoleSpec>, fillet: Option<
         cutouts: vec![],
         pads: vec![],
         pockets: vec![],
+        outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
         outline_fillet_r: fillet,

@@ -8,7 +8,7 @@ use super::outline::outline_shape;
 use super::walls::Walls;
 use super::{AREA_MATCH_REL, CHORD_FACET_SPAN, MAX_VOLUME_ERROR, NOT_CLOSED, NOT_FLAT, P2, VOLUME_MATCH_REL, tolerance};
 use crate::mesh::{Mesh, Vec3, snap_mm};
-use crate::recognize::{Blind, HoleSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
+use crate::recognize::{Blind, HoleSpec, OutlinePocketSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
 
 use super::holes::Footprint;
 /// Looks for a plate in `mesh`: a prism over its top face, with holes, slots, cut-outs, pockets
@@ -159,6 +159,8 @@ pub(super) struct PlateCutouts {
     pub(super) cutouts: Vec<Vec<P2>>,
     /// The rectangular pockets, sorted from left to right.
     pub(super) pockets: Vec<PocketSpec>,
+    /// The pockets of any other outline of straight sides, sorted by their first corner.
+    pub(super) outline_pockets: Vec<OutlinePocketSpec>,
     /// The stepped holes (a counterbore or a countersink).
     pub(super) stepped: Vec<Stepped>,
     /// The blind holes and the pockets' mouths.
@@ -179,6 +181,7 @@ pub(super) fn pair_cutouts(faces: &Faces, face_loops: &FaceLoops, height: f64, t
         slots: Vec::new(),
         cutouts: Vec::new(),
         pockets: Vec::new(),
+        outline_pockets: Vec::new(),
         stepped: Vec::new(),
         blinds: Vec::new(),
     };
@@ -209,10 +212,10 @@ pub(super) fn fit_loops(loops: &[Vec<P2>], tol: f64) -> Result<Cutouts, String> 
     Ok((holes, slots, polygons))
 }
 
-/// The polygonal cut-outs. A cut-out on both faces goes through; a rectangle along X and Y on
-/// one face only is a pocket's mouth, its floor found with the blind holes'. Returns the
-/// pockets' mouths. Each through cut-out is written counter-clockwise from its lowest corner,
-/// the leftmost of those.
+/// The polygonal cut-outs. A cut-out on both faces goes through; a polygon on one face only is
+/// a pocket's mouth (a rectangle along X and Y, or any other outline of straight sides), its
+/// floor found with the blind holes'. Returns the pockets' mouths. Each through cut-out is
+/// written counter-clockwise from its lowest corner, the leftmost of those.
 pub(super) fn pair_polygons(
     faces: &Faces,
     top: &[(Vec<P2>, usize)],
@@ -226,9 +229,11 @@ pub(super) fn pair_polygons(
     let bottom_loops = &face_loops.bottom_loops;
     let same_polygon = |a: &[P2], b: &[P2]| a.len() == b.len() && a.iter().all(|p| b.iter().any(|q| distance(*p, *q) <= tol));
     let pocket = |ring: &[P2], face_z: f64, inward: f64| -> Result<BlindHole, String> {
-        let (lo, hi) = axis_rectangle(ring, tol)
-            .ok_or("a cut-out does not go straight through (pockets other than rectangles and slanted cut-outs are not recognised yet)")?;
-        Ok(BlindHole { foot: Footprint::Rect { lo, hi }, ring: ring.to_vec(), face_z, inward, depth: 0.0 })
+        let foot = match axis_rectangle(ring, tol) {
+            Some((lo, hi)) => Footprint::Rect { lo, hi },
+            None => Footprint::Polygon { ring: pocket_corners(ring, tol)? },
+        };
+        Ok(BlindHole { foot, ring: ring.to_vec(), face_z, inward, depth: 0.0 })
     };
     // Two rectangles matching on the faces are two pockets when floors lie between them, facets
     // facing up or down inside the rectangle.
@@ -263,6 +268,20 @@ pub(super) fn pair_polygons(
     }
     out.cutouts.sort_by(|a, b| a[0][1].total_cmp(&b[0][1]).then(a[0][0].total_cmp(&b[0][0])));
     Ok(pocket_mouths)
+}
+
+/// A pocket mouth's polygon of straight sides: counter-clockwise from its lowest corner, the
+/// leftmost of those, its corners snapped.
+fn pocket_corners(ring: &[P2], tol: f64) -> Result<Vec<P2>, String> {
+    let mut corners = polygon_cutout(ring, tol)
+        .ok_or("a cut-out does not go straight through (pockets of curved sides and slanted cut-outs are not recognised yet)")?;
+    if signed_area(&corners) < 0.0 {
+        corners.reverse();
+    }
+    let mut corners: Vec<P2> = corners.iter().map(|p| p.map(snap_mm)).collect();
+    let first = (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
+    corners.rotate_left(first.unwrap_or(0));
+    Ok(corners)
 }
 
 /// The straight slots, which must go straight through. In mesh2cad's order: by Y, then X, angle
@@ -361,7 +380,7 @@ pub(super) fn floor_mouths(
             .ok_or(
                 "a hole neither goes straight through nor ends in a flat floor (slanted holes and drill points are not recognised yet)",
             )?;
-        match (hole, b.foot) {
+        match (hole, &b.foot) {
             (Some(hole), _) => {
                 out.holes.push(HoleSpec { blind: Some(Blind { depth: snap_mm(b.depth), bottom: inward > 0.0 }), ..hole.clone() });
             }
@@ -376,12 +395,16 @@ pub(super) fn floor_mouths(
                     bottom: inward > 0.0,
                 });
             }
+            (None, Footprint::Polygon { ring }) => {
+                out.outline_pockets.push(OutlinePocketSpec { corners: ring.clone(), depth: snap_mm(b.depth), bottom: inward > 0.0 });
+            }
             (None, Footprint::Round { .. }) => unreachable!("a round mouth is a hole's"),
         }
         out.blinds.push(b);
     }
     out.holes.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     out.pockets.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    out.outline_pockets.sort_by(|a, b| a.corners[0][1].total_cmp(&b.corners[0][1]).then(a.corners[0][0].total_cmp(&b.corners[0][0])));
     Ok(())
 }
 
@@ -606,14 +629,16 @@ pub(super) fn recognition(
     // On a rounded rim the outline's own corner arcs are the leaked rim facets, not a fillet.
     let (z, outline_fillet_r) = (snap_mm(size[2]), if rim.is_some() { None } else { radius.map(snap_mm) });
     let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
-    let PlateCutouts { holes, slots, cutouts, pockets, .. } = cutouts;
+    let PlateCutouts { holes, slots, cutouts, pockets, outline_pockets, .. } = cutouts;
     // A rectangle with cut-outs is an outline, as mesh2cad writes it (`extrude_len`, the
     // outline's corners and each cut-out's). The rectangle is the box itself, or — when the rim is
     // rounded — the top face's inner rectangle inset by the radius (rim_fillet checked the shape).
     let matches = |want: &[[f64; 2]; 4]| {
         corners.len() == 4 && want.iter().all(|q| corners.iter().any(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol))
     };
-    let rectangle = cutouts.is_empty() && corners.len() == 4 && (matches(&box_corners) || rim.is_some());
+    // A pocket of any outline but a rectangle also turns the plate into a profile: its sketch
+    // is the pocket's, not the rectangle's.
+    let rectangle = cutouts.is_empty() && outline_pockets.is_empty() && corners.len() == 4 && (matches(&box_corners) || rim.is_some());
     if rim.is_some() && !rectangle {
         return Err("a box with all edges rounded and cut-outs is not recognised yet".into());
     }
@@ -639,7 +664,8 @@ pub(super) fn recognition(
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
         corners.rotate_left(first.unwrap_or(0));
-        let profile = ProfileSpec { corners, z, holes, slots, pads: vec![], pockets, bosses: vec![], cutouts, outline_fillet_r };
+        let profile =
+            ProfileSpec { corners, z, holes, slots, pads: vec![], pockets, outline_pockets, bosses: vec![], cutouts, outline_fillet_r };
         let volume = profile.volume();
         // The pipeline runs in a frame where the extrusion axis is Z.
         (Recognition::Profile { profile, offset, axis: crate::recognize::Axis::Z }, volume)

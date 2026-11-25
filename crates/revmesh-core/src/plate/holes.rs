@@ -88,26 +88,37 @@ pub(super) struct Stepped {
 
 /// What a blind hole, a pocket, a boss or a pad stands on, seen from above: a circle, or a
 /// rectangle along X and Y.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) enum Footprint {
-    Round { centre: P2, r: f64 },
-    Rect { lo: P2, hi: P2 },
+    Round {
+        centre: P2,
+        r: f64,
+    },
+    Rect {
+        lo: P2,
+        hi: P2,
+    },
+    /// Any polygon of straight sides (a pocket's mouth), its corners counter-clockwise.
+    Polygon {
+        ring: Vec<P2>,
+    },
 }
 
 impl Footprint {
     /// Whether `p` lies on or inside it.
     pub(super) fn contains(&self, p: P2, tol: f64) -> bool {
-        match *self {
-            Self::Round { centre, r } => distance(p, centre) <= r + tol,
+        match self {
+            Self::Round { centre, r } => distance(p, *centre) <= *r + tol,
             Self::Rect { lo, hi } => p[0] >= lo[0] - tol && p[0] <= hi[0] + tol && p[1] >= lo[1] - tol && p[1] <= hi[1] + tol,
+            Self::Polygon { ring } => inside_polygon(p, ring, tol),
         }
     }
 
     /// Whether `p` lies on the wall standing on it, `ring` its loop as meshed (a round wall
     /// follows that loop's chords).
     pub(super) fn on_wall(&self, p: P2, ring: &[P2], tol: f64) -> bool {
-        match *self {
-            Self::Round { centre, r } => on_wall(p, centre, r, ring, tol),
+        match self {
+            Self::Round { centre, r } => on_wall(p, *centre, *r, ring, tol),
             Self::Rect { lo, hi } => {
                 self.contains(p, tol)
                     && ((p[0] - lo[0]).abs() <= tol
@@ -115,44 +126,77 @@ impl Footprint {
                         || (p[1] - lo[1]).abs() <= tol
                         || (p[1] - hi[1]).abs() <= tol)
             }
+            Self::Polygon { ring } => ring.iter().zip(ring.iter().cycle().skip(1)).any(|(a, b)| point_segment_distance(p, *a, *b) <= tol),
         }
     }
 
     /// Whether `p` lies within `inward` inside the wall, or on it: the middle of a wall facet's
     /// edge, which bows in by the chord's sagitta on a round wall.
     pub(super) fn near_wall(&self, p: P2, inward: f64, tol: f64) -> bool {
-        match *self {
+        match self {
             Self::Round { centre, r } => {
-                let d = distance(p, centre);
-                d <= r + tol && d >= r - inward - tol
+                let d = distance(p, *centre);
+                d <= *r + tol && d >= *r - inward - tol
             }
-            Self::Rect { .. } => self.on_wall(p, &[], tol),
+            Self::Rect { .. } | Self::Polygon { .. } => self.on_wall(p, &[], tol),
         }
     }
 
     /// How far a round wall's facets come inside the circle, `ring` its loop as meshed; a
-    /// rectangle's walls are flat.
+    /// rectangle's and a polygon's walls are flat.
     pub(super) fn sagitta(&self, ring: &[P2]) -> f64 {
-        match *self {
-            Self::Round { r, .. } => sagitta(ring, r),
-            Self::Rect { .. } => 0.0,
+        match self {
+            Self::Round { r, .. } => sagitta(ring, *r),
+            Self::Rect { .. } | Self::Polygon { .. } => 0.0,
         }
     }
 
-    /// Its area: the loop's as meshed for a circle (the facets' polygon), the rectangle's.
+    /// Its area: the loop's as meshed for a circle (the facets' polygon), the rectangle's, the
+    /// polygon's.
     pub(super) fn area(&self, ring: &[P2]) -> f64 {
-        match *self {
+        match self {
             Self::Round { .. } => signed_area(ring).abs(),
             Self::Rect { lo, hi } => (hi[0] - lo[0]) * (hi[1] - lo[1]),
+            Self::Polygon { ring } => signed_area(ring).abs(),
         }
     }
 
     pub(super) fn middle(&self) -> P2 {
-        match *self {
-            Self::Round { centre, .. } => centre,
+        match self {
+            Self::Round { centre, .. } => *centre,
             Self::Rect { lo, hi } => [f64::midpoint(lo[0], hi[0]), f64::midpoint(lo[1], hi[1])],
+            Self::Polygon { ring } => {
+                let n = ring.len() as f64;
+                [ring.iter().map(|p| p[0]).sum::<f64>() / n, ring.iter().map(|p| p[1]).sum::<f64>() / n]
+            }
         }
     }
+}
+
+/// Whether `p` lies inside the counter-clockwise polygon `ring`, or within `tol` of its edge.
+fn inside_polygon(p: P2, ring: &[P2], tol: f64) -> bool {
+    let n = ring.len();
+    let on_edge = ring.iter().zip(ring.iter().cycle().skip(1)).any(|(a, b)| point_segment_distance(p, *a, *b) <= tol);
+    if on_edge {
+        return true;
+    }
+    // Even-odd ray casting along +X.
+    let mut inside = false;
+    for i in 0..n {
+        let (a, b) = (ring[i], ring[(i + 1) % n]);
+        if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0] {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// The distance from `p` to the segment `a`–`b`.
+fn point_segment_distance(p: P2, a: P2, b: P2) -> f64 {
+    let (u, v) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
+    let len2 = u[0] * u[0] + u[1] * u[1];
+    let t = if len2 <= 0.0 { 0.0 } else { ((u[0] * v[0] + u[1] * v[1]) / len2).clamp(0.0, 1.0) };
+    ((v[0] - t * u[0]).powi(2) + (v[1] - t * u[1]).powi(2)).sqrt()
 }
 
 /// A loop that is a rectangle along X and Y (once the corners an exporter added along its sides
