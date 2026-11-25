@@ -290,7 +290,7 @@ mod tests {
         let result = import(bytes, "combined-cuts.stl", &ImportOptions::default()).expect("imports");
         let item = result.report.items.iter().find(|i| i.code == "revmesh.deviation").expect("a deviation item");
         assert!(item.message.contains("extrude x cut 1 side 1"), "{}", item.message);
-        assert!(item.message.contains("extrude y cut 1 side 1"), "{}", item.message);
+        assert!(item.message.contains("extrude y cut 2 side 1"), "{}", item.message);
     }
 
     /// A box rounded all over reports its rounded surface's deviation (roadmap 5.4).

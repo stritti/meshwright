@@ -891,10 +891,10 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
                         note_deviation(worst, &walls.labels[k], d);
                     }
                 } else {
+                    // Only the chord's real middle (a mesh point with its own height): the ends'
+                    // vertices are sampled with their heights via `faces.between`, and mixing an
+                    // end's XY with the middle's Z would measure a point off the mesh.
                     note_deviation(worst, "rounded surface", rim.deviation(middle3));
-                    for p in [a, b] {
-                        note_point(worst, [p[0], p[1], middle3[2]]);
-                    }
                 }
                 return;
             }
@@ -942,7 +942,7 @@ pub(crate) fn walls_deviations(
     mesh: &Mesh,
     outline: &[P2],
     cutouts: &[CutoutSpec],
-    cuts: &[Vec<P2>],
+    cuts: &[(usize, Vec<P2>)],
     circles: &[(usize, P2, f64)],
     span: (f64, f64),
     prefix: &str,

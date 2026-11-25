@@ -408,7 +408,7 @@ fn deviations_are_reported_per_extrusion() {
     let devs = crate::recognize::deviations(&mesh, &found);
     let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
     assert!(labels.iter().any(|l| l.starts_with("extrude x cut 1 side")), "{labels:?}");
-    assert!(labels.iter().any(|l| l.starts_with("extrude y cut 1 side")), "{labels:?}");
+    assert!(labels.iter().any(|l| l.starts_with("extrude y cut 2 side")), "the Y cut is cut 2 design-wide: {labels:?}");
 
     // The staggered, slightly tilted bore corners of combined-holes.stl are measured against
     // their circles: the holes' labels carry a real deviation, not zero.

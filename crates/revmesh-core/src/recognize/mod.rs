@@ -68,7 +68,10 @@ pub(crate) fn deviations(mesh: &Mesh, found: &Recognition) -> Vec<(String, f64)>
                 let outline: Vec<[f64; 2]> = extrusion.map_or_else(|| box_side(axis), |e| e.outline.clone());
                 let cutouts: Vec<CutoutSpec> = extrusion
                     .map_or_else(Vec::new, |e| e.cutouts.iter().map(|c| CutoutSpec { corners: c.clone(), arcs: Vec::new() }).collect());
-                let cuts: Vec<Vec<[f64; 2]>> = spec.cuts.iter().filter(|c| c.axis == axis).map(|c| c.outline.clone()).collect();
+                // The cut's design-wide number travels with it, so the report's `cut <n>` matches
+                // the design's `cut_<n>_*` parameters across axes.
+                let cuts: Vec<(usize, Vec<[f64; 2]>)> =
+                    spec.cuts.iter().enumerate().filter(|(_, c)| c.axis == axis).map(|(i, c)| (i, c.outline.clone())).collect();
                 let circles: Vec<(usize, [f64; 2], f64)> =
                     spec.holes.iter().enumerate().filter(|(_, h)| h.axis == axis).map(|(i, h)| (i, h.centre, h.d / 2.0)).collect();
                 let prefix = format!("extrude {}", axis.letter().to_ascii_lowercase());

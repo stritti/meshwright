@@ -318,8 +318,10 @@ fn deviation_of_a_rounded_box_measures_its_rounded_surface() {
     let mesh = synth::rounded_box(60.0, 40.0, 30.0, 5.0, 16, [0.0; 3]);
     let deviations = crate::plate::face_deviations(&mesh);
     let surface = deviations.iter().find(|(l, _)| l == "rounded surface").unwrap_or_else(|| panic!("no rounded surface in {deviations:?}"));
-    // The corner octants' facets bow inward by about the rim radius's sagitta on their chords.
-    assert!(surface.1 > 0.05 && surface.1 < 0.2, "rounded surface: {surface:?}");
+    // The facets bow inward by about the rim radius's sagitta on their chords (r=5, 16 segments
+    // per quarter circle: 5*(1-cos(pi/64)) = 0.006 mm; the corner octants' diagonals measure twice
+    // that). Only real mesh points are measured, not XY-of-an-end with Z-of-the-middle.
+    assert!(surface.1 > 0.005 && surface.1 < 0.05, "rounded surface: {surface:?}");
     assert_eq!(deviations.len(), 1, "one label for the whole rounded surface: {deviations:?}");
 }
 
