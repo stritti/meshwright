@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.0-beta.6](https://github.com/stritti/revmesh/compare/v0.1.0-beta.5...v0.1.0-beta.6) (2026-11-25)
+
+
+### Features
+
+* check for a newer release on every import ([#63](https://github.com/stritti/revmesh/issues/63)) ([a92cbe9](https://github.com/stritti/revmesh/commit/a92cbe9cd350843657a504d36382b9214bdbf79a))
+* **design:** angle the longest slanted side of an outline or cut-out sketch (roadmap 5.1) ([#72](https://github.com/stritti/revmesh/issues/72)) ([5b1e1b0](https://github.com/stritti/revmesh/commit/5b1e1b0b779e1f6f7550bbd33d824f0c430a5688))
+* **design:** dimension every side of an outline and cut-out sketch ([#67](https://github.com/stritti/revmesh/issues/67)) ([75afacf](https://github.com/stritti/revmesh/commit/75afacfd73e6f3128c052b1f089f8eb5ce59b872))
+* **plate:** recognise arc sides in outlines as sketch arcs ([#68](https://github.com/stritti/revmesh/issues/68)) ([3a9c9da](https://github.com/stritti/revmesh/commit/3a9c9da8495bfa5faf21627ef7153c31bdfbc4bf))
+* **plate:** recognise pockets of any straight-sided outline ([#69](https://github.com/stritti/revmesh/issues/69)) ([c262639](https://github.com/stritti/revmesh/commit/c262639f5270920f9f7c00497386c613a9d3921d))
+* **plate:** recognise steps down from the top face (along Z) ([#71](https://github.com/stritti/revmesh/issues/71)) ([e37fcf1](https://github.com/stritti/revmesh/commit/e37fcf1a49bc0e5a1ae13ec0654a33caa27667f1))
+* **plugin:** give the stl importer its own icon in SolidCraft's Plugins menu ([#75](https://github.com/stritti/revmesh/issues/75)) ([f3f065b](https://github.com/stritti/revmesh/commit/f3f065b180527939e72c85b640db9d56b294c987))
+* **report:** per-face surface deviation in the import report (roadmap 5.4) ([#74](https://github.com/stritti/revmesh/issues/74)) ([8d26b4c](https://github.com/stritti/revmesh/commit/8d26b4c595b6c52ca9ad1825bdfc3322363ae8da))
+
+
+### Documentation
+
+* add example STL parts and real Printables files with a gallery ([#61](https://github.com/stritti/revmesh/issues/61)) ([1a1d98b](https://github.com/stritti/revmesh/commit/1a1d98ba01ebf346bf0b0278ef556e50a413241d))
+* add revmesh-recognition-knowhow agent skill ([#64](https://github.com/stritti/revmesh/issues/64)) ([203b1fc](https://github.com/stritti/revmesh/commit/203b1fc94b78ffd89476b4a9433ac46a26ed47f0))
+* add roadmap items 6 and 7 from the code review against the references ([#66](https://github.com/stritti/revmesh/issues/66)) ([770957f](https://github.com/stritti/revmesh/commit/770957f01cc51ad6d58182a20b36cf2057d59bcb))
+
 ## [0.1.0-beta.5](https://github.com/stritti/revmesh/compare/v0.1.0-beta.4...v0.1.0-beta.5) (2026-11-24)
 
 
