@@ -60,8 +60,7 @@
           "path": "plugin/revmesh/plugin.json",
           "jsonpath": "$.version"
         }
-      ],
-      "release-as": "0.1.0"
+      ]
     }
   }
 }
