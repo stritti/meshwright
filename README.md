@@ -57,7 +57,7 @@ with the features and parameters it gets.
 | In the STL | In SolidCraft | Parameters |
 |---|---|---|
 | A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY), `Extrude1` and `Move1` (to where the plate is) | `base_x`, `base_y`, `base_t`; the centre `base_cx`, `base_cy` and the bottom `base_z0` |
-| A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical, every side a `Length` dimension), `Extrude1` and `Move1` | `extrude_len` (thickness), `extrude_0` (bottom), `outline_<i>_len` per side |
+| A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical, every side a `Length` dimension, the longest slanted side an `Angle` from the X axis), `Extrude1` and `Move1` | `extrude_len` (thickness), `extrude_0` (bottom), `outline_<i>_len` per side, `outline_<i>_angle` on the longest slanted side |
 | Any of those outlines extruded along X or Y (a part standing upright) | `Sketch1` on the YZ or XZ plane (the profile's coordinates are the sketch coordinates there), `Extrude1` along that axis, `Move1` | `extrude_len`, `extrude_0` (along the axis); the holes' and slots' positions named after the profile plane's world axes, e.g. `hole_1_y`, `hole_1_z` on an X extrusion |
 | Round vertical through holes (8 or more facets going evenly round the circle) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y` (where the hole is in the file), `hole_<n>_d` |
 | A counterbored through hole, its counterbore on the top or the bottom face | `Hole<n>` of type counterbore (drilled from that face) | `hole_<n>_d`, `hole_<n>_cbore_d`, `hole_<n>_cbore_depth` (from that face) |

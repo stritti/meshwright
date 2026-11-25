@@ -31,8 +31,16 @@
    revmesh](/guide/comparison#concepts-from-the-list-applied-to-revmesh):
    1. (done for plate outlines and cut-outs; the stack's and combined's sketches follow) a
       `Length` constraint per side with its own parameter (`outline_<i>_len`,
-      `cutout_<n>_<i>_len`) in `polygon_sketch_dimensioned`/`polygons_sketch_dimensioned`
-      (`crates/revmesh-core/src/design/sketch.rs`); an `Angle` per slanted side still to do
+      `cutout_<n>_<i>_len`) and an `Angle` from the sketch's X axis on the longest slanted side
+      with its own parameter (`outline_<i>_angle`, `cutout_<n>_<i>_angle`) in
+      `polygon_sketch_dimensioned`/`polygons_sketch_dimensioned`
+      (`crates/revmesh-core/src/design/sketch.rs`; parallel slanted sides share their angle and a
+      loop's turns sum to 360°, so one angle per polygon is the independent one — and that side's
+      length is then derived, driving both would over-constrain the sketch; likewise, when the
+      remaining lengths and orientations already fix that side's direction, as a right triangle's
+      legs held horizontal and vertical do for the diagonal, the longest axis-aligned side's
+      length is derived too (`dimensioned_sides_for_angle`), so the angle parameter stays
+      editable)
    2. arcs in outlines and cut-outs (`SketchCurve::Arc` with a `Diameter` parameter) instead of
       only fillet features — round outlines and D-shaped cut-outs, today a mesh
    3. (done for pockets of any straight-sided outline and for steps down from the top face,
