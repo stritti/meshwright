@@ -61,7 +61,10 @@ A part that is the intersection of outlines extruded along two or three axes get
 outline on its axis's origin plane (the outline's corners are the sketch coordinates there, the
 part's bounding box's lowest corner at the origin, so on `XZ` the second coordinate is -Z) and
 one extrusion of it, `extent: {distance: "extrude_<a>_len", direction: "positive"}`, right across
-the part. The first extrusion makes the body (`operation: "new_body"`), every further one has
+the part. Each outline's sketch is dimensioned like a plate's: a `Length` constraint per driving
+side driven by `outline_<a>_<i>_len` (`<a>` the axis letter) and an `Angle` on its longest
+slanted side driven by `outline_<a>_<i>_angle`, so a combined part re-dimensions side by side
+and re-angles in SolidCraft too. The first extrusion makes the body (`operation: "new_body"`), every further one has
 `operation: "intersect"` with no `body_names` and no targets: SolidCraft intersects the existing
 body, coincident faces included, as `solidcraft-cli 0.49.1` builds it. A `move` then takes the
 body to where it is, its translation along each outline's axis `extrude_<a>_0`. Changing
@@ -69,13 +72,15 @@ body to where it is, its translation along each outline's axis `extrude_<a>_0`. 
 computed, and `extrude_z_0 = 10` lifts the part by 10 mm.
 
 An outline with openings right through it draws them in its sketch after the outline (its lines
-`l1` to `l<n>` first) and extrudes `profiles: {"type": "curves", "loops": [["l1", …, "l<n>"]]}`:
+`l1` to `l<n>` first, each opening dimensioned by `cutout_<n>_<i>_len`/`cutout_<n>_<i>_angle`,
+numbered across the outlines in design order) and extrudes `profiles: {"type": "curves", "loops": [["l1", …, "l<n>"]]}`:
 the profile whose outer loop is the outline, the loops inside it its holes. With `{"type":
 "all"}` SolidCraft extrudes every region, the openings included, and they come back filled
 (`plugin/revmesh/tests/combined-windows.stl` rebuilt to 37,000 instead of 35,410 mm³).
 
 A straight blind cut comes after the intersections and before the `move`, in the part's own
-frame: `Cut<n>Sketch` on its axis's origin plane, and `Cut<n>`, an extrusion with `operation:
+frame: `Cut<n>Sketch` on its axis's origin plane (its outline dimensioned by
+`cut_<n>_<i>_len`/`cut_<n>_<i>_angle`), and `Cut<n>`, an extrusion with `operation:
 "cut"` and `extent: {distance: "cut_<n>_len", direction: "positive", start_offset: "cut_<n>_0 -
 extrude_<a>_0"}`: `start_offset` (as SolidCraft saves it) moves the start along the plane's
 normal, and `cut_<n>_0` is where the cut starts in the file, so the move's translation along the
@@ -103,6 +108,10 @@ A stack of outlines along one axis is one `Sketch<k>` and one `Extrude<k>` per b
 "extrude_<a><k>_0 - extrude_<a>1_0"`, then a `move` whose translation along the axis is
 `extrude_<a>1_0`. The bands' starts after the first are user parameters with expressions
 (`extrude_z2_0 = extrude_z1_0 + extrude_z1_len`), so a band's height moves the bands above it.
+Each band's sketch is dimensioned like a plate's outline: a `Length` per driving side of its
+outline driven by `outline_<k>_<i>_len` and an `Angle` on its longest slanted side driven by
+`outline_<k>_<i>_angle` (openings through the band by `cutout_<n>_<i>_len`/`_angle`, numbered
+across the bands).
 SolidCraft fuses bands that meet face to face into one body (`solidcraft-cli 0.49.1`); mesh2cad
 overlaps them by 0.02 mm for OpenCascade's fuse, which SolidCraft does not need.
 `plugin/revmesh/tests/stack.stl` (a base, an L and a diamond) rebuilds to 34,296 mm³ along Z and,
@@ -133,7 +142,9 @@ is an `arc` curve whose `Diameter` constraint is driven by the model parameter b
 `cutout_<n>_arc_<i>_d`, its centre a free sketch point the solver keeps equidistant from the
 side's two corners at the driving diameter (like an outline's arc sides, see the polygon outline
 below), the driving straight sides dimensioned by `cutout_<n>_<i>_len` as before, and a straight
-side meeting an arc side tangentially held with a `tangent` constraint. A cut-out whose corners
+side meeting an arc side tangentially held with a `tangent` constraint. As in an outline, the
+side opposite an arc side tangent to both its neighbours is derived, its length being the arc's
+diameter. A cut-out whose corners
 are all rounded, a D-shaped cut-out, a concave arc side and a curve that is no circular arc stay
 a mesh.
 
@@ -277,7 +288,10 @@ solver keeps equidistant from the side's two corners at the driving diameter, so
 `arc_<i>_d` leaves the sketch solvable. A straight side meeting an arc side at a gently turning
 corner is held tangent to it, like a slot's sides, and two arc sides joined by such tangent
 straight sides (a stadium's ends) share one radius through an `equal` constraint, only the first
-driving its `Diameter`. The straight sides keep their `Length` constraints. The L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
+driving its `Diameter`. The straight sides keep their `Length` constraints — except the side
+opposite an arc side that is tangent to both its neighbours in a four-sided loop (a semicircular
+side on a rectangle): the tangents make its length the arc's diameter, so it is derived. The
+L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
 in `solidcraft-cli 0.49.1` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
 9,461.81 mm³, again as computed.

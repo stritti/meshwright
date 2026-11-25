@@ -1,10 +1,12 @@
 //! A part that is the intersection of outlines extruded along X, Y and Z, and its design.
 
 use super::axis::Axis;
+use super::to_design::dimensioned_polygon_params;
 
 use crate::Locale;
 use crate::design::{
-    Design, DesignBuilder, Extent, FeatureKind, Operation, Param, Plane, Profiles, fmt_number, polygon_sketch, polygons_sketch,
+    Design, DesignBuilder, Extent, FeatureKind, Operation, Param, Plane, Profiles, fmt_number, polygon_sketch_dimensioned,
+    polygons_sketch_dimensioned,
 };
 use crate::mesh::{Vec3, snap_mm};
 
@@ -206,7 +208,9 @@ impl CombinedSpec {
     /// The part as a parametric history with its bounding box's lowest corner at `at`, as
     /// mesh2cad writes an intersection of extrusions: parameters `extrude_<a>_len` (the length
     /// along axis `a`) and `extrude_<a>_0` (where it starts) for each outline; per outline a
-    /// sketch on the axis's plane and an extrusion along its normal, the first a new body and
+    /// sketch on the axis's plane — dimensioned like a plate's outline, the outline's sides by
+    /// `outline_<a>_<i>_len` and `outline_<a>_<i>_angle`, its openings by `cutout_<n>_<i>_len`
+    /// and `cutout_<n>_<i>_angle` — and an extrusion along its normal, the first a new body and
     /// each further one intersecting it; and a move to where the part is (its start along each
     /// outline's axis is that outline's `extrude_<a>_0`).
     #[must_use]
@@ -216,19 +220,34 @@ impl CombinedSpec {
             let (a, i) = (e.axis.letter().to_ascii_lowercase(), e.axis.index());
             b.param(Param::user(format!("extrude_{a}_len"), self.size[i])).param(Param::user(format!("extrude_{a}_0"), snap_mm(at[i])));
         }
+        // The openings are numbered across the outlines, in design order.
+        let mut cutout_n = 0;
         for (k, e) in self.extrusions.iter().enumerate() {
             let a = e.axis.letter().to_ascii_lowercase();
+            // The outline's sketch, dimensioned like a plate's: the outline's driving sides by
+            // `outline_<a>_<i>_len` and its longest slanted side by `outline_<a>_<i>_angle`, the
+            // openings' by `cutout_<n>_<i>_len`/`_angle`. The openings follow the outline, its
+            // lines l1..l<n> first.
+            let polygons = [vec![e.outline.clone()], e.cutouts.clone()].concat();
+            let mut lens = Vec::with_capacity(polygons.len());
+            let mut angles = Vec::with_capacity(polygons.len());
+            for (i, poly) in polygons.iter().enumerate() {
+                let prefix = if i == 0 {
+                    format!("outline_{a}")
+                } else {
+                    cutout_n += 1;
+                    format!("cutout_{cutout_n}")
+                };
+                let (l, angle) = dimensioned_polygon_params(&mut b, &prefix, poly);
+                lens.push(l);
+                angles.push(angle);
+            }
             let sketch = b.feature(
                 format!("Sketch{}", k + 1),
                 vec![],
                 FeatureKind::Sketch {
                     plane: Plane::Origin { name: e.axis.plane() },
-                    // The openings in the outline's sketch, its lines l1..l<n> first.
-                    sketch: if e.cutouts.is_empty() {
-                        polygon_sketch(&e.outline)
-                    } else {
-                        polygons_sketch(&[vec![e.outline.clone()], e.cutouts.clone()].concat())
-                    },
+                    sketch: polygons_sketch_dimensioned(&polygons, &lens, &angles),
                 },
             );
             b.feature(
@@ -272,10 +291,15 @@ impl CombinedSpec {
             let (n, i) = (k + 1, c.axis.index());
             b.param(Param::user(format!("cut_{n}_len"), snap_mm(c.to - c.from)))
                 .param(Param::user(format!("cut_{n}_0"), snap_mm(at[i] + c.from)));
+            // The cut's outline dimensioned by `cut_<n>_<i>_len` / `cut_<n>_<i>_angle`.
+            let (lens, angle) = dimensioned_polygon_params(b, &format!("cut_{n}"), &c.outline);
             let sketch = b.feature(
                 format!("Cut{n}Sketch"),
                 vec![],
-                FeatureKind::Sketch { plane: Plane::Origin { name: c.axis.plane() }, sketch: polygon_sketch(&c.outline) },
+                FeatureKind::Sketch {
+                    plane: Plane::Origin { name: c.axis.plane() },
+                    sketch: polygon_sketch_dimensioned(&c.outline, &lens, angle.as_ref()),
+                },
             );
             b.feature(
                 format!("Cut{n}"),

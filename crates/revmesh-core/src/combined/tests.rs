@@ -93,6 +93,9 @@ fn recognises_a_pocket_as_a_cut() {
     let value = |name: &str| json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].clone());
     assert_eq!(value("cut_1_0"), Some("7 mm".into()));
     assert_eq!(value("cut_1_len"), Some("10 mm".into()));
+    // The cut's outline is dimensioned too, as `cut_1_<i>_len` (its 5 and 6 mm sides).
+    assert_eq!(value("cut_1_1_len"), Some("5 mm".into()));
+    assert_eq!(value("cut_1_2_len"), Some("6 mm".into()));
 }
 
 /// A cut along an axis without an outline starts at a number: where the part starts along it.
@@ -199,13 +202,19 @@ fn recognises_windows_through_the_outlines() {
     assert_eq!(spec.outline(Axis::Y).map(<[[f64; 2]]>::len), Some(4));
     assert!((spec.volume() - 35_410.0).abs() < 1e-6, "{}", spec.volume());
     assert_eq!(spec.describe(), "A 60 x 40 x 30 mm part of outlines extruded along X, Y and Z with 2 cut-outs");
-    // Each opening is drawn in its outline's sketch.
+    // Each opening is drawn in its outline's sketch (the X outline's slanted side links the
+    // sketch's X axis in as one construction line on top of its 5 + 4 curves).
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("json");
     let lines = |k: usize| json["features"][k]["sketch"]["curves"].as_array().expect("curves").len();
-    assert_eq!([lines(0), lines(2), lines(4)], [6, 5 + 4, 4 + 4]);
+    assert_eq!([lines(0), lines(2), lines(4)], [6, 5 + 4 + 1, 4 + 4]);
     // ... and its extrusion takes the outline's loop (the openings its holes), not every region.
     assert_eq!(json["features"][1]["profiles"], serde_json::json!({"type": "all"}));
     assert_eq!(json["features"][3]["profiles"], serde_json::json!({"type": "curves", "loops": [["l1", "l2", "l3", "l4", "l5"]]}));
+    // The outlines' and openings' sides are dimensioned, as `outline_<a>_<i>_len` and
+    // `cutout_<n>_<i>_len`.
+    let names: Vec<&str> = json["params"].as_array().expect("params").iter().map(|p| p["name"].as_str().expect("name")).collect();
+    assert!(names.iter().any(|n| n.starts_with("outline_x_") && n.ends_with("_len")), "{names:?}");
+    assert!(names.contains(&"cutout_1_1_len") && names.contains(&"cutout_2_1_len"), "the openings are dimensioned too: {names:?}");
 }
 
 /// The design: one sketch and extrusion per outline, the first a new body and the next
@@ -215,8 +224,17 @@ fn writes_an_intersection_of_extrusions() {
     let Recognition::Combined { spec, .. } = recognize(&combined()) else { panic!("not combined") };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [1.0, 2.0, 3.0]).to_json()).expect("json");
     let names: Vec<&str> = json["params"].as_array().expect("params").iter().map(|p| p["name"].as_str().expect("name")).collect();
-    assert_eq!(names, ["extrude_z_len", "extrude_z_0", "extrude_x_len", "extrude_x_0"]);
+    // mesh2cad's names for the extrusions come first; the outlines' driving sides follow, as
+    // `outline_z_<i>_len` for the plate seen from above and `outline_x_<i>_len` for the ramp,
+    // its slanted side carrying `outline_x_<i>_angle`.
+    assert_eq!(&names[..4], ["extrude_z_len", "extrude_z_0", "extrude_x_len", "extrude_x_0"]);
+    assert!(names.iter().any(|n| n.starts_with("outline_z_") && n.ends_with("_len")), "{names:?}");
+    assert!(names.iter().any(|n| n.starts_with("outline_x_") && n.ends_with("_len")), "{names:?}");
+    assert!(names.iter().any(|n| n.starts_with("outline_x_") && n.ends_with("_angle")), "{names:?}");
     let features = json["features"].as_array().expect("features");
+    let constraints = |k: usize| features[k]["sketch"]["constraints"].as_array().expect("constraints");
+    assert!(constraints(0).iter().filter(|c| c["type"] == "length").count() >= 2, "the Z outline's driving sides carry Lengths");
+    assert_eq!(constraints(2).iter().filter(|c| c["type"] == "angle").count(), 1, "the ramp's slanted side carries the Angle");
     let kinds: Vec<(&str, &str)> =
         features.iter().map(|f| (f["type"].as_str().expect("type"), f["operation"].as_str().unwrap_or(""))).collect();
     assert_eq!(kinds, [("sketch", ""), ("extrude", "new_body"), ("sketch", ""), ("extrude", "intersect"), ("move", "")]);
