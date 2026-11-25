@@ -36,7 +36,7 @@ pub(super) fn recognize_prism(mesh: &Mesh, allow_steps: bool) -> Result<Recognit
     // Steps are recognised along Z only for now; along X or Y they would take parts that are
     // better written as an intersection of extrusions (roadmap 5.3).
     let steps = if allow_steps { step_levels(&faces, size[2], tol)? } else { Vec::new() };
-    let face_loops = face_outlines(&faces, &steps, tol)?;
+    let face_loops = face_outlines(&faces, &steps, size[2], tol)?;
     let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
     let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
     let mut cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
@@ -128,6 +128,9 @@ pub(super) struct FaceLoops {
     pub(super) outline: Vec<P2>,
     /// The top face's boundary loops (the steps' holes included): the outline and the cut-outs'.
     pub(super) loops: Vec<Vec<P2>>,
+    /// Each top loop's level, parallel to `loops`: the face's own loops lie at the top, a step's
+    /// at the step's height (a hole's mouth there opens on the step's level, not the top face).
+    pub(super) loop_z: Vec<f64>,
     /// The bottom face's boundary loops.
     pub(super) bottom_loops: Vec<Vec<P2>>,
 }
@@ -213,12 +216,24 @@ fn step_levels(faces: &Faces, height: f64, tol: f64) -> Result<Vec<(f64, Vec<[P2
 
 /// The faces' boundary loops and the top face's single outline among them (the steps' regions
 /// included in the top), checked against the bottom face's outline.
-pub(super) fn face_outlines(faces: &Faces, steps: &[(f64, Vec<[P2; 3]>)], tol: f64) -> Result<FaceLoops, String> {
+pub(super) fn face_outlines(faces: &Faces, steps: &[(f64, Vec<[P2; 3]>)], height: f64, tol: f64) -> Result<FaceLoops, String> {
     let mut top = faces.top.clone();
     for (_, ts) in steps {
         top.extend(ts.iter().copied());
     }
     let loops = boundary_loops(&top, tol)?;
+    // Each loop's level: a loop inside a step's region lies at the step's height. A level may
+    // hold several disconnected regions (two lowered ends of a raised middle,
+    // say): keep every region's outer loop, or a hole on the second region would get the
+    // plate's top height instead of its level.
+    let step_rings: Vec<(f64, Footprint)> = steps
+        .iter()
+        .filter_map(|(z, ts)| boundary_loops(ts, tol).ok().map(|ls| (*z, ls)))
+        .flat_map(|(z, ls)| {
+            ls.into_iter().filter(|l| signed_area(l) > 0.0).map(move |ring| (z, Footprint::Polygon { ring })).collect::<Vec<_>>()
+        })
+        .collect();
+    let loop_z = loops.iter().map(|l| step_rings.iter().find(|(_, f)| f.contains(l[0], tol)).map_or(height, |(z, _)| *z)).collect();
     let bottom_loops = boundary_loops(&faces.bottom, tol)?;
     let mut outlines = loops.iter().filter(|l| signed_area(l) > 0.0);
     let outline = outlines.next().ok_or("the top face has no outline")?.clone();
@@ -231,7 +246,7 @@ pub(super) fn face_outlines(faces: &Faces, steps: &[(f64, Vec<[P2; 3]>)], tol: f
     if !close(signed_area(&outline), signed_area(bottom_outline), AREA_MATCH_REL) {
         return Err(NOT_CLOSED.into());
     }
-    Ok(FaceLoops { outline, loops, bottom_loops })
+    Ok(FaceLoops { outline, loops, loop_z, bottom_loops })
 }
 
 /// The holes, slots, cut-outs and pockets a plate has, from the two faces' boundary loops.
@@ -471,6 +486,7 @@ pub(super) fn pair_through_holes<'a>(
             (*centre, *top_r),
             (*bottom_centre, *bottom_r),
             (&loops[*loop_index], &bottom_loops[*bottom_index]),
+            face_loops.loop_z[*loop_index],
             height,
             tol,
         )?;
@@ -614,6 +630,7 @@ pub(super) fn stepped_hole(
     top: (P2, f64),
     bottom: (P2, f64),
     loops: (&[P2], &[P2]),
+    top_z: f64,
     height: f64,
     tol: f64,
 ) -> Result<(HoleSpec, Stepped), String> {
@@ -622,14 +639,17 @@ pub(super) fn stepped_hole(
     let centre = [f64::midpoint(top_centre[0], bottom_centre[0]), f64::midpoint(top_centre[1], bottom_centre[1])];
     let on_top = top_r > bottom_r;
     let (head_r, bore_r) = if on_top { (top_r, bottom_r) } else { (bottom_r, top_r) };
-    let (face_z, inward) = if on_top { (height, -1.0) } else { (0.0, 1.0) };
+    // The mouth may lie on a step's level, not the top face: measure from where it opens.
+    let (face_z, inward) = if on_top { (top_z, -1.0) } else { (0.0, 1.0) };
     let (mouth, bore) = if on_top { (loops.0.to_vec(), loops.1.to_vec()) } else { (loops.1.to_vec(), loops.0.to_vec()) };
     let mut s =
         Stepped { centre, bore_r, head_r, bore, mouth, face_z, inward, depth: 0.0, counterbore: false, rounded: false, round_slack: 0.0 };
     // Its corners between the faces tell the kind: a counterbore has some on its wide wall,
     // down to its floor; a countersink's cone meets the bore at the bore's corners nearest
-    // the face.
-    let inside = |p: &Vec3| p[2] > tol && p[2] < height - tol;
+    // the face. The ceiling is the mouth's own face: a mouth opening on a step's level has its
+    // vertices at that level, and they are the mouth, not a floor.
+    let ceiling = if on_top { face_z } else { height };
+    let inside = |p: &Vec3| p[2] > tol && p[2] < ceiling - tol;
     let mine: Vec<Vec3> =
         faces.between.iter().chain(faces.caps.iter().flatten()).copied().filter(|p| inside(p) && s.reaches([p[0], p[1]], tol)).collect();
     let depth = |p: &Vec3| (p[2] - face_z) * inward;
@@ -653,7 +673,8 @@ pub(super) fn stepped_hole(
             .reduce(f64::min)
             .ok_or("a hole narrows all the way through (tapered holes are not recognised yet)")?;
     }
-    if s.depth <= tol || s.depth >= height - tol {
+    let extent = if on_top { face_z } else { height };
+    if s.depth <= tol || s.depth >= extent - tol {
         return Err("a hole's counterbore or countersink is as deep as the plate (stepped holes are not recognised yet)".into());
     }
     let spec = HoleSpec { x: snap_mm(centre[0]), y: snap_mm(centre[1]), d: snap_mm(2.0 * bore_r), head: Some(s.head()), blind: None };
@@ -744,7 +765,7 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         }
         let faces = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
         let steps = step_levels(&faces, size[2], tol)?;
-        let face_loops = face_outlines(&faces, &steps, tol)?;
+        let face_loops = face_outlines(&faces, &steps, size[2], tol)?;
         let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
         let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
         // A box rounded all over: its rounded surfaces are not indexed, so no deviation to
@@ -955,16 +976,13 @@ pub(super) fn recognition(
     // A through hole in a pocket's or step's region goes only up to that level, not through the
     // whole plate: from the bottom face it is blind, as deep as the level lies above it. A blind
     // hole already measured beneath the region keeps its own depth. A hole whose counterbore,
-    // countersink or round opens on the level would be drilled from the plate's top face, not
-    // from the level, so it is not recognised: the mesh is kept.
+    // countersink or round opens on the level is drilled from the level itself — the writer
+    // picks the level's face, one `pocket_<n>_depth` below the top (see `single_hole`).
     for h in &mut holes {
-        if let Some(p) = outline_pockets.iter().find(|p| !p.bottom && p.contains([h.x, h.y], tol)) {
-            if h.head.is_some_and(|head| !head.bottom()) {
-                return Err("a hole with a counterbore, countersink or round opening on a step's level is not recognised yet".into());
-            }
-            if h.blind.is_none() {
-                h.blind = Some(Blind { depth: snap_mm(size[2] - p.depth), bottom: true });
-            }
+        if let Some(p) = outline_pockets.iter().find(|p| !p.bottom && p.contains([h.x, h.y], tol))
+            && h.blind.is_none()
+        {
+            h.blind = Some(Blind { depth: snap_mm(size[2] - p.depth), bottom: true });
         }
     }
     // A rectangle with cut-outs is an outline, as mesh2cad writes it (`extrude_len`, the

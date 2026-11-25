@@ -1188,6 +1188,131 @@ fn a_bottom_rounded_hole_beneath_a_step_is_drilled_from_the_bottom() {
     assert!(rim["edge_names"][0].as_str().expect("edge").contains(":start"), "the rim is on the bore's bottom edge: {rim}");
 }
 
+/// A counterbore opening on a step's level is drilled from that level — the pocket's start face,
+/// one `pocket_<n>_depth` below the top — not from the plate's top face (roadmap 5.3).
+#[test]
+fn a_counterbore_opening_on_a_step_level_is_drilled_from_the_level() {
+    use super::spec::{Blind, HoleHead};
+    let step = |depth: f64| OutlinePocketSpec { corners: vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]], depth, bottom: false };
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 6.0,
+        holes: vec![HoleSpec {
+            x: 45.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Counterbore { d: 10.0, depth: 1.0, bottom: false }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: vec![step(3.0)],
+        bosses: vec![],
+        slots: vec![],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("the hole");
+    assert_eq!(
+        hole["at"],
+        serde_json::json!(["hole_1_x", "hole_1_y", "extrude_0 + extrude_len - pocket_1_depth"]),
+        "drilled from the step's level"
+    );
+    assert_eq!(hole["position"], serde_json::json!([45.0, 20.0, 3.0]));
+    assert_eq!(hole["direction"], serde_json::json!([0.0, 0.0, -1.0]));
+    assert_eq!(hole["depth"].as_str().expect("depth"), "hole_1_depth", "blind from the level down through the bottom");
+    assert_eq!(hole["hole"]["type"], "counterbore");
+    assert_eq!(hole["hole"]["cb_diameter"].as_str().expect("d"), "hole_1_cbore_d");
+    assert_eq!(hole["hole"]["cb_depth"].as_str().expect("depth"), "hole_1_cbore_depth");
+}
+
+/// A headed hole just outside a step's region (within 0.01 mm of its edge, but outside the
+/// recognition tolerance of 0.001 mm on a 60 mm part) opens on the plate's top face, not on the
+/// step's level: the level match uses the recogniser's own tolerance (codex finding on #85).
+#[test]
+fn a_headed_hole_beside_a_step_edge_is_drilled_from_the_top_face() {
+    use super::spec::HoleHead;
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 6.0,
+        holes: vec![HoleSpec {
+            x: 29.999,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Counterbore { d: 10.0, depth: 1.0, bottom: false }),
+            blind: None,
+        }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: vec![OutlinePocketSpec {
+            corners: vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]],
+            depth: 3.0,
+            bottom: false,
+        }],
+        bosses: vec![],
+        slots: vec![],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("the hole");
+    assert_eq!(
+        hole["at"][2].as_str().expect("face"),
+        "extrude_0 + extrude_len",
+        "drilled from the top face, the hole lies outside the step's region: {hole}"
+    );
+    assert_eq!(hole["position"], serde_json::json!([29.999, 20.0, 6.0]));
+}
+
+/// A rounded rim on a step's level: the hole is drilled from the level, and the rim's fillet
+/// sits on the pocket's start edge, so it is written only after that pocket exists (5.3).
+#[test]
+fn a_rounded_rim_on_a_step_level_fillets_the_pockets_start_edge() {
+    use super::spec::{Blind, HoleHead};
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 6.0,
+        holes: vec![HoleSpec {
+            x: 45.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Round { r: 1.0, bottom: false }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: vec![OutlinePocketSpec {
+            corners: vec![[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]],
+            depth: 3.0,
+            bottom: false,
+        }],
+        bosses: vec![],
+        slots: vec![],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
+    assert_eq!(
+        names,
+        ["Sketch1", "Extrude1", "Move1", "Hole1", "Pocket1Sketch", "Pocket1", "Hole1Rim"],
+        "the rim after its pocket: {names:?}"
+    );
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("the hole");
+    assert_eq!(hole["at"][2].as_str().expect("face"), "extrude_0 + extrude_len - pocket_1_depth", "drilled from the step's level");
+    let rim = features.iter().find(|f| f["name"] == "Hole1Rim").expect("the rim fillet");
+    assert_eq!(rim["edge_names"][0], "F6:start|F4:bore:side:0", "the pocket's start edge and the bore: {rim}");
+    assert_eq!(rim["edges"][0], serde_json::json!([48.0, 20.0, 3.0]));
+    assert_eq!(rim["radius"].as_str().expect("r"), "hole_1_rim_r");
+}
+
 /// Roadmap 5.2, cut-outs: a cut-out with an arc side gets its own sketch `Cutout<n>Sketch` and a
 /// cut through everything `Cutout<n>` (not the shared `CutoutsSketch`), the arc side drawn as an
 /// `arc` curve whose `Diameter` is driven by `cutout_<n>_arc_<i>_d`, its centre a free sketch

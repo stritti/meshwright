@@ -107,10 +107,24 @@ impl PlateSpec {
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "edge_fillet_r".into() });
         }
         cutout_features(&mut b, &self.cutouts, at, axis);
-        hole_features(&mut b, &self.holes, at, axis, "base_z0 + base_t", "base_z0", self.z, extrude);
+        let mut pending_rims = Vec::new();
+        hole_features(
+            &mut b,
+            &self.holes,
+            at,
+            axis,
+            "base_z0 + base_t",
+            "base_z0",
+            self.z,
+            extrude,
+            &[],
+            0,
+            crate::plate::tolerance(self.x.max(self.y).max(self.z)),
+            &mut pending_rims,
+        );
         slot_features(&mut b, &self.slots, at, axis);
         boss_features(&mut b, &self.bosses, at, self.z, axis, "base_z0 + base_t", extrude);
-        block_features(&mut b, &self.pads, &self.pockets, &[], at, axis, "base_z0 + base_t", "base_z0");
+        block_features(&mut b, &self.pads, &self.pockets, &[], at, axis, "base_z0 + base_t", "base_z0", &mut pending_rims);
         if self.outline_fillet_r.is_some() {
             let mid = at[2] + self.z / 2.0;
             let side = |a: u32, b: u32| format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}");
@@ -206,10 +220,32 @@ impl ProfileSpec {
             b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
         }
         cutout_features(&mut b, &self.cutouts, at, axis);
-        hole_features(&mut b, &self.holes, at, axis, top, "extrude_0", self.z, extrude);
+        let mut pending_rims = Vec::new();
+        let scale = {
+            let (mut lo, mut hi) = (self.corners[0], self.corners[0]);
+            for c in &self.corners {
+                lo = [lo[0].min(c[0]), lo[1].min(c[1])];
+                hi = [hi[0].max(c[0]), hi[1].max(c[1])];
+            }
+            (hi[0] - lo[0]).max(hi[1] - lo[1]).max(self.z)
+        };
+        hole_features(
+            &mut b,
+            &self.holes,
+            at,
+            axis,
+            top,
+            "extrude_0",
+            self.z,
+            extrude,
+            &self.outline_pockets,
+            self.pockets.len(),
+            crate::plate::tolerance(scale),
+            &mut pending_rims,
+        );
         slot_features(&mut b, &self.slots, at, axis);
         boss_features(&mut b, &self.bosses, at, self.z, axis, top, extrude);
-        block_features(&mut b, &self.pads, &self.pockets, &self.outline_pockets, at, axis, top, "extrude_0");
+        block_features(&mut b, &self.pads, &self.pockets, &self.outline_pockets, at, axis, top, "extrude_0", &mut pending_rims);
         b.build()
     }
 }
@@ -624,6 +660,7 @@ fn block_features(
     axis: Axis,
     top: &str,
     bottom: &str,
+    pending_rims: &mut Vec<PendingRim>,
 ) {
     let box_at = |p: &str, along: &str, extent: &str| -> ([String; 3], [String; 3]) {
         let mut corner = [const { String::new() }; 3];
@@ -697,7 +734,7 @@ fn block_features(
             },
         );
         let start = if s.bottom { bottom.to_owned() } else { format!("{top} - {p}_depth") };
-        b.feature(
+        let pocket = b.feature(
             format!("Pocket{n}"),
             vec![],
             FeatureKind::Extrude {
@@ -707,6 +744,20 @@ fn block_features(
                 operation: Operation::Cut,
             },
         );
+        // The rounded rims of holes opening on this pocket's level: their edge lies on the
+        // pocket's start face, `F<Pocket n>:start`, which exists only now.
+        for rim in pending_rims.iter().filter(|r| r.pocket == i) {
+            b.feature(
+                rim.name.clone(),
+                vec![],
+                FeatureKind::Fillet {
+                    edge_names: vec![format!("F{pocket}:start|F{}:bore:side:0", rim.hole)],
+                    edges: vec![axis.world(at, rim.x + rim.d / 2.0, rim.y, rim.w)],
+                    radius: rim.radius.clone(),
+                },
+            );
+        }
+        pending_rims.retain(|r| r.pocket != i);
     }
 }
 
@@ -793,27 +844,66 @@ struct HoleCtx<'a> {
     down: Vec3,
     /// The extrusion whose faces (`top`, `start`) the holes open on.
     extrude: u32,
+    /// The pockets of any outline, for holes opening on a step's level; `rect_pockets` is the
+    /// number of rectangular pockets before them, so a level's parameter is
+    /// `pocket_<rect_pockets + i + 1>_depth` (as `block_features` numbers them).
+    outline_pockets: &'a [OutlinePocketSpec],
+    rect_pockets: usize,
+    /// The recognition tolerance (see `plate::tolerance`), so a hole is matched to a step's
+    /// region exactly as the recogniser matched it.
+    tol: f64,
+}
+
+/// A rounded rim on a step's level, to be written once the pocket that makes the level exists:
+/// the rim's fillet edge is named after that pocket's start face (`F<Pocket n>:start`).
+struct PendingRim {
+    /// The rim feature's name, `Hole<n>Rim`.
+    name: String,
+    /// The hole feature's id.
+    hole: u32,
+    /// The hole's centre and diameter, and the level's depth along the axis (relative to `at`).
+    x: f64,
+    y: f64,
+    d: f64,
+    w: f64,
+    /// The rim radius's expression, `hole_<n>_rim_r`.
+    radius: String,
+    /// The index in the outline pockets the level belongs to.
+    pocket: usize,
 }
 
 /// A through hole per hole, or per pattern a hole and a pattern feature that repeats it, drilled
 /// from the face at depth `z` along the axis (the `top` expression); a hole with a counterbore or
 /// countersink on the other face (at depth 0, the `bottom` expression) is drilled from there
-/// along the axis.
-#[allow(clippy::too_many_arguments)] // the part's frame, its faces and the extrusion they belong to
-fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, axis: Axis, top: &str, bottom: &str, z: f64, extrude: u32) {
+/// along the axis. A headed hole opening on a step's level is drilled from that level instead.
+#[allow(clippy::too_many_arguments)] // the part's frame, its faces, the extrusion and the pockets
+fn hole_features(
+    b: &mut DesignBuilder,
+    holes: &[HoleSpec],
+    at: Vec3,
+    axis: Axis,
+    top: &str,
+    bottom: &str,
+    z: f64,
+    extrude: u32,
+    outline_pockets: &[OutlinePocketSpec],
+    rect_pockets: usize,
+    tol: f64,
+    pending_rims: &mut Vec<PendingRim>,
+) {
     // Drilled from the +axis face: against the axis. (Built component-wise, so no -0.0.)
     let down = {
         let mut d = [0.0; 3];
         d[axis.index()] = -1.0;
         d
     };
-    let ctx = HoleCtx { at, axis, top, bottom, z, down, extrude };
+    let ctx = HoleCtx { at, axis, top, bottom, z, down, extrude, outline_pockets, rect_pockets, tol };
     let mut counts = [0, 0, 0, 0]; // singles, rows, grids, circles
     for (p, group) in hole_groups(holes) {
         match group {
             HoleGroup::Single(h) => {
                 counts[0] += 1;
-                single_hole(b, &ctx, &p, &h, counts[0]);
+                single_hole(b, &ctx, &p, &h, counts[0], pending_rims);
             }
             group => pattern_hole(b, &ctx, &p, &group, &mut counts),
         }
@@ -821,9 +911,11 @@ fn hole_features(b: &mut DesignBuilder, holes: &[HoleSpec], at: Vec3, axis: Axis
 }
 
 /// One hole in no pattern: drilled from the face its counterbore, countersink or blind floor is
-/// on, or from the +axis face into the part.
+/// on, or from the +axis face into the part. A headed hole whose mouth lies in a step's region
+/// opens on the step's level, so it is drilled from there: the level's face expression, one
+/// `pocket_<n>_depth` below the top.
 #[allow(clippy::many_single_char_names)] // x, y, d, r as in the parameter names
-fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: usize) {
+fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: usize, pending: &mut Vec<PendingRim>) {
     let (kind, from_bottom) = match h.head {
         None => (HoleKind::Simple, h.blind.is_some_and(|b| b.bottom)),
         Some(HoleHead::Counterbore { bottom, .. }) => {
@@ -837,13 +929,26 @@ fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: u
         // bottom, as deep as the level lies above it, not from the top.
         Some(HoleHead::Round { bottom, .. }) => (HoleKind::Simple, bottom),
     };
-    let (face_w, face, direction) = if from_bottom { (0.0, ctx.bottom, ctx.axis.dir()) } else { (ctx.z, ctx.top, ctx.down) };
+    // A head opening on a step's level (the pocket's floor faces up like a top face): drill from
+    // the level, not from the plate's top face above the pocket.
+    let level =
+        ctx.outline_pockets.iter().enumerate().find(|(_, pk)| !pk.bottom && pk.contains([h.x, h.y], ctx.tol)).map(|(i, pk)| (i, pk.depth));
+    let on_level = h.head.is_some_and(|head| !head.bottom()) && level.is_some();
+    let level_face = level.map(|(i, _)| format!("{} - pocket_{}_depth", ctx.top, ctx.rect_pockets + i + 1));
+    let (face_w, face, direction) = if on_level {
+        let (_, depth) = level.expect("a level for a headed hole on it");
+        (ctx.z - depth, level_face.clone().expect("a face for the level"), ctx.down)
+    } else if from_bottom {
+        (0.0, ctx.bottom.to_owned(), ctx.axis.dir())
+    } else {
+        (ctx.z, ctx.top.to_owned(), ctx.down)
+    };
     let hole = b.feature(
         format!("Hole{n}"),
         vec![],
         FeatureKind::Hole {
             position: ctx.axis.world(ctx.at, h.x, h.y, face_w),
-            at: world_exprs(p, ctx.axis, face),
+            at: world_exprs(p, ctx.axis, &face),
             direction,
             diameter: format!("{p}_d"),
             depth: h.blind.map(|_| format!("{p}_depth")),
@@ -851,6 +956,22 @@ fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: u
         },
     );
     if let Some(HoleHead::Round { bottom, .. }) = h.head {
+        if on_level {
+            // The rim's edge lies on the pocket's start face, which `block_features` creates
+            // after the holes: leave the fillet to it.
+            let (i, depth) = level.expect("a level for a headed hole on it");
+            pending.push(PendingRim {
+                name: format!("Hole{n}Rim"),
+                hole,
+                x: h.x,
+                y: h.y,
+                d: h.d,
+                w: ctx.z - depth,
+                radius: format!("{p}_rim_r"),
+                pocket: i,
+            });
+            return;
+        }
         // The edge between the face and the hole's bore, as SolidCraft names it.
         let (face, w, radius) = if bottom { ("start", 0.0, format!("{p}_bot_rim_r")) } else { ("top", ctx.z, format!("{p}_rim_r")) };
         b.feature(

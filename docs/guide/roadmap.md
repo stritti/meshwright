@@ -53,14 +53,16 @@
       `plate/holes.rs::cutout_shape`, which reads a cut-out's loop like an outline and accepts
       it only with arc sides and no rounded corners) — round outlines, D-shaped cut-outs,
       rounded-corner cut-outs and concave arc sides stay a mesh
-   3. (done for pockets of any straight-sided outline and for steps down from the top face,
-      several levels deep, along Z, but not for headed holes opening on a step's level — those
-      stay a mesh or a stack; steps along X or Y follow — a part stepped along X or Y is a
-      stack of outlines along that axis, recognised
-      by the stack recogniser) one sketch per face level: generalise `split_faces` beyond
+   3. (done for pockets of any straight-sided outline, for steps down from the top face
+      several levels deep along Z, for headed holes opening on a step's level — measured from
+      the level and drilled from it, a rounded rim filleted on the pocket's start edge — and
+      for steps along X or Y, which the stack recogniser reads as outlines stacked along that
+      axis) one sketch per face level: generalise `split_faces` beyond
       bottom and top — arbitrary pockets and steps, both written as `Pocket<n>Sketch` +
       `Pocket<n>` cut with `pocket_<n>_<i>_len` per side
-      (`recognize/to_design.rs::block_features`; the levels in `plate/prism.rs::step_levels`),
+      (`recognize/to_design.rs::block_features`; the levels in `plate/prism.rs::step_levels`,
+      each top loop's level tagged in `face_outlines`, heads measured from their mouth's face in
+      `stepped_hole`),
       and with 3.12 combined extrusions
    4. (done for plates and profiles along Z) per-face surface deviation in the import report,
       computed in the sandbox at import: each recognised face's label with the farthest its mesh
