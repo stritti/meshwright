@@ -411,6 +411,11 @@ pub(super) fn round_hole(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)),
         let pts: Vec<P2> = inliers.iter().map(|&i| ring[i]).collect();
         if let Some(([cx, cy], r)) = fit_circle(&pts)
             && pts.iter().all(|p| (distance(*p, [cx, cy]) - r).abs() <= tol)
+            // The ring's own edges keep the original gate, so a real flat stays refused: a
+            // D-shape's side, an omitted facet's long step, a hexagon's 60°. Only the
+            // inliers' own loop may span the gap a removed corner leaves, to see that they
+            // still go once round the centre (a slot's one round end alone does not).
+            && steps_even(ring, cx, cy, MAX_HOLE_STEP)
             && steps_even(&pts, cx, cy, 2.0 * MAX_RING_STEP)
         {
             return Ok((HoleSpec { x: snap_mm(cx), y: snap_mm(cy), d: snap_mm(2.0 * r), head: None, blind: None }, ([cx, cy], r)));
