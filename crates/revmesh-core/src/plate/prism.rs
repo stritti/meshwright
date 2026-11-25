@@ -539,6 +539,71 @@ pub(super) fn check_prism(
     Ok(())
 }
 
+/// The wall index over the outline's sides and the cut-outs' walls, as `check_walls` checks
+/// them: on a rounded rim the top outline is the inner rectangle, which lies inside the rounded
+/// box, so its segments must not count as walls — only the cut-outs' walls stay.
+fn walls_of(corners: &[P2], radius: Option<f64>, cutouts: &PlateCutouts, scale: f64, tol: f64, rim: Option<&Rim>) -> Walls {
+    let (wall_corners, wall_radius, wall_loops): (&[P2], Option<f64>, &[Vec<P2>]) =
+        if rim.is_some() { (&[], None, &cutouts.wall_loops[1..]) } else { (corners, radius, &cutouts.wall_loops[..]) };
+    Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, wall_loops, scale, tol)
+}
+
+/// The mesh's per-face surface deviation from the recognised plate: each wall piece's label with
+/// the farthest its sampled mesh points lie from it (a facet chord of a round wall bows inward by
+/// its sagitta; planar faces lie exactly on theirs). Empty when the mesh is no Z prism. Best
+/// effort: any pipeline error yields no report rather than failing the import.
+pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
+    let run = || -> Result<Vec<(String, f64)>, String> {
+        let bounds = mesh.bounds().ok_or("the mesh has no triangles")?;
+        let size = bounds.size();
+        let scale = size[0].max(size[1]).max(size[2]);
+        let tol = tolerance(scale);
+        if size.iter().any(|s| *s <= tol) {
+            return Err("the mesh is flat".into());
+        }
+        let faces = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
+        let face_loops = face_outlines(&faces, tol)?;
+        let (corners, radius) = outline_shape(&face_loops.outline, tol)?;
+        let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
+        let cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
+        // Against the ideal walls only, not the meshed boundary loops (a facet's own chord would
+        // measure zero): outline sides and corner rounds, the holes' circles, the slots' arcs.
+        let (wall_corners, wall_radius): (&[P2], Option<f64>) = if rim.is_some() { (&[], None) } else { (&corners, radius) };
+        let walls = Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, &[], scale, tol);
+        let mut worst: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+        let mut note = |label: &str, d: f64| {
+            let e = worst.entry(label.to_owned()).or_insert(0.0);
+            if d > *e {
+                *e = d;
+            }
+        };
+        // The faces themselves lie in their planes by construction.
+        note("top face", 0.0);
+        note("bottom face", 0.0);
+        // Wall corners and chord middles: their distance to the nearest ideal wall.
+        let rel = |p: &Vec3| [p[0] - bounds.min[0], p[1] - bounds.min[1]];
+        for p in &faces.between {
+            if let Some((d, k)) = walls.deviation(rel(p)) {
+                note(&walls.labels[k], d);
+            }
+        }
+        for p in &faces.rim {
+            if let Some((d, k)) = walls.deviation(*p) {
+                note(&walls.labels[k], d);
+            }
+        }
+        for &(a, b, middle, _) in &faces.chords {
+            for p in [a, b, [middle[0], middle[1]]] {
+                if let Some((d, k)) = walls.deviation(p) {
+                    note(&walls.labels[k], d);
+                }
+            }
+        }
+        Ok(worst.into_iter().collect())
+    };
+    run().unwrap_or_default()
+}
+
 /// The facets and corners between the faces must belong to the walls or to a stepped or blind
 /// hole: anywhere else they are a step, a pocket, a boss, or a wall that leans (a sheared prism
 /// has the same areas and volume as a straight one).
@@ -577,12 +642,7 @@ pub(super) fn check_walls(
     }) {
         return Err(NOT_FLAT.into());
     }
-    // On a rounded rim the top outline is the inner rectangle, which lies inside the rounded
-    // box: its segments must not count as walls, or an off-surface corner projecting onto them
-    // would pass. Only the cut-outs' walls stay; the rim's own corners are checked in 3D.
-    let (wall_corners, wall_radius, wall_loops): (&[P2], Option<f64>, &[Vec<P2>]) =
-        if rim.is_some() { (&[], None, &cutouts.wall_loops[1..]) } else { (corners, radius, &cutouts.wall_loops[..]) };
-    let walls = Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, wall_loops, scale, tol);
+    let walls = walls_of(corners, radius, cutouts, scale, tol, rim);
     let in_step = |p: Vec3| cutouts.stepped.iter().any(|s| s.holds(p, tol)) || cutouts.blinds.iter().any(|b| b.holds(p, tol));
     if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p) && !on_rim(*p, 0.0)) {
         return Err(NOT_FLAT.into());

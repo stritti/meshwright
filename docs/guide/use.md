@@ -10,8 +10,10 @@
    detail under *Details*. **Plugins › Last import report…** shows it again later.
 
 A recognised part arrives as a timeline (sketch, extrusion, holes, fillet) with its sizes as
-parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. A
-part that is not recognised arrives as a mesh body, and the report says why.
+parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. The
+report also lists the surface deviation per recognised face — how far the mesh's facets lie from
+the ideal faces (a hole's facets bow inside its true circle by their sagitta). A part that is not
+recognised arrives as a mesh body, and the report says why.
 
 ::: tip Try it
 Import

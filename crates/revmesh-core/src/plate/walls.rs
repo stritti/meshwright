@@ -29,6 +29,8 @@ pub(super) enum Wall {
 /// costs the same however many corners and holes the plate has.
 pub(super) struct Walls {
     pub(super) pieces: Vec<Wall>,
+    /// Each piece's name for the import report's per-face deviation ("side 3", "hole 1", ...).
+    pub(super) labels: Vec<String>,
     pub(super) cells: HashMap<(i64, i64), Vec<usize>>,
     pub(super) cell: f64,
     pub(super) tol: f64,
@@ -69,20 +71,33 @@ impl Walls {
             })
             .collect();
         let mut walls = Vec::new();
+        let mut labels = Vec::new();
         for i in 0..n {
             let (c, b) = (corners[i], corners[(i + 1) % n]);
             let d = unit(c, b);
             // The side's straight part, between the tangent points of its two corners' arcs.
             let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
             walls.push(Wall::Segment([c[0] + d[0] * t0, c[1] + d[1] * t0], [b[0] - d[0] * t1, b[1] - d[1] * t1]));
+            labels.push(format!("side {}", i + 1));
             if r > 0.0 {
                 walls.push(Wall::Arc { centre: rounds[i].1, r, corner: c, t: rounds[i].0 });
+                labels.push(format!("corner {} round", i + 1));
             }
         }
-        walls.extend(circles.iter().map(|&(c, r)| Wall::Circle(c, r)));
-        walls.extend(arcs.iter().map(|&(centre, r, corner, t)| Wall::Arc { centre, r, corner, t }));
-        for ring in loops {
-            walls.extend((0..ring.len()).map(|i| Wall::Segment(ring[i], ring[(i + 1) % ring.len()])));
+        for (k, &(c, r)) in circles.iter().enumerate() {
+            walls.push(Wall::Circle(c, r));
+            labels.push(format!("hole {}", k + 1));
+        }
+        for (k, &(centre, r, corner, t)) in arcs.iter().enumerate() {
+            walls.push(Wall::Arc { centre, r, corner, t });
+            labels.push(format!("slot {} end", k + 1));
+        }
+        for (m, ring) in loops.iter().enumerate() {
+            let what = if m == 0 { "outline as meshed" } else { "cut-out" };
+            for i in 0..ring.len() {
+                walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
+                labels.push(if m == 0 { format!("outline as meshed, facet {}", i + 1) } else { format!("{what} {}, side {}", m, i + 1) });
+            }
         }
         // About 256 cells across the plate, never finer than a few tolerances.
         let cell = (size / WALL_CELLS_ACROSS).max(WALL_CELL_MIN_TOL * tol);
@@ -117,7 +132,7 @@ impl Walls {
                 }
             }
         }
-        Self { pieces: walls, cells, cell, tol }
+        Self { pieces: walls, labels, cells, cell, tol }
     }
 
     /// Whether the straight edge from `a` to `b` (both on the walls, relative to the plate's
@@ -139,6 +154,39 @@ impl Walls {
             let key = ((q[0] / self.cell).floor() as i64, (q[1] / self.cell).floor() as i64);
             self.cells.get(&key).is_some_and(|candidates| candidates.iter().any(|&k| follows(k)))
         })
+    }
+
+    /// How far `p` lies from the nearest wall piece, with that piece's index — for the import
+    /// report's per-face deviation (a facet chord of a round wall bows inward by its sagitta).
+    pub(super) fn deviation(&self, p: P2) -> Option<(f64, usize)> {
+        let key = ((p[0] / self.cell).floor() as i64, (p[1] / self.cell).floor() as i64);
+        let mut best: Option<(f64, usize)> = None;
+        let consider = |k: usize, best: &mut Option<(f64, usize)>| {
+            let d = match self.pieces[k] {
+                Wall::Segment(a, b) => segment_distance(p, a, b),
+                Wall::Arc { centre, r, corner, t } => {
+                    if distance(p, corner) <= t + self.tol {
+                        (distance(p, centre) - r).abs()
+                    } else {
+                        f64::INFINITY
+                    }
+                }
+                Wall::Circle(centre, r) => (distance(p, centre) - r).abs(),
+            };
+            if d < best.map_or(f64::INFINITY, |(b, _)| b) {
+                *best = Some((d, k));
+            }
+        };
+        for dx in [-1, 0, 1] {
+            for dy in [-1, 0, 1] {
+                if let Some(candidates) = self.cells.get(&(key.0 + dx, key.1 + dy)) {
+                    for &k in candidates {
+                        consider(k, &mut best);
+                    }
+                }
+            }
+        }
+        best
     }
 
     /// Whether `p` (relative to the plate's corner) lies on one of the walls.

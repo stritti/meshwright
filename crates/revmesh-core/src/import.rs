@@ -82,10 +82,27 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
                     report.push(LossItem {
                         severity: Severity::Info,
                         title: locale.text("report.smoothed.title").into(),
-                        subject: body,
+                        subject: body.clone(),
                         message: locale
                             .format("report.smoothed.message", &[("change", &locale.decimal(&format!("{:+.2}", change * 100.0)))]),
                         code: "revmesh.smoothed",
+                    });
+                }
+                // Roadmap 5.4: the per-face surface deviation between the mesh and the
+                // recognised faces, computed in the sandbox (empty for parts that are no Z prism).
+                let deviations = crate::plate::face_deviations(&mesh);
+                if !deviations.is_empty() {
+                    let faces = deviations
+                        .iter()
+                        .map(|(label, d)| format!("{label}: {} mm", locale.decimal(&crate::design::fmt_number(*d))))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    report.push(LossItem {
+                        severity: Severity::Info,
+                        title: locale.text("report.deviation.title").into(),
+                        subject: body,
+                        message: locale.format("report.deviation.message", &[("faces", &faces)]),
+                        code: "revmesh.deviation",
                     });
                 }
                 return ImportResult { design, report };
@@ -226,7 +243,13 @@ mod tests {
         assert_eq!(types, ["sketch", "extrude", "move", "hole", "fillet"]);
         assert_eq!(result.report.summary, "A 60 x 40 x 5 mm plate with 1 hole and 4 mm rounded corners");
         let codes: Vec<&str> = result.report.items.iter().map(|i| i.code).collect();
-        assert_eq!(codes, ["revmesh.smoothed"]);
+        assert_eq!(codes, ["revmesh.smoothed", "revmesh.deviation"]);
+        // Roadmap 5.4: the per-face deviation lists the hole's facets bowing inside its circle.
+        let deviation = &result.report.items[1];
+        assert!(deviation.message.contains("hole 1: "), "{}", deviation.message);
+        let hole_dev: f64 =
+            deviation.message.split("hole 1: ").nth(1).and_then(|s| s.split(" mm").next()).and_then(|s| s.parse().ok()).expect("a number");
+        assert!(hole_dev > 0.0 && hole_dev < 0.1, "the facets' sagitta, in mm: {hole_dev}");
         // The plate stays where it is in the file: centred on the origin, as mesh2cad writes it.
         let params: Vec<(&str, &str)> =
             result.design.params.iter().filter(|p| !p.model).map(|p| (p.name.as_str(), p.expr.as_str())).collect();
