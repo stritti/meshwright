@@ -497,18 +497,23 @@ fn block_features(
         );
     }
     // A pocket of any other outline of straight sides gets its own sketch, every side
-    // dimensioned by `pocket_<n>_<i>_len` (numbered after the rectangular pockets), and a cut
-    // from its face down by `pocket_<n>_depth`.
+    // dimensioned by `pocket_<n>_<i>_len` (numbered after the rectangular pockets), the longest
+    // slanted side angled by `pocket_<n>_<i>_angle`, and a cut from its face down by
+    // `pocket_<n>_depth`.
     for (i, s) in outline_pockets.iter().enumerate() {
         let n = pockets.len() + i + 1;
         let p = format!("pocket_{n}");
         b.param(Param::user(format!("{p}_depth"), s.depth));
         let poly: Vec<[f64; 2]> = s.corners.iter().map(|c| axis.sketch_point(at, *c).map(snap_mm)).collect();
         let lens = side_len_params(b, &p, &poly);
+        let angle = side_angle_param(b, &p, &poly);
         let sketch = b.feature(
             format!("Pocket{n}Sketch"),
             vec![],
-            FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygon_sketch_dimensioned(&poly, &lens) },
+            FeatureKind::Sketch {
+                plane: Plane::Origin { name: axis.plane() },
+                sketch: polygon_sketch_dimensioned(&poly, &lens, angle.as_ref()),
+            },
         );
         let start = if s.bottom { bottom.to_owned() } else { format!("{top} - {p}_depth") };
         b.feature(

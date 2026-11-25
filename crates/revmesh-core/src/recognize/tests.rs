@@ -342,6 +342,7 @@ fn dimensioned_angle_picks_the_longest_slanted_side() {
 #[test]
 fn slanted_side_below_the_x_axis_keeps_its_direction() {
     let spec = ProfileSpec {
+        outline_pockets: vec![],
         corners: vec![[0.0, 0.0], [60.0, 0.0], [40.0, 30.0]],
         z: 5.0,
         holes: vec![],
@@ -415,17 +416,20 @@ fn outline_pockets_get_their_own_sketch_and_cut() {
     let expr = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"));
     assert_eq!(expr("pocket_1_w"), Some("8 mm"), "the rectangular pocket is pocket_1");
     assert_eq!(expr("pocket_2_depth"), Some("3 mm"));
-    // No parallel sides in a triangle: all three drive.
+    // No parallel sides in a triangle: two sides drive a length; the longest slanted side
+    // (side 3) drives the angle instead, its length is derived.
     assert_eq!(expr("pocket_2_1_len"), Some("20 mm"));
     assert_eq!(expr("pocket_2_2_len"), Some("18.0278 mm"));
-    assert_eq!(expr("pocket_2_3_len"), Some("18.0278 mm"));
+    assert!(expr("pocket_2_3_len").is_none(), "the angle side's length is derived");
+    assert!(expr("pocket_2_3_angle").is_some(), "the longest slanted side carries the angle");
     let features = json["features"].as_array().expect("features");
     let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
     assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Pocket1", "Pocket2Sketch", "Pocket2"]);
     let sketch = &features[4]["sketch"];
     let constraints = sketch["constraints"].as_array().expect("constraints");
     let lengths: Vec<u64> = constraints.iter().filter(|c| c["type"] == "length").filter_map(|c| c["l"].as_u64()).collect();
-    assert_eq!(lengths, [0, 1, 2], "one Length per side of the triangular mouth");
+    assert_eq!(lengths, [0, 1], "one Length per driving side of the triangular mouth");
+    assert_eq!(constraints.iter().filter(|c| c["type"] == "angle").count(), 1, "one Angle on the longest slanted side");
     let cut = &features[5];
     assert_eq!(cut["type"].as_str(), Some("extrude"));
     assert_eq!(cut["operation"].as_str(), Some("cut"));
