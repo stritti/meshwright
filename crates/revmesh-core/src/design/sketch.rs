@@ -440,13 +440,9 @@ fn polygon_sketch_sized(corners: &[[f64; 2]], lens: &[Option<String>], angle: Op
     } else {
         None
     };
-    let counters = Counters {
-        a: 0,
-        j: links.len(),
-        k: constraints.len(),
-        l: if axis_line.is_some() { curves.len() - 1 } else { curves.len() },
-        p: if axis_line.is_some() { points.len() - 3 } else { points.len() - 1 },
-    };
+    // The counters count every allocated ID, the linked axis's `l<n+1>`, `p<n+1>`, `p<n+2>`
+    // included, so a later edit allocates fresh IDs (as `slot_sketch`'s counters do).
+    let counters = Counters { a: 0, j: links.len(), k: constraints.len(), l: curves.len(), p: points.len() - 1 };
     Sketch { points, curves, constraints, links, counters }
 }
 
@@ -478,7 +474,8 @@ fn polygons_sketch_sized(polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>
         counters: Counters { a: 0, j: 0, k: 0, l: 0, p: 0 },
     };
     // One construction line along the sketch's X axis, shared by every polygon's angle; its id
-    // follows the polygons' lines and it is not counted in the line counter.
+    // follows the polygons' lines and points, and the counters count it too, so a later edit
+    // allocates fresh IDs (as `slot_sketch`'s counters do).
     let axis_line = if angles.iter().any(Option::is_some) {
         let total: usize = polygons.iter().map(Vec::len).sum();
         let axis = || Some("j1".to_owned());
@@ -491,6 +488,10 @@ fn polygons_sketch_sized(polygons: &[Vec<[f64; 2]>], lens: &[Vec<Option<String>>
         None
     };
     add_polygons(&mut sketch, polygons, lens, angles, axis_line);
+    if axis_line.is_some() {
+        sketch.counters.p += 2;
+        sketch.counters.l += 1;
+    }
     sketch.counters.j = sketch.links.len();
     sketch
 }

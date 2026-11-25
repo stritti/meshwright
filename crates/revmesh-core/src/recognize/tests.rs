@@ -259,6 +259,10 @@ fn outline_and_cutout_sides_are_dimensioned() {
     }
     assert_eq!(param("cutout_1_1_len").map(|(e, _)| e), Some("10 mm"));
     assert!(param("cutout_1_3_len").is_none(), "the angle side's length is derived");
+    // The shared cut-out sketch counts its linked axis the same way: l4, p4, p5 past its three
+    // corners (codex finding on #72).
+    assert_eq!(cutouts["sketch"]["counters"]["l"].as_u64(), Some(4), "the axis line l4 is counted: {cutouts}");
+    assert_eq!(cutouts["sketch"]["counters"]["p"].as_u64(), Some(5), "the axis points p4, p5 are counted: {cutouts}");
     // Roadmap 5.1: the longest slanted side carries an `Angle` from the sketch's X axis, driven
     // by its own user parameter `outline_<i>_angle` (side 3 here, the only slanted side).
     let (expr, model) = param("outline_3_angle").expect("user angle param");
@@ -268,6 +272,10 @@ fn outline_and_cutout_sides_are_dimensioned() {
     assert!((deg - want).abs() < 1e-9, "{deg} vs {want}");
     let angles: Vec<&serde_json::Value> = constraints.iter().filter(|c| c["type"] == "angle").collect();
     assert_eq!(angles.len(), 1, "one Angle per outline, on its longest slanted side");
+    // The counters count the linked axis's IDs too (l6, p6, p7), so a later edit allocates fresh
+    // IDs (codex finding on #72).
+    assert_eq!(sketch["counters"]["l"].as_u64(), Some(6), "the axis line l6 is counted: {sketch}");
+    assert_eq!(sketch["counters"]["p"].as_u64(), Some(7), "the axis points p6, p7 are counted: {sketch}");
     assert_eq!(angles[0]["b"].as_u64(), Some(2), "on side 3 (line index 2)");
     let (expr, is_model) = param(angles[0]["param"].as_str().expect("param")).expect("model param");
     assert!(is_model);
