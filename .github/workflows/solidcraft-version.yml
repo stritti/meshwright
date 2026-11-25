@@ -97,11 +97,13 @@ jobs:
             --jq .content | base64 -d > crates/revmesh-plugin/wit/plugin.wit
           cur_short="${CURRENT%.*}"
           new_short="${LATEST%.*}"
-          git grep -l -E "${CURRENT}|${cur_short}" -- . ':(exclude)Cargo.lock' > "${RUNNER_TEMP}/files.txt" || true
+          cur_esc="${CURRENT//./\\.}"
+          short_esc="${cur_short//./\\.}"
+          git grep -l -E "${cur_esc}|${short_esc}" -- . ':(exclude)Cargo.lock' ':(exclude)*.stl' > "${RUNNER_TEMP}/files.txt" || true
           if [ -s "${RUNNER_TEMP}/files.txt" ]; then
             xargs -a "${RUNNER_TEMP}/files.txt" sed -i \
-              -e "s/${CURRENT}/${LATEST}/g" \
-              -e "s/\(^\|[^0-9.]\)${cur_short}\b/\1${new_short}/g"
+              -e "s/${cur_esc}/${LATEST}/g" \
+              -e "s/\(^\|[^0-9.]\)${short_esc}\b/\1${new_short}/g"
           fi
           new_fmt="$(gh api "repos/${SOLIDCRAFT_REPO}/git/trees/v${LATEST}?recursive=1" --jq '.tree[].path' \
             | grep -oE 'crates/doc/src/format/v[0-9]+' | sed 's/.*v//' | sort -n | tail -1)"
