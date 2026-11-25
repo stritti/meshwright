@@ -149,7 +149,7 @@ fn a_shifted_bottom_band_is_not_vertical() {
 #[test]
 fn diagonal_walls_fill_few_cells() {
     let diamond = [[50.0, 0.0], [100.0, 50.0], [50.0, 100.0], [0.0, 50.0]];
-    let walls = Walls::new(&diamond, None, &[], &[], &[], 100.0, 1e-3);
+    let walls = Walls::new(&diamond, None, &[], &[], &[], &[], &[], 100.0, 1e-3);
     assert!(walls.cells.len() < 10_000, "{} cells", walls.cells.len());
     assert!(walls.holds([75.0, 25.0]) && walls.holds([25.0, 75.0]));
     assert!(!walls.holds([50.0, 50.0]) && !walls.holds([75.0, 26.0]));

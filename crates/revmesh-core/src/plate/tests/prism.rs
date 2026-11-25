@@ -336,14 +336,78 @@ fn deviation_labels_slot_ends_with_their_slot() {
     }
     assert!(!labels.iter().any(|l| l.starts_with("slot 3") || l.starts_with("slot 4")), "{labels:?}");
     // Slot 1 (at y = 15) is 6 mm wide, slot 2 (at y = 35) 10 mm; each end is a half circle of
-    // eight facets, and its chords bow inward by their sagitta.
+    // eight facets, and its chords bow inward by their sagitta. The straight sides are indexed
+    // too (codex finding on #74) and measure zero.
     let sagitta = |w: f64| w / 2.0 * (1.0 - (PI / 16.0).cos());
     for (label, d) in &deviations {
-        if label.starts_with("slot 1") {
+        if label.contains(" side ") {
+            assert!(*d < 1e-9, "{label}: {d}");
+        } else if label.starts_with("slot 1") {
             assert!((d - sagitta(6.0)).abs() < 0.05, "{label}: {d}");
-        }
-        if label.starts_with("slot 2") {
+        } else if label.starts_with("slot 2") {
             assert!((d - sagitta(10.0)).abs() < 0.05, "{label}: {d}");
+        }
+    }
+}
+
+/// A through hole to the right of a blind hole is the design's `hole_2`, not `hole_1`: each
+/// circle's wall label carries its hole's index in the sorted hole specifications (codex
+/// finding on #74).
+#[test]
+fn deviation_labels_a_through_hole_with_its_design_number() {
+    let (z, floor) = (6.0, 3.0);
+    let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+    let through_ring = synth::rings(&[HoleSpec { x: 45.0, y: 20.0, d: 8.0, head: None, blind: None }], 16).remove(0);
+    let blind_ring = synth::rings(&[HoleSpec { x: 15.0, y: 20.0, d: 6.0, head: None, blind: None }], 16).remove(0);
+    let lift = |p: P2, h: f64| [p[0], p[1], h];
+    let mut t: Vec<crate::mesh::Triangle> = Vec::new();
+    for [a, b, c] in synth::triangulate(&outline, &[through_ring.clone(), blind_ring.clone()]) {
+        t.push([lift(a, z), lift(b, z), lift(c, z)]);
+    }
+    for [a, b, c] in synth::triangulate(&outline, std::slice::from_ref(&through_ring)) {
+        t.push([lift(a, 0.0), lift(c, 0.0), lift(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (outline[i], outline[(i + 1) % 4]);
+        t.push([lift(a, 0.0), lift(b, 0.0), lift(b, z)]);
+        t.push([lift(a, 0.0), lift(b, z), lift(a, z)]);
+    }
+    let wall = |ring: &[P2], lo: f64, hi: f64, t: &mut Vec<crate::mesh::Triangle>| {
+        let m = ring.len();
+        for i in 0..m {
+            let (a, b) = (ring[(i + 1) % m], ring[i]);
+            t.push([lift(a, lo), lift(b, lo), lift(b, hi)]);
+            t.push([lift(a, lo), lift(b, hi), lift(a, hi)]);
+        }
+    };
+    wall(&through_ring, 0.0, z, &mut t);
+    wall(&blind_ring, floor, z, &mut t);
+    let m = blind_ring.len();
+    for i in 1..m - 1 {
+        t.push([lift(blind_ring[0], floor), lift(blind_ring[i], floor), lift(blind_ring[i + 1], floor)]);
+    }
+    let mesh = Mesh::new(t);
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let deviations = crate::plate::face_deviations(&mesh);
+    let labels: Vec<&str> = deviations.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.contains(&"hole 2"), "the through hole is the design's hole 2: {labels:?}");
+    assert!(!labels.contains(&"hole 1"), "no through hole mislabelled hole 1: {labels:?}");
+}
+
+/// A polygonal cut-out's straight walls are indexed in the deviation report, so its samples are
+/// attributed to `cut-out 1, side i` with their real (here zero) deviation, not to distant
+/// outline sides (codex finding on #74).
+#[test]
+fn deviation_of_a_polygonal_cutout_is_measured_on_its_own_walls() {
+    let outline = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+    let cut = vec![[20.0, 10.0], [40.0, 10.0], [40.0, 30.0], [20.0, 30.0]];
+    let mesh = synth::prism(&outline, &[cut], 6.0, [0.0; 3]);
+    let deviations = crate::plate::face_deviations(&mesh);
+    let labels: Vec<&str> = deviations.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("cut-out 1, side")), "the cut-out's walls are indexed: {labels:?}");
+    for (l, d) in &deviations {
+        if l.starts_with("cut-out") {
+            assert!(*d < 1e-6, "{l}: {d}");
         }
     }
 }

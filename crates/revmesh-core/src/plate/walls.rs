@@ -37,18 +37,24 @@ pub(super) struct Walls {
 }
 
 impl Walls {
-    /// The walls of the outline `corners` (rounded with `radius`), of the holes' `circles` and,
-    /// as meshed, of the top face's boundary `loops` (a facet's chord of an arc is no wall of the
-    /// true part, but its corners and its subdivisions lie on it).
+    /// The walls of the outline `corners` (rounded with `radius`), of the holes' `circles` (each
+    /// carrying its hole's index in the design's sorted holes, where the design numbers them
+    /// `hole_<n>`) and, as meshed, of the top face's boundary `loops` (a facet's chord of an arc
+    /// is no wall of the true part, but its corners and its subdivisions lie on it).
     /// `arcs` are further bounded round walls: the slot each end belongs to (its index in the
     /// design's sorted `slots`, where the design numbers them `slot_<n>`), the end's centre,
     /// radius, the corner it rounds and how far from that corner it reaches.
+    /// `cutout_loops` are the ideal polygonal cut-outs and `slot_sides` the slots' straight sides
+    /// (the slot's index, one side's start and end), so their walls are indexed too.
+    #[allow(clippy::too_many_arguments)] // the wall kinds of one part, each labelled
     pub(super) fn new(
         corners: &[P2],
         radius: Option<f64>,
-        circles: &[(P2, f64)],
+        circles: &[(usize, P2, f64)],
         arcs: &[(usize, P2, f64, P2, f64)],
         loops: &[Vec<P2>],
+        cutout_loops: &[Vec<P2>],
+        slot_sides: &[(usize, P2, P2)],
         size: f64,
         tol: f64,
     ) -> Self {
@@ -85,9 +91,11 @@ impl Walls {
                 labels.push(format!("corner {} round", i + 1));
             }
         }
-        for (k, &(c, r)) in circles.iter().enumerate() {
+        // Each circle is labelled with its hole's number in the design (`hole_<n>`), carried
+        // from the sorted hole specifications.
+        for &(own, c, r) in circles {
             walls.push(Wall::Circle(c, r));
-            labels.push(format!("hole {}", k + 1));
+            labels.push(format!("hole {}", own + 1));
         }
         // Each arc is labelled with the slot that owns it (the design's `slot_<n>`), its two
         // ends counted within that slot.
@@ -104,6 +112,22 @@ impl Walls {
                 walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
                 labels.push(if m == 0 { format!("outline as meshed, facet {}", i + 1) } else { format!("{what} {}, side {}", m, i + 1) });
             }
+        }
+        // The ideal straight cut-out walls, labelled by the cut-out's number and side.
+        for (m, ring) in cutout_loops.iter().enumerate() {
+            for i in 0..ring.len() {
+                walls.push(Wall::Segment(ring[i], ring[(i + 1) % ring.len()]));
+                labels.push(format!("cut-out {}, side {}", m + 1, i + 1));
+            }
+        }
+        // Each slot's two straight sides, labelled with the slot's number in the design
+        // (`slot_<n>`), the sides counted within it.
+        let mut sides: HashMap<usize, usize> = HashMap::new();
+        for &(slot, a, b) in slot_sides {
+            walls.push(Wall::Segment(a, b));
+            let s = sides.entry(slot).or_insert(0);
+            *s += 1;
+            labels.push(format!("slot {} side {}", slot + 1, *s));
         }
         // About 256 cells across the plate, never finer than a few tolerances.
         let cell = (size / WALL_CELLS_ACROSS).max(WALL_CELL_MIN_TOL * tol);

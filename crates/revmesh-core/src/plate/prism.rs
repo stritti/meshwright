@@ -143,8 +143,9 @@ pub(super) fn face_outlines(faces: &Faces, tol: f64) -> Result<FaceLoops, String
 
 /// The holes, slots, cut-outs and pockets a plate has, from the two faces' boundary loops.
 pub(super) struct PlateCutouts {
-    /// The through holes' circles, as fitted.
-    pub(super) circles: Vec<(P2, f64)>,
+    /// The through holes' circles, as fitted: the owning hole's index in the sorted `holes`
+    /// (the design numbers them `hole_<n>`), the centre and the radius.
+    pub(super) circles: Vec<(usize, P2, f64)>,
     /// The loops the walls stand on, as meshed: the outline and the cut-outs'.
     pub(super) wall_loops: Vec<Vec<P2>>,
     /// The slots' two end arcs (the slot's index in the sorted `slots`, centre, radius, corner,
@@ -335,7 +336,7 @@ pub(super) fn pair_through_holes<'a>(
         paired[j] = true;
         let (_, (bottom_centre, bottom_r), bottom_index) = &bottoms[j];
         if (top_r - bottom_r).abs() <= tol {
-            out.circles.push((*centre, *top_r));
+            out.circles.push((0, *centre, *top_r)); // the owning index is set once `holes` is sorted
             out.wall_loops.push(loops[*loop_index].clone());
             out.holes.push(hole.clone());
             continue;
@@ -408,6 +409,20 @@ pub(super) fn floor_mouths(
         out.blinds.push(b);
     }
     out.holes.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    // Each through hole's circle carries its hole's index in the sorted holes, so the wall
+    // labels name the design's `hole_<n>`, not the order the circles were fitted in.
+    for c in &mut out.circles {
+        let best = out
+            .holes
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (i, distance([h.x, h.y], c.1)))
+            .filter(|(_, d)| *d <= tol)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((i, _)) = best {
+            c.0 = i;
+        }
+    }
     out.pockets.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     out.outline_pockets.sort_by(|a, b| a.corners[0][1].total_cmp(&b.corners[0][1]).then(a.corners[0][0].total_cmp(&b.corners[0][0])));
     Ok(())
@@ -550,7 +565,23 @@ pub(super) fn check_prism(
 fn walls_of(corners: &[P2], radius: Option<f64>, cutouts: &PlateCutouts, scale: f64, tol: f64, rim: Option<&Rim>) -> Walls {
     let (wall_corners, wall_radius, wall_loops): (&[P2], Option<f64>, &[Vec<P2>]) =
         if rim.is_some() { (&[], None, &cutouts.wall_loops[1..]) } else { (corners, radius, &cutouts.wall_loops[..]) };
-    Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, wall_loops, scale, tol)
+    Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, wall_loops, &[], &slot_sides_of(cutouts), scale, tol)
+}
+
+/// Each slot's two straight sides as segments — the slot's index in the sorted `slots` (the
+/// design's `slot_<n>`) and one side's start and end — so their walls can be indexed like the
+/// cut-outs'.
+fn slot_sides_of(cutouts: &PlateCutouts) -> Vec<(usize, P2, P2)> {
+    let mut out = Vec::new();
+    for (i, s) in cutouts.slots.iter().enumerate() {
+        let (sin, cos) = s.angle.to_radians().sin_cos();
+        let (u, v) = ([cos, sin], [-sin, cos]);
+        let (half, r) = (s.len / 2.0, s.w / 2.0);
+        let at = |sgn: f64, off: f64| [s.x + sgn * half * u[0] + off * v[0], s.y + sgn * half * u[1] + off * v[1]];
+        out.push((i, at(1.0, -r), at(-1.0, -r)));
+        out.push((i, at(1.0, r), at(-1.0, r)));
+    }
+    out
 }
 
 /// The mesh's per-face surface deviation from the recognised plate: each wall piece's label with
@@ -573,9 +604,20 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
         let cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
         // Against the ideal walls only, not the meshed boundary loops (a facet's own chord would
-        // measure zero): outline sides and corner rounds, the holes' circles, the slots' arcs.
+        // measure zero): outline sides and corner rounds, the holes' circles, the slots' arcs
+        // and straight sides, the cut-outs' straight sides.
         let (wall_corners, wall_radius): (&[P2], Option<f64>) = if rim.is_some() { (&[], None) } else { (&corners, radius) };
-        let walls = Walls::new(wall_corners, wall_radius, &cutouts.circles, &cutouts.slot_arcs, &[], scale, tol);
+        let walls = Walls::new(
+            wall_corners,
+            wall_radius,
+            &cutouts.circles,
+            &cutouts.slot_arcs,
+            &[],
+            &cutouts.cutouts,
+            &slot_sides_of(&cutouts),
+            scale,
+            tol,
+        );
         // No wall of the part is indexed (a box rounded all over): no deviation to report.
         if walls.pieces.is_empty() {
             return Ok(Vec::new());
