@@ -38,8 +38,11 @@
       loop's turns sum to 360°, so one angle per polygon is the independent one)
    2. arcs in outlines and cut-outs (`SketchCurve::Arc` with a `Diameter` parameter) instead of
       only fillet features — round outlines and D-shaped cut-outs, today a mesh
-   3. one sketch per face level: generalise `split_faces` beyond bottom and top — arbitrary
-      pockets and steps, and with 3.12 combined extrusions
+   3. (done for pockets of any straight-sided outline, one level deep, from the top or the
+      bottom face; steps, several levels and the combined extrusions' sketches follow) one
+      sketch per face level: generalise `split_faces` beyond bottom and top — arbitrary pockets
+      (`Pocket<n>Sketch` + `Pocket<n>` cut, `pocket_<n>_<i>_len` per side, in
+      `recognize/to_design.rs::block_features`) and steps, and with 3.12 combined extrusions
    4. per-face surface deviation in the import report, computed in the sandbox (today: volume
       within 1% at import, Hausdorff in `cargo xtask check`)
 6. **More parts, fitted robustly** — from the code review of the recognisers against the

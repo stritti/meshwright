@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::axis::Axis;
-use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+use super::spec::{BossChamfer, BossSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
 
 use crate::design::{
     Design, DesignBuilder, Extent, FeatureKind, HoleKind, Operation, Param, PatternKind, Plane, PolygonAngle, Profiles, SlotDimensions,
@@ -106,7 +106,7 @@ impl PlateSpec {
         hole_features(&mut b, &self.holes, at, axis, "base_z0 + base_t", "base_z0", self.z, extrude);
         slot_features(&mut b, &self.slots, at, axis);
         boss_features(&mut b, &self.bosses, at, self.z, axis, "base_z0 + base_t", extrude);
-        block_features(&mut b, &self.pads, &self.pockets, axis, "base_z0 + base_t", "base_z0");
+        block_features(&mut b, &self.pads, &self.pockets, &[], at, axis, "base_z0 + base_t", "base_z0");
         if self.outline_fillet_r.is_some() {
             let mid = at[2] + self.z / 2.0;
             let side = |a: u32, b: u32| format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}");
@@ -199,7 +199,7 @@ impl ProfileSpec {
         hole_features(&mut b, &self.holes, at, axis, top, "extrude_0", self.z, extrude);
         slot_features(&mut b, &self.slots, at, axis);
         boss_features(&mut b, &self.bosses, at, self.z, axis, top, extrude);
-        block_features(&mut b, &self.pads, &self.pockets, axis, top, "extrude_0");
+        block_features(&mut b, &self.pads, &self.pockets, &self.outline_pockets, at, axis, top, "extrude_0");
         b.build()
     }
 }
@@ -423,10 +423,21 @@ fn block_params(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec],
 }
 
 /// A box joined to the part per pad, standing on the face at `top`, and a box cut out of it per
-/// pocket, from `top` or from `bottom`. The box's corner and extents are in world axes: along
+/// pocket, from `top` or from `bottom`; a pocket of any other outline of straight sides gets
+/// its own sketch and cut instead. The box's corner and extents are in world axes: along
 /// the extrusion axis the pad's height or the pocket's depth, along the profile axes its width
 /// and length.
-fn block_features(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec], axis: Axis, top: &str, bottom: &str) {
+#[allow(clippy::too_many_arguments)] // the two block kinds, their frame and faces
+fn block_features(
+    b: &mut DesignBuilder,
+    pads: &[PadSpec],
+    pockets: &[PocketSpec],
+    outline_pockets: &[OutlinePocketSpec],
+    at: Vec3,
+    axis: Axis,
+    top: &str,
+    bottom: &str,
+) {
     let box_at = |p: &str, along: &str, extent: &str| -> ([String; 3], [String; 3]) {
         let mut corner = [const { String::new() }; 3];
         let mut size = [const { String::new() }; 3];
@@ -475,6 +486,32 @@ fn block_features(b: &mut DesignBuilder, pads: &[PadSpec], pockets: &[PocketSpec
                 length: size[0].clone(),
                 width: size[1].clone(),
                 height: size[2].clone(),
+                operation: Operation::Cut,
+            },
+        );
+    }
+    // A pocket of any other outline of straight sides gets its own sketch, every side
+    // dimensioned by `pocket_<n>_<i>_len` (numbered after the rectangular pockets), and a cut
+    // from its face down by `pocket_<n>_depth`.
+    for (i, s) in outline_pockets.iter().enumerate() {
+        let n = pockets.len() + i + 1;
+        let p = format!("pocket_{n}");
+        b.param(Param::user(format!("{p}_depth"), s.depth));
+        let poly: Vec<[f64; 2]> = s.corners.iter().map(|c| axis.sketch_point(at, *c).map(snap_mm)).collect();
+        let lens = side_len_params(b, &p, &poly);
+        let sketch = b.feature(
+            format!("Pocket{n}Sketch"),
+            vec![],
+            FeatureKind::Sketch { plane: Plane::Origin { name: axis.plane() }, sketch: polygon_sketch_dimensioned(&poly, &lens) },
+        );
+        let start = if s.bottom { bottom.to_owned() } else { format!("{top} - {p}_depth") };
+        b.feature(
+            format!("Pocket{n}"),
+            vec![],
+            FeatureKind::Extrude {
+                sketch,
+                profiles: Profiles::All,
+                extent: Extent::positive(format!("{p}_depth")).starting_at(start),
                 operation: Operation::Cut,
             },
         );

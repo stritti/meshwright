@@ -171,8 +171,9 @@ fn eval_after_param_change(cli: &str, param: &str, value: f64, unit: &str, desig
     Ok(out.status.success())
 }
 
-/// The user parameters that drive sketch sides — plain `"<n> mm"` lengths named `outline_*` or
-/// `cutout_*`; if there are none, the first driving extrude/box length (`base_*`/`extrude_*`).
+/// The user parameters that drive sketch sides — plain `"<n> mm"` lengths named `outline_*`,
+/// `cutout_*` or `pocket_*` (a side's length, a cut-out's, a pocket's); if there are none, the
+/// first driving extrude/box length (`base_*`/`extrude_*`).
 fn driving_lengths(design: &revmesh_core::design::Design) -> Vec<(String, f64)> {
     let plain = |p: &revmesh_core::design::Param| -> Option<(String, f64)> {
         if p.model {
@@ -181,8 +182,12 @@ fn driving_lengths(design: &revmesh_core::design::Design) -> Vec<(String, f64)> 
         let value: f64 = p.expr.strip_suffix(" mm")?.parse().ok()?;
         Some((p.name.clone(), value))
     };
-    let sides: Vec<(String, f64)> =
-        design.params.iter().filter_map(plain).filter(|(name, _)| name.starts_with("outline_") || name.starts_with("cutout_")).collect();
+    let sides: Vec<(String, f64)> = design
+        .params
+        .iter()
+        .filter_map(plain)
+        .filter(|(name, _)| name.starts_with("outline_") || name.starts_with("cutout_") || name.starts_with("pocket_"))
+        .collect();
     if !sides.is_empty() {
         return sides;
     }

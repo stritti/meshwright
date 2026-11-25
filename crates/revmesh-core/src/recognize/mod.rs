@@ -27,7 +27,9 @@ mod to_design;
 
 pub use axis::Axis;
 pub use combined::{CombinedHole, CombinedSpec, Cut, Extrusion};
-pub use spec::{Blind, BossChamfer, BossSpec, HoleHead, HoleSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
+pub use spec::{
+    Blind, BossChamfer, BossSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec,
+};
 pub use stack::{Band, StackSpec};
 
 use crate::mesh::{Mesh, Vec3};
