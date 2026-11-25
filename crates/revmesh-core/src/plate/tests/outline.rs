@@ -511,3 +511,17 @@ fn arc_sides_keep_the_exact_fit_and_only_the_params_snap() {
     // Centre and radius snap to 1 um, and the radius covers half the snapped chord (10.001 / 2).
     assert_eq!(arcs, vec![ArcSide { centre: [5.0, 5.0], r: 5.0005 }], "the params snap to 1 um");
 }
+
+/// A zigzag of straight sides whose corners alternate between gentle left and right turns
+/// stays a polygon: the alternating turns must not be carried into one circular-run candidate,
+/// whose failed circle fit would reject the outline as "not a circular arc" (codex finding on
+/// #68).
+#[test]
+fn a_straight_zigzag_stays_a_polygon() {
+    use super::super::outline::outline_shape;
+    let outline: Vec<P2> =
+        vec![[0.0, 0.0], [60.0, 0.0], [60.0, 20.0], [50.0, 22.0], [40.0, 20.0], [30.0, 22.0], [20.0, 20.0], [10.0, 22.0], [0.0, 20.0]];
+    let (corners, fillet, side_arcs) = outline_shape(&outline, 0.001).expect("the zigzag stays a polygon");
+    assert_eq!(corners.len(), 9, "all nine corners stay: {corners:?}");
+    assert!(fillet.is_none() && side_arcs.iter().all(Option::is_none), "no arc side, no corner round");
+}

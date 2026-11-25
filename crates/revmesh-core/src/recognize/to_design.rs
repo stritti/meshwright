@@ -201,7 +201,7 @@ impl ProfileSpec {
                 dim[i] = false;
                 let (prev_side, next_side) = ((i + n - 1) % n, (i + 1) % n);
                 let known = arc_equals.iter().any(|&(x, y)| (x, y) == (prev_side, next_side) || (x, y) == (next_side, prev_side));
-                if !known && line_arc_tangent(b, a, prev.centre) && line_arc_tangent(a, b, next.centre) {
+                if !known && line_arc_tangent(b, a, prev.centre, prev.r) && line_arc_tangent(a, b, next.centre, next.r) {
                     arc_equals.push((prev_side, next_side));
                     dim[next_side] = false;
                 }

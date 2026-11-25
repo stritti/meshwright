@@ -923,3 +923,66 @@ fn drafted_and_chamfered_bosses_in_the_design() {
     let cut = |w: f64, h: f64| 2.0 * std::f64::consts::PI * (r - w / 3.0) * w * h / 2.0;
     assert!((spec.volume() - (80.0 * 40.0 * 6.0 + cone + 2.0 * cylinder - cut(1.0, 1.0) - cut(1.5, 0.5))).abs() < 1e-9);
 }
+
+/// An arc side bulging past its endpoints' corner box counts towards the reported size: the
+/// 60 x 40 rectangle with a radius-30 semicircular top is 60 x 70, and the stadium (corners
+/// spanning 40 x 20, arc ends bulging 10 mm past each side) is 60 x 20 (codex finding on #68).
+#[test]
+fn arc_side_extrema_count_towards_the_reported_size() {
+    let bulge = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
+        outline_fillet_r: None,
+    };
+    assert_eq!(bulge.size(), [60.0, 70.0], "the semicircle's top at y = 70 bounds the report");
+    let stadium = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 10.0], [40.0, 10.0], [40.0, 30.0], [0.0, 30.0]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, Some(ArcSide { centre: [40.0, 20.0], r: 10.0 }), None, Some(ArcSide { centre: [0.0, 20.0], r: 10.0 })],
+        outline_fillet_r: None,
+    };
+    assert_eq!(stadium.size(), [60.0, 20.0], "the arc ends' bulges to x = -10 and x = 50 bound the report");
+}
+
+/// A 330-degree arc closing onto its own chord is a valid two-corner outline, but its
+/// arc-chord junctions are gentle, not tangent: no `Tangent` constraint may be emitted for
+/// them (a chord is not tangent to its circle), or the sketch would have no solution (codex
+/// finding on #68).
+#[test]
+fn chord_arc_junctions_get_no_tangent_constraint() {
+    use std::f64::consts::PI;
+    let r = 30.0;
+    let (a, b) = ([r * (PI / 12.0).cos(), r * (PI / 12.0).sin()], [r * (PI / 12.0).cos(), -r * (PI / 12.0).sin()]);
+    let spec = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![a, b],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![Some(ArcSide { centre: [0.0, 0.0], r }), None],
+        outline_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let constraints = json["features"][0]["sketch"]["constraints"].as_array().expect("constraints");
+    let tangents = constraints.iter().filter(|c| c["type"] == "tangent").count();
+    assert_eq!(tangents, 0, "the chord is not tangent to its arc's circle: no Tangent constraint");
+}

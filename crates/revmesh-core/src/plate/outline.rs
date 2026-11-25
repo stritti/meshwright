@@ -150,14 +150,24 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
         }
         let first = j;
         let mut steps = 1;
-        // The run never crosses a sharp corner: two circular sides meeting there are fitted
+        let mut run_dir = 0.0_f64;
+        // The run never crosses a sharp corner — two circular sides meeting there are fitted
         // independently (the length-only carry would otherwise join them into one run whose
-        // single-circle fit fails).
-        while steps < n
-            && turn((first + steps) % n).abs() <= MAX_CURVE_TURN
-            && curving((first + steps) % n)
-            && carries_curve(first + steps - 1, first + steps)
-        {
+        // single-circle fit fails) — and never reverses its turn: a zigzag of alternating
+        // gentle turns is straight sides, not a circular run, and fitting it would fail and
+        // reject a polygon the parent commit returned.
+        while steps < n {
+            let t = turn((first + steps) % n);
+            if t.abs() > MAX_CURVE_TURN || !curving((first + steps) % n) || !carries_curve(first + steps - 1, first + steps) {
+                break;
+            }
+            if t.abs() > 1e-12 {
+                if run_dir == 0.0 {
+                    run_dir = t.signum();
+                } else if t.is_sign_positive() != run_dir.is_sign_positive() {
+                    break;
+                }
+            }
             steps += 1;
         }
         if steps >= 3 {

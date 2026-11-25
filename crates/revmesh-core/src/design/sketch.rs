@@ -417,21 +417,16 @@ fn add_polygons(sketch: &mut Sketch, polygons: &[Vec<[f64; 2]>], lens: &[Vec<Opt
     }
 }
 
-/// A straight side counts as tangent to an arc side at their shared corner when its direction
-/// is perpendicular to the arc's radius there, within the recogniser's gentle-turn limit
-/// (sin 30°); see [`polygon_sketch_arcs`].
-const TANGENT_SIN: f64 = 0.5;
-
-/// Whether the straight side from `line_from` through `corner` is tangent to the arc about
-/// `centre` at `corner`: the side's direction is perpendicular to the arc's radius there,
-/// within the recogniser's gentle-turn limit.
+/// Whether the straight side from `line_from` through `corner` is tangent to the arc of radius
+/// `r` about `centre` at `corner`. The corner lies on the arc, so the side's line is tangent to
+/// the circle exactly when the centre's distance to that line equals `r` (within a small
+/// relative tolerance for the snapped output geometry); a merely gentle junction — an arc
+/// closing onto its own chord, say — is not tangent and must not get a `Tangent` constraint.
 #[must_use]
-pub fn line_arc_tangent(line_from: [f64; 2], corner: [f64; 2], centre: [f64; 2]) -> bool {
-    let l = (corner[0] - line_from[0]).hypot(corner[1] - line_from[1]);
-    let r = (corner[0] - centre[0]).hypot(corner[1] - centre[1]);
-    let u = [(corner[0] - line_from[0]) / l, (corner[1] - line_from[1]) / l];
-    let n = [(corner[0] - centre[0]) / r, (corner[1] - centre[1]) / r];
-    (u[0] * n[0] + u[1] * n[1]).abs() <= TANGENT_SIN
+pub fn line_arc_tangent(line_from: [f64; 2], corner: [f64; 2], centre: [f64; 2], r: f64) -> bool {
+    let (dx, dy) = (corner[0] - line_from[0], corner[1] - line_from[1]);
+    let dist = ((centre[0] - line_from[0]) * dy - (centre[1] - line_from[1]) * dx).abs() / dx.hypot(dy);
+    (r - dist).abs() <= 1e-3 * r.max(1.0)
 }
 
 /// A closed polygon through `corners` (counter-clockwise) where side `i` is the arc about
@@ -508,18 +503,18 @@ pub fn polygon_sketch_arcs(
             }
         }
     }
-    // A straight side meeting an arc side at a gently turning corner (within the recogniser's
-    // gentle-turn limit) is tangent to the arc: hold it with a `Tangent` constraint, like a
-    // slot's sides. Without it, growing a semicircular side's diameter would need its centre to
-    // slide off the chord — second order, which no solver does from the snapped position.
+    // A straight side actually tangent to an arc side at their shared corner (within the
+    // snapped geometry's tolerance) is held with a `Tangent` constraint, like a slot's sides.
+    // Without it, growing a semicircular side's diameter would need its centre to slide off the
+    // chord — second order, which no solver does from the snapped position.
     for i in 0..n {
-        let Some((centre, _)) = arcs[i] else { continue };
+        let Some((centre, r)) = arcs[i] else { continue };
         let prev = (i + n - 1) % n;
-        if arcs[prev].is_none() && line_arc_tangent(corners[prev], corners[i], centre) {
+        if arcs[prev].is_none() && line_arc_tangent(corners[prev], corners[i], centre, r) {
             constraints.push(Constraint::Tangent { id: format!("k{}", constraints.len() + 1), a: side_curve[prev], b: side_curve[i] });
         }
         let next = (i + 1) % n;
-        if arcs[next].is_none() && line_arc_tangent(corners[(i + 2) % n], corners[next], centre) {
+        if arcs[next].is_none() && line_arc_tangent(corners[(i + 2) % n], corners[next], centre, r) {
             constraints.push(Constraint::Tangent { id: format!("k{}", constraints.len() + 1), a: side_curve[i], b: side_curve[next] });
         }
     }
