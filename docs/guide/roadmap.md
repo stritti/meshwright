@@ -35,11 +35,15 @@
       (`crates/revmesh-core/src/design/sketch.rs`); an `Angle` per slanted side still to do
    2. arcs in outlines and cut-outs (`SketchCurve::Arc` with a `Diameter` parameter) instead of
       only fillet features — round outlines and D-shaped cut-outs, today a mesh
-   3. (done for pockets of any straight-sided outline, one level deep, from the top or the
-      bottom face; steps, several levels and the combined extrusions' sketches follow) one
-      sketch per face level: generalise `split_faces` beyond bottom and top — arbitrary pockets
-      (`Pocket<n>Sketch` + `Pocket<n>` cut, `pocket_<n>_<i>_len` per side, in
-      `recognize/to_design.rs::block_features`) and steps, and with 3.12 combined extrusions
+   3. (done for pockets of any straight-sided outline and for steps down from the top face,
+      several levels deep, along Z, but not for headed holes opening on a step's level — those
+      stay a mesh or a stack; steps along X or Y and the combined extrusions' sketches
+      follow — a part stepped along X or Y is a stack of outlines along that axis, recognised
+      by the stack recogniser) one sketch per face level: generalise `split_faces` beyond
+      bottom and top — arbitrary pockets and steps, both written as `Pocket<n>Sketch` +
+      `Pocket<n>` cut with `pocket_<n>_<i>_len` per side
+      (`recognize/to_design.rs::block_features`; the levels in `plate/prism.rs::step_levels`),
+      and with 3.12 combined extrusions
    4. per-face surface deviation in the import report, computed in the sandbox (today: volume
       within 1% at import, Hausdorff in `cargo xtask check`)
 6. **More parts, fitted robustly** — from the code review of the recognisers against the

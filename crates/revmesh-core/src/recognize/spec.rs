@@ -76,6 +76,34 @@ pub struct OutlinePocketSpec {
     pub bottom: bool,
 }
 
+impl OutlinePocketSpec {
+    /// Whether `p` lies inside the mouth's polygon, or within `tol` of its edge.
+    #[must_use]
+    #[allow(clippy::many_single_char_names)] // p, n and the edge vectors, as in the geometry
+    pub fn contains(&self, p: [f64; 2], tol: f64) -> bool {
+        let ring = &self.corners;
+        let n = ring.len();
+        let on_edge = ring.iter().zip(ring.iter().cycle().skip(1)).any(|(a, b)| {
+            let (u, v) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
+            let len2 = u[0] * u[0] + u[1] * u[1];
+            let t = if len2 <= 0.0 { 0.0 } else { ((u[0] * v[0] + u[1] * v[1]) / len2).clamp(0.0, 1.0) };
+            ((v[0] - t * u[0]).powi(2) + (v[1] - t * u[1]).powi(2)).sqrt() <= tol
+        });
+        if on_edge {
+            return true;
+        }
+        // Even-odd ray casting along +X.
+        let mut inside = false;
+        for i in 0..n {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0] {
+                inside = !inside;
+            }
+        }
+        inside
+    }
+}
+
 /// A round boss standing on the top face: a cylinder `d` wide and `h` high about `(x, y)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BossSpec {
@@ -203,6 +231,16 @@ pub enum HoleHead {
         /// Whether it is on the bottom face's rim (else on the top's).
         bottom: bool,
     },
+}
+
+impl HoleHead {
+    /// Whether it opens on the bottom face (else on the top's).
+    #[must_use]
+    pub fn bottom(&self) -> bool {
+        match self {
+            Self::Counterbore { bottom, .. } | Self::Countersink { bottom, .. } | Self::Round { bottom, .. } => *bottom,
+        }
+    }
 }
 
 impl HoleSpec {
