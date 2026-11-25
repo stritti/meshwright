@@ -91,7 +91,7 @@ impl Walls {
             // An arc side's endpoint chord is no straight wall: it cuts across the part's
             // interior, and a wall tapering to it must fail the checks. The side's meshed
             // facets still enter through `loops`.
-            if arc_sides.get(i).map_or(true, |a| a.is_none()) {
+            if arc_sides.get(i).is_none_or(Option::is_none) {
                 let d = unit(c, b);
                 // The side's straight part, between the tangent points of its two corners' arcs.
                 let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
