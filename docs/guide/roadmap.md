@@ -29,7 +29,10 @@
    can be reworked in SolidCraft. The concepts behind this and their sources (products and
    papers) are mapped in [Comparable tools → Concepts from the list, applied to
    revmesh](/guide/comparison#concepts-from-the-list-applied-to-revmesh):
-   1. (done for plate outlines and cut-outs; the stack's and combined's sketches follow) a
+   1. (done for plate outlines and cut-outs, and for the stack's and combined's sketches: a
+      stack band `k`'s outline as `outline_<k>_<i>_len`/`_angle`, a combined extrusion along
+      axis `a` as `outline_<a>_<i>_len`/`_angle`, their openings as `cutout_<n>_<i>_len`/`_angle`
+      and a combined cut's outline as `cut_<n>_<i>_len`/`_angle`) a
       `Length` constraint per side with its own parameter (`outline_<i>_len`,
       `cutout_<n>_<i>_len`) and an `Angle` from the sketch's X axis on the longest slanted side
       with its own parameter (`outline_<i>_angle`, `cutout_<n>_<i>_angle`) in
@@ -52,8 +55,8 @@
       rounded-corner cut-outs and concave arc sides stay a mesh
    3. (done for pockets of any straight-sided outline and for steps down from the top face,
       several levels deep, along Z, but not for headed holes opening on a step's level — those
-      stay a mesh or a stack; steps along X or Y and the combined extrusions' sketches
-      follow — a part stepped along X or Y is a stack of outlines along that axis, recognised
+      stay a mesh or a stack; steps along X or Y follow — a part stepped along X or Y is a
+      stack of outlines along that axis, recognised
       by the stack recogniser) one sketch per face level: generalise `split_faces` beyond
       bottom and top — arbitrary pockets and steps, both written as `Pocket<n>Sketch` +
       `Pocket<n>` cut with `pocket_<n>_<i>_len` per side

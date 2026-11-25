@@ -217,7 +217,7 @@ impl ProfileSpec {
 /// One user parameter `<prefix>_<i>_angle` for the polygon's longest slanted side (see
 /// [`dimensioned_angle`]) and a model parameter driving its `Angle` constraint in the sketch, so
 /// a slanted polygon re-angles in SolidCraft too. `None` when no side is slanted.
-fn side_angle_param(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Option<PolygonAngle> {
+pub(crate) fn side_angle_param(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -> Option<PolygonAngle> {
     let side = dimensioned_angle(corners)?;
     let (a, c) = (corners[side], corners[(side + 1) % corners.len()]);
     // The side's own direction, as drawn: the angle from the X axis in [0, 360) degrees (the
@@ -234,11 +234,26 @@ fn side_angle_param(b: &mut DesignBuilder, prefix: &str, corners: &[[f64; 2]]) -
 /// Which sides of `corners` drive their `Length`: [`dimensioned_sides`], or
 /// [`dimensioned_sides_for_angle`] when the polygon has an angle side (see
 /// [`dimensioned_angle`]).
-fn polygon_dim(corners: &[[f64; 2]]) -> Vec<bool> {
+pub(crate) fn polygon_dim(corners: &[[f64; 2]]) -> Vec<bool> {
     match dimensioned_angle(corners) {
         Some(angle) => dimensioned_sides_for_angle(corners, angle),
         None => dimensioned_sides(corners),
     }
+}
+
+/// A straight-sided polygon's sketch parameters, as `<prefix>_<i>_len` per driving side and
+/// `<prefix>_<i>_angle` on its longest slanted side: the `Length` and `Angle` model parameters
+/// for [`polygon_sketch_dimensioned`]/[`polygons_sketch_dimensioned`], so the polygon
+/// re-dimensions in SolidCraft side by side like a plate's outline.
+pub(crate) fn dimensioned_polygon_params(
+    b: &mut DesignBuilder,
+    prefix: &str,
+    corners: &[[f64; 2]],
+) -> (Vec<Option<String>>, Option<PolygonAngle>) {
+    let dim = polygon_dim(corners);
+    let lens = side_len_params(b, prefix, corners, &vec![None; corners.len()], &dim);
+    let angle = side_angle_param(b, prefix, corners);
+    (lens, angle)
 }
 
 /// Which sides of a polygon with arc sides `arcs` drive, and which arc side pairs share one
@@ -327,7 +342,7 @@ fn arc_polygon_dim(corners: &[[f64; 2]], arcs: &[Option<ArcSide>]) -> (Vec<bool>
 /// (they drive their `Diameter` instead, see [`arc_side_params`]); `dim` says which straight
 /// sides drive — [`polygon_dim`], adjusted for the arc ties in [`ProfileSpec::to_design_on`].
 /// Returns the model parameters' names, `None` for a side that does not drive.
-fn side_len_params(
+pub(crate) fn side_len_params(
     b: &mut DesignBuilder,
     prefix: &str,
     corners: &[[f64; 2]],

@@ -42,8 +42,10 @@ fn writes_joined_extrusions() {
         .iter()
         .map(|p| (p["name"].as_str().expect("name"), p["expr"].as_str().expect("expr")))
         .collect();
+    // The extrusions keep mesh2cad's names, first.
+    let extrude: Vec<(&str, &str)> = params.iter().copied().filter(|(n, _)| n.starts_with("extrude_")).collect();
     assert_eq!(
-        params,
+        extrude,
         [
             ("extrude_z1_len", "10 mm"),
             ("extrude_z1_0", "3 mm"),
@@ -53,7 +55,21 @@ fn writes_joined_extrusions() {
             ("extrude_z3_0", "extrude_z2_0 + extrude_z2_len"),
         ]
     );
+    // Each band's outline is dimensioned side by side, as `outline_<k>_<i>_len` (and
+    // `outline_<k>_<i>_angle` on the diamond's longest slanted side).
+    let user = |name: &str| params.iter().find(|(n, _)| *n == name).map(|(_, e)| *e);
+    assert_eq!(user("outline_1_1_len"), Some("60 mm"));
+    assert_eq!(user("outline_1_2_len"), Some("40 mm"));
+    assert_eq!(user("outline_2_1_len"), Some("20 mm"));
+    assert_eq!(user("outline_2_6_len"), Some("15 mm"));
+    assert_eq!(user("outline_3_1_len"), Some("12.7279 mm"));
+    assert_eq!(user("outline_3_4_angle"), Some("225 deg"));
     let features = json["features"].as_array().expect("features");
+    // The sketches carry the Length/Angle constraints behind those parameters.
+    let constraints = |k: usize| features[k]["sketch"]["constraints"].as_array().expect("constraints");
+    let count = |k: usize, kind: &str| constraints(k).iter().filter(|c| c["type"] == kind).count();
+    assert_eq!([count(0, "length"), count(2, "length"), count(4, "length")], [2, 4, 2]);
+    assert_eq!([count(0, "angle"), count(2, "angle"), count(4, "angle")], [0, 0, 1]);
     let ops: Vec<&str> = features.iter().filter_map(|f| f["operation"].as_str()).collect();
     assert_eq!(ops, ["new_body", "join", "join"]);
     assert_eq!(features[1]["extent"].get("start_offset"), None);
