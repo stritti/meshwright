@@ -45,3 +45,8 @@ as a normal release. Remove `release-as` again once `v0.1.0` exists — left in 
 would pin every later release to that version. `Release-As: 0.1.0` as a footer on a single
 commit on `main` works too, but does not end the beta phase on its own: while `prerelease` is
 true, release-please keeps marking releases as pre-releases.
+
+Note that release-please only opens a release PR when at least one user-facing commit
+(`feat`, `fix`, `docs`, ...) landed since the last release — a bare `ci`/`chore` change does
+not trigger one, even with `release-as` set. So to cut the stable release, land any small
+user-facing change (a docs line, say) after switching `prerelease` off.
