@@ -272,3 +272,76 @@ fn a_blind_hole_beneath_a_pocket_keeps_its_measured_depth() {
     assert_eq!(h.blind, Some(Blind { depth: 1.0, bottom: true }), "the measured depth, not the pocket's level: {h:?}");
     assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
 }
+
+/// A 60 x 40 x 8 plate with two steps down from the top face: x in [30, 45) tops at 6 mm and
+/// x >= 45 at 4 mm — two step levels deep (5.3).
+fn two_level_stepped_plate() -> Mesh {
+    let at = |p: [f64; 2], z: f64| [p[0], p[1], z];
+    let mut t: Vec<[[f64; 3]; 3]> = Vec::new();
+    // Vertical wall from a to b between lo and hi (outward = right of a -> b), split at the
+    // step levels below hi so every level's edge is a chord.
+    let wall = |t: &mut Vec<[[f64; 3]; 3]>, a: [f64; 2], b: [f64; 2], lo: f64, hi: f64| {
+        t.push([at(a, lo), at(b, lo), at(b, hi)]);
+        t.push([at(a, lo), at(b, hi), at(a, hi)]);
+    };
+    let wall_split = |t: &mut Vec<[[f64; 3]; 3]>, a: [f64; 2], b: [f64; 2], h: f64| {
+        let levels: [f64; 4] = [0.0, 4.0, 6.0, 8.0];
+        let mut lo = 0.0;
+        for &hi in &levels[1..] {
+            if lo < h {
+                wall(t, a, b, lo, hi.min(h));
+            }
+            lo = hi;
+        }
+    };
+    let cap = |t: &mut Vec<[[f64; 3]; 3]>, ring: &[[f64; 2]], z: f64, up: bool| {
+        for [a, b, c] in synth::triangulate(ring, &[]) {
+            if up {
+                t.push([at(a, z), at(b, z), at(c, z)]);
+            } else {
+                t.push([at(a, z), at(c, z), at(b, z)]);
+            }
+        }
+    };
+    let bottom = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+    cap(&mut t, &bottom, 0.0, false);
+    let a_region = [[0.0, 0.0], [30.0, 0.0], [30.0, 40.0], [0.0, 40.0]];
+    let b_region = [[30.0, 0.0], [45.0, 0.0], [45.0, 40.0], [30.0, 40.0]];
+    let c_region = [[45.0, 0.0], [60.0, 0.0], [60.0, 40.0], [45.0, 40.0]];
+    cap(&mut t, &a_region, 8.0, true);
+    cap(&mut t, &b_region, 6.0, true);
+    cap(&mut t, &c_region, 4.0, true);
+    // Outer walls, each segment with its region's height.
+    wall_split(&mut t, [0.0, 0.0], [30.0, 0.0], 8.0);
+    wall_split(&mut t, [30.0, 0.0], [45.0, 0.0], 6.0);
+    wall_split(&mut t, [45.0, 0.0], [60.0, 0.0], 4.0);
+    wall_split(&mut t, [60.0, 0.0], [60.0, 40.0], 4.0);
+    wall_split(&mut t, [60.0, 40.0], [45.0, 40.0], 4.0);
+    wall_split(&mut t, [45.0, 40.0], [30.0, 40.0], 6.0);
+    wall_split(&mut t, [30.0, 40.0], [0.0, 40.0], 8.0);
+    wall_split(&mut t, [0.0, 40.0], [0.0, 0.0], 8.0);
+    // The steps' walls: x = 30 exposed from 6 to 8, x = 45 from 4 to 6.
+    wall(&mut t, [30.0, 0.0], [30.0, 40.0], 6.0, 8.0);
+    wall(&mut t, [45.0, 0.0], [45.0, 40.0], 4.0, 6.0);
+    Mesh::new(t)
+}
+
+/// Two step levels down from the top face are both recognised, each as an outline pocket cut
+/// from the top down to its level.
+#[test]
+fn recognises_two_step_levels() {
+    let mesh = two_level_stepped_plate();
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let (profile, _) = found_profile(&mesh);
+    let mut pockets = profile.outline_pockets.clone();
+    pockets.sort_by(|a, b| a.depth.total_cmp(&b.depth));
+    assert_eq!(
+        pockets,
+        [
+            OutlinePocketSpec { corners: vec![[30.0, 0.0], [45.0, 0.0], [45.0, 40.0], [30.0, 40.0]], depth: 2.0, bottom: false },
+            OutlinePocketSpec { corners: vec![[45.0, 0.0], [60.0, 0.0], [60.0, 40.0], [45.0, 40.0]], depth: 4.0, bottom: false },
+        ],
+        "{profile:?}"
+    );
+    assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
+}
