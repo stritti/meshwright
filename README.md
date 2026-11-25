@@ -180,6 +180,11 @@ three). [AGENTS.md](AGENTS.md) is the short orientation for agents working on th
 | [`solidcraft-plugin-testing`](.agents/skills/solidcraft-plugin-testing/SKILL.md) | adding unit, golden, eval or plugin-test coverage |
 | [`revmesh-recognition-knowhow`](.agents/skills/revmesh-recognition-knowhow/SKILL.md) | adding or changing a recogniser or sketch writer — the portable building blocks from the literature (RANSAC, loop fits, dihedral segmentation, extrusion cylinders, sketch constraints, validity gates), mapped to this repo's code |
 
+Every SolidCraft skill opens with the same mandatory conformance check: before touching the plugin
+boundary, verify compatibility and full utilization against SolidCraft's
+[`docs/plugins.md` at the pinned tag `v0.49.1`](https://github.com/tangency-labs/solidcraft/blob/v0.49.1/docs/plugins.md)
+and [`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md).
+
 ## Contributing
 
 Contributions are very welcome: bug reports, STL files that import badly, recognisers, docs.

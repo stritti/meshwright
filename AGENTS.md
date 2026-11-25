@@ -14,6 +14,12 @@ the `craft:plugin` WIT worlds, the wasm build/packaging pipeline, runtime limits
 host calls and error mapping, the importer workflow, testing, and the recognition know-how
 extracted from the literature (`revmesh-recognition-knowhow`).
 
+Every SolidCraft skill opens with the same mandatory conformance gate: before any change that
+touches the plugin boundary, check it against SolidCraft's `docs/plugins.md` — [at the pinned tag
+`v0.49.1`](https://github.com/tangency-labs/solidcraft/blob/v0.49.1/docs/plugins.md) and [at
+`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md) — for compatibility
+with the host and for full utilization of the plugin interface.
+
 ## Conventions
 
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) first: development setup, the CI gates to run locally
