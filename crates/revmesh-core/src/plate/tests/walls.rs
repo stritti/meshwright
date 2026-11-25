@@ -2,7 +2,7 @@ use crate::mesh::{Mesh, cross, sub};
 use crate::plate::P2;
 use crate::plate::geometry::distance;
 use crate::plate::walls::Walls;
-use crate::recognize::{Axis, HoleSpec, PlateSpec, Recognition, recognize};
+use crate::recognize::{ArcSide, Axis, HoleSpec, PlateSpec, Recognition, recognize};
 use crate::synth;
 
 use super::{banded, found, reason, spec};
@@ -153,6 +153,23 @@ fn diagonal_walls_fill_few_cells() {
     assert!(walls.cells.len() < 10_000, "{} cells", walls.cells.len());
     assert!(walls.holds([75.0, 25.0]) && walls.holds([25.0, 75.0]));
     assert!(!walls.holds([50.0, 50.0]) && !walls.holds([75.0, 26.0]));
+}
+
+/// An arc side's endpoint chord is no straight wall (codex finding on #68): with it indexed, a
+/// wall tapering to the chord would pass the checks; without it only the arc's circle and the
+/// meshed facets hold.
+#[test]
+fn an_arc_sides_chord_is_no_wall() {
+    let corners = [[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]];
+    let arcs = [None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None];
+    let walls = Walls::new(&corners, None, &[], &[], &arcs, &[], 100.0, 1e-3);
+    assert!(walls.holds([30.0, 70.0]), "on the arc");
+    assert!(walls.holds([30.0, 0.0]), "on a straight side");
+    assert!(!walls.holds([30.0, 40.0]), "the chord's middle (the circle's centre) lies inside");
+    assert!(!walls.holds_chord(corners[2], corners[3]), "the arc side's chord");
+    // The same side without an arc on it is a straight wall.
+    let walls = Walls::new(&corners, None, &[], &[], &[None; 4], &[], 100.0, 1e-3);
+    assert!(walls.holds([30.0, 40.0]) && walls.holds_chord(corners[2], corners[3]));
 }
 
 /// A 200 x 200 x 5 plate whose bottom corner is clipped from (1, 0, 0) to (0, 1, 0), a slanted

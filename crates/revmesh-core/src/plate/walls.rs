@@ -53,7 +53,8 @@ impl Walls {
     /// as meshed, of the top face's boundary `loops` (a facet's chord of an arc is no wall of the
     /// true part, but its corners and its subdivisions lie on it).
     /// `arcs` are further bounded round walls: centre, radius, the corner each rounds and how far
-    /// from that corner it reaches. `arc_sides` are the outline's curved sides, as fitted.
+    /// from that corner it reaches. `arc_sides` are the outline's curved sides, as fitted; their
+    /// endpoint chords are not indexed as straight walls.
     #[allow(clippy::too_many_arguments)] // every wall kind the plate may have, one index
     pub(super) fn new(
         corners: &[P2],
@@ -87,10 +88,15 @@ impl Walls {
         let mut walls = Vec::new();
         for i in 0..n {
             let (c, b) = (corners[i], corners[(i + 1) % n]);
-            let d = unit(c, b);
-            // The side's straight part, between the tangent points of its two corners' arcs.
-            let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
-            walls.push(Wall::Segment([c[0] + d[0] * t0, c[1] + d[1] * t0], [b[0] - d[0] * t1, b[1] - d[1] * t1]));
+            // An arc side's endpoint chord is no straight wall: it cuts across the part's
+            // interior, and a wall tapering to it must fail the checks. The side's meshed
+            // facets still enter through `loops`.
+            if arc_sides.get(i).map_or(true, |a| a.is_none()) {
+                let d = unit(c, b);
+                // The side's straight part, between the tangent points of its two corners' arcs.
+                let (t0, t1) = (rounds[i].0, rounds[(i + 1) % n].0);
+                walls.push(Wall::Segment([c[0] + d[0] * t0, c[1] + d[1] * t0], [b[0] - d[0] * t1, b[1] - d[1] * t1]));
+            }
             if r > 0.0 {
                 walls.push(Wall::Arc { centre: rounds[i].1, r, corner: c, t: rounds[i].0 });
             }
