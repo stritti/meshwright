@@ -329,6 +329,32 @@ fn arc_run_starts_after_a_sharp_junction() {
     assert_eq!(profile, expected);
 }
 
+/// Two circular sides meeting at a sharp corner are fitted independently: the length-only
+/// carry must not join their runs into one, whose single-circle fit fails (codex finding on
+/// #68 — a straight base under radius-25 arcs centred at [-15, 0] and [15, 0] meeting at
+/// [0, 20], 32 facets each, was refused as "not a circular arc").
+#[test]
+fn arc_sides_meeting_at_a_sharp_corner_are_fitted_independently() {
+    let expected = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[0.0, 0.0], [20.0, 0.0], [10.0, 20.0]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, Some(ArcSide { centre: [-5.0, 0.0], r: 25.0 }), Some(ArcSide { centre: [25.0, 0.0], r: 25.0 })],
+        outline_fillet_r: None,
+    };
+    let mesh = synth::profile(&expected, 32, [0.0; 3]);
+    let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+    let (profile, offset) = found_profile(&reread);
+    assert_eq!(offset, [0.0; 3]);
+    assert_eq!(profile, expected);
+}
+
 /// A chord and its quarter-circle arc close a valid two-corner outline (a quarter pie). The
 /// chord's ends touch the bounding box's lowest corner, so the profile sits in a frame at
 /// [20, 20, 0].

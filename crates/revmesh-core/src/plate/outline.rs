@@ -150,7 +150,14 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
         }
         let first = j;
         let mut steps = 1;
-        while steps < n && curving((first + steps) % n) && carries_curve(first + steps - 1, first + steps) {
+        // The run never crosses a sharp corner: two circular sides meeting there are fitted
+        // independently (the length-only carry would otherwise join them into one run whose
+        // single-circle fit fails).
+        while steps < n
+            && turn((first + steps) % n).abs() <= MAX_CURVE_TURN
+            && curving((first + steps) % n)
+            && carries_curve(first + steps - 1, first + steps)
+        {
             steps += 1;
         }
         if steps >= 3 {
