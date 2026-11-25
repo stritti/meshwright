@@ -11,6 +11,48 @@ Rule of thumb (see `docs/architecture.md`): **the plugin crate only moves bytes 
 SolidCraft and the core crate**. All logic lives in `revmesh-core`, which compiles and tests
 natively; the plugin crate is `#![cfg(target_arch = "wasm32")]` and empty elsewhere.
 
+## Plugin-interface conformance — always check this
+
+This skill touches SolidCraft's plugin boundary, so before committing any change here, check it
+against the host's own documentation: `docs/plugins.md` in
+[tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft) at the pinned release
+[tag `v0.49.1`](https://github.com/tangency-labs/solidcraft/blob/v0.49.1/docs/plugins.md)
+(`SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml`, matching the vendored
+`crates/revmesh-plugin/wit/plugin.wit`) and at
+[`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md) for what is
+coming next. Both questions are mandatory:
+
+1. **Compatible?** The host at `SOLIDCRAFT_VERSION` accepts what you declare and build: known
+   capabilities only (unknown or newer required capabilities are refused at install, and
+   `min_host_version` is checked), entry fields valid for that version, limits under the host
+   ceilings (fuel ≤ 10,000,000,000,000 approved, memory ≤ the 128 MiB ceiling unless the user
+   approves more, deadline ≤ 10 min, zip ≤ 256 entries and ≤ 16 MiB per file, importer component
+   ≤ 64 MiB), and a component whose imports the declared capabilities cover. Prove it with
+   `plugin.check`, a dry-run `plugin.install` and `cargo xtask plugin-test`.
+2. **Fully utilised?** Walk the plugins.md feature list and for each feature that applies to this
+   plugin either use it or record why not: capabilities beyond `formats@0.2` (`evaluate@0.2`
+   self-check, `design@0.1` with `get-token`/`expected_design` and the
+   `design.changed`/`design.links_changed` listeners, `storage@0.1`, `forms@0.1`, `dialog@0.1`,
+   `ui@0.1` panels), `inspect.classify_points` through `commands.run` on `read` entries, manifest
+   conveniences (menu/ribbon slots, `x-solidcraft-field-order`, `$defs`, `oneOf` titles,
+   `x-solidcraft-visible-when`, importer `file_first`/`dialog_hook`, `updates.github`,
+   `min_host_version`), the headless grant flow (`--keep-plugin-approvals`), and the complete
+   `plugin-error` mapping.
+   When `SOLIDCRAFT_VERSION` moves, re-run both parts against the new tag's plugins.md, diff
+   `main` for upcoming interface changes, and state the outcome in the PR.
+
+For this skill:
+
+- Every host call used must exist in the vendored WIT and be granted by a declared capability.
+  `commands::run` may only run the read-only commands listed in the manifest — except
+  `inspect.classify_points`, which any `read` entry may call without a command-group grant.
+- `design-state::get-token()` (capability `design@0.1`) returns an opaque
+  `{document_id, revision}` token or `null`: compare the whole token, pass it back unchanged as
+  `expected_design` on editing calls, discard it when the design closes; a mismatch is refused
+  with typed `stale_revision` data (`expected` vs `actual`).
+- Map every `plugin-error` variant the host can produce or send, including `unsupported` (added
+  in 0.2) and host refusals such as `stale_revision`.
+
 ## Using the interfaces
 
 - `log::log(level, message)` — `level` is `debug|info|warn|error`; use it for diagnostics the

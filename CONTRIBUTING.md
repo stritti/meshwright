@@ -73,6 +73,13 @@ so the new PR's CI actually runs. Without the secret the scheduled run fails wit
 
 Guidelines:
 
+- When `SOLIDCRAFT_VERSION` moves (weekly check or update PR), re-read `docs/plugins.md` in
+  [tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft) at the new release tag
+  (today: [`v0.49.1`](https://github.com/tangency-labs/solidcraft/blob/v0.49.1/docs/plugins.md))
+  and diff [`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md):
+  confirm the re-vendored plugin is still compatible (capabilities, worlds, limits, manifest
+  fields) and uses every interface feature the new host offers that applies. The same two-part
+  check is a standing gate in every `solidcraft-*` skill (see `.agents/skills/`).
 - **Keep the plugin crate thin.** Logic belongs in `revmesh-core`, where it can be tested
   natively. The plugin only moves bytes between SolidCraft and the core.
 - **Test what you add.** Recognisers get unit tests with small synthetic meshes, and, where it
