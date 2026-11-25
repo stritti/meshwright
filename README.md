@@ -57,8 +57,8 @@ with the features and parameters it gets.
 | In the STL | In SolidCraft | Parameters |
 |---|---|---|
 | A rectangular plate, thickness along Z | `Sketch1` (rectangle on XY), `Extrude1` and `Move1` (to where the plate is) | `base_x`, `base_y`, `base_t`; the centre `base_cx`, `base_cy` and the bottom `base_z0` |
-| A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical, every side a `Length` dimension), `Extrude1` and `Move1` | `extrude_len` (thickness), `extrude_0` (bottom), `outline_<i>_len` per side |
-| An outline with circular arc sides (a bulge, a stadium's round end) | `Sketch1` (the outline on XY, each arc side an `arc` curve with a `Diameter` dimension, each straight side a `Length` dimension), `Extrude1` and `Move1` | `extrude_len`, `extrude_0`, `outline_<i>_len` per straight side, `arc_<i>_d` per arc side and its centre `arc_<i>_cx`, `arc_<i>_cy` |
+| A plate with any other outline of straight sides | `Sketch1` (the outline on XY, sides along X or Y kept horizontal or vertical, every side a `Length` dimension, the longest slanted side an `Angle` from the X axis), `Extrude1` and `Move1` | `extrude_len` (thickness), `extrude_0` (bottom), `outline_<i>_len` per side, `outline_<i>_angle` on the longest slanted side |
+| An outline with circular arc sides (a bulge, a stadium's round end) | `Sketch1` (the outline on XY, each arc side an `arc` curve with a `Diameter` dimension, each straight side a `Length` dimension), `Extrude1` and `Move1` | `extrude_len`, `extrude_0`, `outline_<i>_len` per straight side, `arc_<i>_d` per arc side (its centre a free sketch point) |
 | Any of those outlines extruded along X or Y (a part standing upright) | `Sketch1` on the YZ or XZ plane (the profile's coordinates are the sketch coordinates there), `Extrude1` along that axis, `Move1` | `extrude_len`, `extrude_0` (along the axis); the holes' and slots' positions named after the profile plane's world axes, e.g. `hole_1_y`, `hole_1_z` on an X extrusion |
 | Round vertical through holes (8 or more facets going evenly round the circle) | `Hole1`, `Hole2`, … numbered from left to right | `hole_<n>_x`, `hole_<n>_y` (where the hole is in the file), `hole_<n>_d` |
 | A counterbored through hole, its counterbore on the top or the bottom face | `Hole<n>` of type counterbore (drilled from that face) | `hole_<n>_d`, `hole_<n>_cbore_d`, `hole_<n>_cbore_depth` (from that face) |
@@ -71,6 +71,7 @@ with the features and parameters it gets.
 | A rectangular block (pad) along X and Y standing on the top face | `Pad<n>` (a box joined to the plate) | `pad_<n>_w` (along X), `pad_<n>_l` (along Y), `pad_<n>_h`, the middle `pad_<n>_x`, `pad_<n>_y` |
 | A rectangular blind pocket along X and Y with a flat floor, in the top or the bottom face | `Pocket<n>` (a box cut out of the plate) | `pocket_<n>_w`, `pocket_<n>_l`, `pocket_<n>_depth` (from that face), the middle `pocket_<n>_x`, `pocket_<n>_y` |
 | A blind pocket of any other outline of straight sides with a flat floor, in the top or the bottom face | `Pocket<n>Sketch` (the mouth's outline on XY, every side a `Length` dimension) and `Pocket<n>` (a cut from that face), numbered after the rectangular pockets | `pocket_<n>_depth`, `pocket_<n>_<i>_len` per side |
+| A step down from the top face along Z (a lower level whose region shares an edge with the outline) | written like a pocket of that region's outline: `Pocket<n>Sketch` and `Pocket<n>` cut from the top down to the level | `pocket_<n>_depth` (the step's height), `pocket_<n>_<i>_len` per side |
 | Three or more holes of one diameter on a straight line at one pitch | `HoleRow<n>` and `HoleRow<n>Pattern` (a rectangular pattern along the row) | `hole_row_<n>_n`, `_pitch`, `_d`, and the first hole `_x`, `_y` |
 | Holes of one diameter in an axis-aligned grid of at least 2 x 2 | `HoleGrid<n>` and `HoleGrid<n>Pattern` | `hole_grid_<n>_nx`, `_ny`, `_pitch_x`, `_pitch_y`, `_d`, and the corner hole `_x`, `_y` |
 | Three or more holes of one diameter equally spaced on a circle (a bolt circle) | `HoleCircle<n>` and `HoleCircle<n>Pattern` (a circular pattern about the circle's centre) | `hole_circle_<n>_n`, `_d`, `_r` (centre to hole), `_cx`, `_cy`, `_angle` (first hole, from +X) |
@@ -99,7 +100,8 @@ the mesh's volume within 1%, otherwise the mesh is kept. The import report notes
 volume changed because round facets became true circles. Not recognised yet (kept as a mesh, with the
 reason): curved sides that are not circular arcs and round outlines, rounded corners mixed with arc sides, corners with different radii or only some rounded,
 D-shaped and other curved cut-outs, blind or slanted slots, corners rounded almost all the way along their sides,
-steps, pockets with curved sides, bosses with a draft, a round or a hole, other shapes on the top face, blind holes with a drill
+steps along X or Y, pockets with curved sides, bosses with a draft, a round or a hole, other shapes on the top face, a counterbore, countersink or
+rounded rim opening on a step's level, blind holes with a drill
 point or a counterbore, and parts rotated off X, Y and Z. Blind holes, like counterbored and
 countersunk ones, stay single holes, not patterns.
 

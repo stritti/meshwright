@@ -112,7 +112,8 @@ turned, along Y; `extrude_z1_len = 15` rebuilds to 46,296 mm³, the bands above 
 
 The cut-outs of straight sides are one sketch, `CutoutsSketch`, of closed loops in world
 coordinates (sides along X or Y held horizontal or vertical, every side dimensioned by a `Length`
-constraint driven by `cutout_<n>_<i>_len`), and a cut through
+constraint driven by `cutout_<n>_<i>_len`, each polygon's longest slanted side by an `Angle` from
+the sketch's X axis driven by `cutout_<n>_<i>_angle`), and a cut through
 everything both ways from it, `Cutouts`. It comes after the outline's fillet, as the holes do: a
 cut-out may lie in the material an inside corner's rounding adds (an L with 5 mm rounds and a
 triangle in its inside rounding rebuilds to 6,169.124 mm³, as computed). Drawn into the outline's
@@ -252,8 +253,13 @@ opened in SolidCraft 0.49.0 with no errors: volume 16,452.05 mm³ as computed by
 warnings.
 
 A polygon outline (`ProfileSpec::to_design`: horizontal and vertical constraints on the
-axis-aligned sides plus a `Length` constraint per side driven by the model parameter behind
-`outline_<i>_len`, a fillet on every corner named `F2:side:l<i>|F2:side:l<i+1>`) works the same
+axis-aligned sides plus a `Length` constraint per driving side driven by the model parameter
+behind `outline_<i>_len`, an `Angle` constraint on the longest slanted side driven by
+`outline_<i>_angle` — the angle side's length is derived, and when the other sides' orientations
+already fix its direction, as a right triangle's legs held horizontal and vertical do for the
+diagonal, the longest axis-aligned side's length is derived too (see `dimensioned_sides_for_angle`
+in `crates/revmesh-core/src/design/sketch.rs`), a fillet on every corner named
+`F2:side:l<i>|F2:side:l<i+1>`) works the same
 way, inside corners included. An outline with arc sides (`polygon_sketch_arcs`) draws each arc
 side as an `arc` curve whose `Diameter` constraint is driven by the model parameter behind
 `arc_<i>_d`; the arc's centre is a free sketch point (like a slot's arc centres), which the

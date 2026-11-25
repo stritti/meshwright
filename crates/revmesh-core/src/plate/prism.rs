@@ -6,14 +6,14 @@ use super::geometry::{boundary_loops, distance, signed_area};
 use super::holes::{BlindHole, Cutouts, FittedHole, FittedSlot, Stepped, axis_rectangle, polygon_cutout, round_hole, slot_shape};
 use super::outline::outline_shape;
 use super::walls::Walls;
-use super::{AREA_MATCH_REL, CHORD_FACET_SPAN, MAX_VOLUME_ERROR, NOT_CLOSED, NOT_FLAT, P2, VOLUME_MATCH_REL, tolerance};
-use crate::mesh::{Mesh, Vec3, snap_mm};
+use super::{AREA_MATCH_REL, CAP_NORMAL_MIN, CHORD_FACET_SPAN, MAX_VOLUME_ERROR, NOT_CLOSED, NOT_FLAT, P2, VOLUME_MATCH_REL, tolerance};
+use crate::mesh::{Mesh, Vec3, cross, length, snap_mm, sub};
 use crate::recognize::{ArcSide, Blind, HoleSpec, OutlinePocketSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
 
 use super::holes::Footprint;
 /// Looks for a plate in `mesh`: a prism over its top face, with holes, slots, cut-outs, pockets
 /// and pads through or on it.
-pub(super) fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
+pub(super) fn recognize_prism(mesh: &Mesh, allow_steps: bool) -> Result<Recognition, String> {
     let bounds = mesh.bounds().ok_or("the mesh has no triangles")?;
     let size = bounds.size();
     let scale = size[0].max(size[1]).max(size[2]);
@@ -27,10 +27,16 @@ pub(super) fn recognize_prism(mesh: &Mesh) -> Result<Recognition, String> {
     }
 
     let faces = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
-    let face_loops = face_outlines(&faces, tol)?;
+    // A step down from the top face is an up-facing facet level between the faces that shares
+    // an edge with the top; the outline is the top face's and the steps' regions together.
+    // Steps are recognised along Z only for now; along X or Y they would take parts that are
+    // better written as an intersection of extrusions (roadmap 5.3).
+    let steps = if allow_steps { step_levels(&faces, size[2], tol)? } else { Vec::new() };
+    let face_loops = face_outlines(&faces, &steps, tol)?;
     let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
     let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
-    let cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
+    let mut cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
+    add_steps(&mut cutouts, &steps, size[2], tol)?;
     check_prism(&faces, mesh_volume, size[2], &cutouts.stepped, &cutouts.blinds, rim.as_ref())?;
     check_walls(&faces, &corners, radius, &side_arcs, &cutouts, scale, tol, rim.as_ref())?;
     let offset = bounds.min.map(snap_mm);
@@ -114,18 +120,101 @@ pub(super) fn close(a: f64, b: f64, rel: f64) -> bool {
 
 /// The two faces' boundary loops, and the top face's single outline among them.
 pub(super) struct FaceLoops {
-    /// The top face's single counter-clockwise outline.
+    /// The top face's single counter-clockwise outline, the steps' regions included.
     pub(super) outline: Vec<P2>,
-    /// The top face's boundary loops: the outline and the cut-outs'.
+    /// The top face's boundary loops (the steps' holes included): the outline and the cut-outs'.
     pub(super) loops: Vec<Vec<P2>>,
     /// The bottom face's boundary loops.
     pub(super) bottom_loops: Vec<Vec<P2>>,
 }
 
-/// The faces' boundary loops and the top face's single outline among them, checked against the
-/// bottom face's outline.
-pub(super) fn face_outlines(faces: &Faces, tol: f64) -> Result<FaceLoops, String> {
-    let loops = boundary_loops(&faces.top, tol)?;
+/// How many distinct levels a step down may have; more means a slanted or curved surface, no
+/// stepful plate.
+const MAX_STEP_LEVELS: usize = 8;
+
+/// The up-facing facet levels strictly between the bottom and the top face whose region shares
+/// an edge with the top's on which a vertical wall stands — a step down from the top face (a
+/// pocket's floor shares no edge with the top, and a slanted surface's facets are caps whose
+/// edges no wall stands on). Each level's height and its triangles seen from above.
+#[allow(clippy::type_complexity)] // a level's height and its triangles
+fn step_levels(faces: &Faces, height: f64, tol: f64) -> Result<Vec<(f64, Vec<[P2; 3]>)>, String> {
+    let mut levels: Vec<(f64, Vec<[P2; 3]>)> = Vec::new();
+    for cap in &faces.caps {
+        let n = cross(sub(cap[1], cap[0]), sub(cap[2], cap[0]));
+        let len = length(n);
+        if len == 0.0 || n[2] / len <= CAP_NORMAL_MIN {
+            continue; // down-facing (a pocket's or counterbore's floor) or a sliver
+        }
+        let z = (cap[0][2] + cap[1][2] + cap[2][2]) / 3.0;
+        if z <= tol || z >= height - tol {
+            continue; // facets leaked into the caps near the faces (a rounded rim)
+        }
+        let flat = cap.map(|p| [p[0], p[1]]);
+        if let Some((_, ts)) = levels.iter_mut().find(|(lz, _)| (*lz - z).abs() <= tol) {
+            ts.push(flat);
+        } else {
+            if levels.len() >= MAX_STEP_LEVELS {
+                return Ok(Vec::new());
+            }
+            levels.push((z, vec![flat]));
+        }
+    }
+    if levels.is_empty() {
+        return Ok(levels);
+    }
+    // Every wall facet's edge off the top face is a chord; a vertical wall stands on it.
+    let bits = |p: P2| (p[0].to_bits(), p[1].to_bits());
+    let mut wall_bases: std::collections::HashSet<(u64, u64, u64, u64)> = std::collections::HashSet::new();
+    for (a, b, _, _) in &faces.chords {
+        let (ka, kb) = (bits(*a), bits(*b));
+        wall_bases.insert((ka.0, ka.1, kb.0, kb.1));
+        wall_bases.insert((kb.0, kb.1, ka.0, ka.1));
+    }
+    let edges_of = |ring: &[P2]| (0..ring.len()).map(|i| (ring[i], ring[(i + 1) % ring.len()])).collect::<Vec<_>>();
+    let same_edge = |(a, b): (P2, P2), (c, d): (P2, P2)| {
+        (distance(a, c) <= tol && distance(b, d) <= tol) || (distance(a, d) <= tol && distance(b, c) <= tol)
+    };
+    // A level is a step when its outer loop shares an edge with the top face's boundary (or with
+    // a step already found, for a second level down) and a wall stands on that edge.
+    let top_outer = boundary_loops(&faces.top, tol)?.into_iter().find(|l| signed_area(l) > 0.0).ok_or("the top face has no outline")?;
+    let mut union_edges = edges_of(&top_outer);
+    let mut steps = Vec::new();
+    let mut remaining = levels;
+    loop {
+        let mut attached = false;
+        remaining.retain(|(z, ts)| {
+            let Some(outer) = boundary_loops(ts, tol).ok().and_then(|ls| ls.into_iter().find(|l| signed_area(l) > 0.0)) else {
+                return true;
+            };
+            let shared = edges_of(&outer).into_iter().filter(|e| union_edges.iter().any(|u| same_edge(*e, *u))).collect::<Vec<_>>();
+            let on_wall = shared.iter().any(|&(a, b)| {
+                let (ka, kb) = (bits(a), bits(b));
+                wall_bases.contains(&(ka.0, ka.1, kb.0, kb.1))
+            });
+            if on_wall {
+                union_edges.extend(edges_of(&outer));
+                steps.push((*z, ts.clone()));
+                attached = true;
+                false
+            } else {
+                true
+            }
+        });
+        if !attached {
+            break;
+        }
+    }
+    Ok(steps)
+}
+
+/// The faces' boundary loops and the top face's single outline among them (the steps' regions
+/// included in the top), checked against the bottom face's outline.
+pub(super) fn face_outlines(faces: &Faces, steps: &[(f64, Vec<[P2; 3]>)], tol: f64) -> Result<FaceLoops, String> {
+    let mut top = faces.top.clone();
+    for (_, ts) in steps {
+        top.extend(ts.iter().copied());
+    }
+    let loops = boundary_loops(&top, tol)?;
     let bottom_loops = boundary_loops(&faces.bottom, tol)?;
     let mut outlines = loops.iter().filter(|l| signed_area(l) > 0.0);
     let outline = outlines.next().ok_or("the top face has no outline")?.clone();
@@ -268,6 +357,28 @@ pub(super) fn pair_polygons(
     }
     out.cutouts.sort_by(|a, b| a[0][1].total_cmp(&b[0][1]).then(a[0][0].total_cmp(&b[0][0])));
     Ok(pocket_mouths)
+}
+
+/// Each step as a pocket cut from the top face down to the step's level: the step region's
+/// outline (which shares edges with the plate's outline) as an outline pocket, and a blind over
+/// it so the wall checks hold the step's wall and its level's facets.
+fn add_steps(cutouts: &mut PlateCutouts, steps: &[(f64, Vec<[P2; 3]>)], height: f64, tol: f64) -> Result<(), String> {
+    for (z, ts) in steps {
+        for l in boundary_loops(ts, tol)?.iter().filter(|l| signed_area(l) > 0.0) {
+            let corners = pocket_corners(l, tol)?;
+            let depth = height - z;
+            cutouts.outline_pockets.push(OutlinePocketSpec { corners: corners.clone(), depth: snap_mm(depth), bottom: false });
+            cutouts.blinds.push(BlindHole {
+                foot: Footprint::Polygon { ring: corners },
+                ring: l.clone(),
+                face_z: height,
+                inward: -1.0,
+                depth,
+            });
+        }
+    }
+    cutouts.outline_pockets.sort_by(|a, b| a.corners[0][1].total_cmp(&b.corners[0][1]).then(a.corners[0][0].total_cmp(&b.corners[0][0])));
+    Ok(())
 }
 
 /// A pocket mouth's polygon of straight sides: counter-clockwise from its lowest corner, the
@@ -599,7 +710,9 @@ pub(super) fn check_walls(
         if steps.peek().is_some() {
             steps.any(|s| s.holds(middle, tol + CHORD_FACET_SPAN * s.sagitta()))
         } else if blind.peek().is_some() {
-            blind.any(|h| h.holds(middle, tol + CHORD_FACET_SPAN * h.sagitta()))
+            // A step's ring shares edges with the plate's outline, so an outline wall's chord
+            // can reach the step's corners too: it still follows the outline wall.
+            blind.any(|h| h.holds(middle, tol + CHORD_FACET_SPAN * h.sagitta())) || walls.holds_chord(a, b)
         } else {
             walls.holds_chord(a, b) || rim.is_some_and(|rim| on_rim(middle, CHORD_FACET_SPAN * rim.sagitta(len)))
         }
@@ -633,7 +746,22 @@ pub(super) fn recognition(
     // On a rounded rim the outline's own corner arcs are the leaked rim facets, not a fillet.
     let (z, outline_fillet_r) = (snap_mm(size[2]), if rim.is_some() { None } else { radius.map(snap_mm) });
     let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
-    let PlateCutouts { holes, slots, cutouts, pockets, outline_pockets, .. } = cutouts;
+    let PlateCutouts { mut holes, slots, cutouts, pockets, outline_pockets, .. } = cutouts;
+    // A through hole in a pocket's or step's region goes only up to that level, not through the
+    // whole plate: from the bottom face it is blind, as deep as the level lies above it. A blind
+    // hole already measured beneath the region keeps its own depth. A hole whose counterbore,
+    // countersink or round opens on the level would be drilled from the plate's top face, not
+    // from the level, so it is not recognised: the mesh is kept.
+    for h in &mut holes {
+        if let Some(p) = outline_pockets.iter().find(|p| !p.bottom && p.contains([h.x, h.y], tol)) {
+            if h.head.is_some_and(|head| !head.bottom()) {
+                return Err("a hole with a counterbore, countersink or round opening on a step's level is not recognised yet".into());
+            }
+            if h.blind.is_none() {
+                h.blind = Some(Blind { depth: snap_mm(size[2] - p.depth), bottom: true });
+            }
+        }
+    }
     // A rectangle with cut-outs is an outline, as mesh2cad writes it (`extrude_len`, the
     // outline's corners and each cut-out's). The rectangle is the box itself, or — when the rim is
     // rounded — the top face's inner rectangle inset by the radius (rim_fillet checked the shape).

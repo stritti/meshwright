@@ -18,6 +18,7 @@
         ],
         "input_schema": {
           "type": "object",
+          "x-solidcraft-icon": "icons/stl.svg",
           "properties": {
             "mode": {
               "type": "string",
