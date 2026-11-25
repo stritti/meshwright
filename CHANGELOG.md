@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0](https://github.com/stritti/revmesh/compare/v0.1.0-beta.6...v0.1.0) (2026-11-25)
+
+
+### Documentation
+
+* **release:** note that a release PR needs a user-facing commit since the last release ([#78](https://github.com/stritti/revmesh/issues/78)) ([08a7d9d](https://github.com/stritti/revmesh/commit/08a7d9d519dced140aad23091bd73b0bcab0c3e1))
+
 ## [0.1.0-beta.6](https://github.com/stritti/revmesh/compare/v0.1.0-beta.5...v0.1.0-beta.6) (2026-11-25)
 
 
