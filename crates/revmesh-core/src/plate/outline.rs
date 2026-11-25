@@ -4,7 +4,7 @@
 use super::geometry::{distance, fit_circle, line_distance};
 use super::{
     CARRY_LEN_SHARE, CARRY_TURN_SHARE, COLLINEAR_SIN, CURVE_LEN_SPREAD, GENTLE_LEN_SPREAD, MAX_CURVE_TURN, MAX_FACET_TURN, P2,
-    PARALLEL_DENOM,
+    PARALLEL_DENOM, SHORT_POLYGONAL_RUN,
 };
 use crate::recognize::ArcSide;
 use std::f64::consts::PI;
@@ -176,19 +176,19 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
             // the corners that really lie on it, fitting again after each trim.
             let mut lo = first;
             let mut hi = first + steps; // the run's corners are v[lo..=hi]
-            let (centre, r) = loop {
+            let fitted = loop {
                 let w: Vec<P2> = (lo..=hi).map(|k| v[k % n]).collect();
                 let (short, long) =
                     (lo..hi).map(|k| distance(v[k % n], v[(k + 1) % n])).fold((f64::INFINITY, 0.0_f64), |(a, b), l| (a.min(l), b.max(l)));
                 let Some((centre, r)) = fit_circle(&w) else {
-                    return Err("the outline has a curved side that is not a circular arc (only arc sides are recognised so far)".into());
+                    break None;
                 };
                 if long <= CURVE_LEN_SPREAD * short && w.iter().all(|p| (distance(*p, centre) - r).abs() <= tol) {
-                    break (centre, r);
+                    break Some((centre, r));
                 }
                 // Trim an adjoining straight side: its far corner is a real polygon corner (a sharp
                 // turn there) and lies off the circle. A gently turning off-circle end is part of a
-                // non-circular curve, not a side: refuse instead of trimming into the curve.
+                // non-circular curve, not a side: leave the fit failed instead of trimming into it.
                 let res = |k: usize| (distance(v[k % n], centre) - r).abs();
                 let removable = |k: usize| res(k) > tol && turn(k).abs() > MAX_CURVE_TURN;
                 if removable(lo) && (!removable(hi) || res(lo) >= res(hi)) {
@@ -196,11 +196,22 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
                 } else if removable(hi) {
                     hi -= 1;
                 } else {
-                    return Err("the outline has a curved side that is not a circular arc (only arc sides are recognised so far)".into());
+                    break None;
                 }
                 if hi - lo < 3 {
-                    return Err("the outline has a curved side that is not a circular arc (only arc sides are recognised so far)".into());
+                    break None;
                 }
+            };
+            let Some((centre, r)) = fitted else {
+                // A short gentle run that fits no circle is a polygonal run, not a curve: its
+                // sides stay straight edges instead of refusing the outline. A longer run that
+                // fits no circle is a non-circular curve and refused.
+                if steps <= SHORT_POLYGONAL_RUN {
+                    j = (first + steps) % n;
+                    scanned += steps;
+                    continue;
+                }
+                return Err("the outline has a curved side that is not a circular arc (only arc sides are recognised so far)".into());
             };
             let span = hi - lo;
             // The signed sweep around the fitted circle: positive for a convex (counter-clockwise)

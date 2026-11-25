@@ -525,3 +525,15 @@ fn a_straight_zigzag_stays_a_polygon() {
     assert_eq!(corners.len(), 9, "all nine corners stay: {corners:?}");
     assert!(fillet.is_none() && side_arcs.iter().all(Option::is_none), "no arc side, no corner round");
 }
+
+/// A short run of consistently gently turning edges that fits no circle is a polygonal run, not
+/// a curve: its sides stay straight edges instead of refusing the outline (codex finding on #68;
+/// longer non-circular curves still refuse, see `long_curves_are_refused_quickly`).
+#[test]
+fn a_short_gently_turning_run_stays_a_polygon() {
+    use super::super::outline::outline_shape;
+    let outline: Vec<P2> = vec![[0.0, 0.0], [60.0, 0.0], [60.0, 20.0], [50.0, 25.0], [40.0, 28.0], [30.0, 29.0], [0.0, 20.0]];
+    let (corners, fillet, side_arcs) = outline_shape(&outline, 0.001).expect("the short run stays a polygon");
+    assert_eq!(corners.len(), 7, "all seven corners stay: {corners:?}");
+    assert!(fillet.is_none() && side_arcs.iter().all(Option::is_none), "no arc side, no corner round");
+}
