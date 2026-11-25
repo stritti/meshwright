@@ -41,12 +41,15 @@
       legs held horizontal and vertical do for the diagonal, the longest axis-aligned side's
       length is derived too (`dimensioned_sides_for_angle`), so the angle parameter stays
       editable)
-   2. (done for outlines; cut-outs follow) arc sides in outlines as `SketchCurve::Arc` with a
-      `Diameter` constraint driven by `arc_<i>_d`, the centre a free sketch point the solver
+   2. (done for outlines and cut-outs) arc sides in outlines and in cut-outs as
+      `SketchCurve::Arc` with a `Diameter` constraint driven by `arc_<i>_d` (an outline's) or
+      `cutout_<n>_arc_<i>_d` (a cut-out's), the centre a free sketch point the solver
       places equidistant from the side's corners (like a slot's arc centres)
       (`polygon_sketch_arcs`, `crates/revmesh-core/src/design/sketch.rs`; recognised as
-      `ProfileSpec::arcs` in `plate/outline.rs::outline_shape`) — round outlines and D-shaped
-      cut-outs stay a mesh
+      `ProfileSpec::arcs` in `plate/outline.rs::outline_shape` and as `CutoutSpec::arcs` in
+      `plate/holes.rs::cutout_shape`, which reads a cut-out's loop like an outline and accepts
+      it only with arc sides and no rounded corners) — round outlines, D-shaped cut-outs,
+      rounded-corner cut-outs and concave arc sides stay a mesh
    3. (done for pockets of any straight-sided outline and for steps down from the top face,
       several levels deep, along Z, but not for headed holes opening on a step's level — those
       stay a mesh or a stack; steps along X or Y and the combined extrusions' sketches

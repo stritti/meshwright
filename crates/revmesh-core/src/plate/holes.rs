@@ -1,11 +1,12 @@
 //! The holes, slots and cut-outs through a plate: round holes, stepped holes (counterbores,
-//! countersinks), blind holes, pockets, straight slots and polygonal cut-outs.
+//! countersinks), blind holes, pockets, straight slots and cut-outs of straight or arc sides.
 
 use super::geometry::{distance, fit_circle, sagitta, segment_distance, signed_area};
+use super::outline::outline_shape;
 use super::walls::on_wall;
 use super::{ANGLE_HUNDREDTHS, ANGLE_WHOLE_TOL, CHORD_FACET_SPAN, FULL_TURN_TOL, MAX_HOLE_STEP, MAX_STEP_RATIO, MIN_HOLE_SEGMENTS, P2};
 use crate::mesh::{Vec3, snap_mm};
-use crate::recognize::{HoleHead, HoleSpec, SlotSpec};
+use crate::recognize::{CutoutSpec, HoleHead, HoleSpec, SlotSpec};
 use std::f64::consts::PI;
 
 /// A hole's rounded parameters, its circle as fitted, and the index of its loop.
@@ -57,8 +58,8 @@ impl SlotGeometry {
 /// A cut-out's loop that is not round: a straight slot, or the reason it is neither.
 pub(super) type FittedSlot = (SlotSpec, SlotGeometry, usize);
 
-/// A face's cut-outs: round holes, slots, and polygons (their corners and loop index).
-pub(super) type Cutouts = (Vec<FittedHole>, Vec<FittedSlot>, Vec<(Vec<P2>, usize)>);
+/// A face's cut-outs: round holes, slots, and cut-outs (their shape and loop index).
+pub(super) type Cutouts = (Vec<FittedHole>, Vec<FittedSlot>, Vec<(CutoutSpec, usize)>);
 
 /// A hole whose mouth is wider than its bore, at the top or the bottom face, in coordinates
 /// relative to the plate's lowest corner.
@@ -453,6 +454,32 @@ pub(super) fn slot_shape(ring: &[P2], tol: f64) -> Option<(SlotSpec, SlotGeometr
 pub(super) const MAX_CUTOUT_CORNERS: usize = 24;
 
 pub(super) const MIN_CUTOUT_TURN: f64 = 15.0 * PI / 180.0;
+
+/// A cut-out of straight sides or arc sides, as a shape: its corners counter-clockwise and the
+/// arc per side (`None` for a straight side). Straight sides first, as [`polygon_cutout`] reads
+/// them; a loop of gentle corners that is no straight-sided polygon is read like an outline (see
+/// [`outline_shape`]) and accepted only when it has arc sides and no rounded corners — a
+/// rounded-corner cut-out, a D-shape of two corners, a concave arc and a non-circular curve all
+/// stay a mesh.
+pub(super) fn cutout_shape(ring: &[P2], tol: f64) -> Option<CutoutSpec> {
+    if let Some(corners) = polygon_cutout(ring, tol) {
+        let mut corners = corners;
+        if signed_area(&corners) < 0.0 {
+            corners.reverse();
+        }
+        let n = corners.len();
+        return Some(CutoutSpec { corners, arcs: vec![None; n] });
+    }
+    let mut ccw = ring.to_vec();
+    if signed_area(&ccw) < 0.0 {
+        ccw.reverse();
+    }
+    let (corners, radius, arcs) = outline_shape(&ccw, tol).ok()?;
+    if radius.is_some() || corners.len() < 3 || arcs.iter().all(Option::is_none) {
+        return None;
+    }
+    Some(CutoutSpec { corners, arcs })
+}
 
 /// A cut-out of straight sides: its corners (in the loop's order), without the corners an
 /// exporter may have added along a side, every one a real turn.

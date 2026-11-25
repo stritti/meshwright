@@ -5,7 +5,7 @@ use crate::plate::P2;
 use crate::recognize::SlotSpec;
 use crate::synth;
 
-use super::{banded, found, plate_with_cutout, reason, stadium};
+use super::{banded, found, found_profile, plate_with_cutout, reason, stadium};
 
 /// An 80 x 50 x 8 plate exported from SolidCraft 0.49 with three slots (along X, along Y and
 /// at 30°) and a hole.
@@ -29,8 +29,10 @@ fn synthetic_slots() {
     }
 }
 
-/// Cut-outs that look like slots but are not: rounded ends narrower than the slot, ends of
-/// three facets, an ellipse, and a slot whose ends differ in width.
+/// Cut-outs that look like slots but are not: rounded corners and an ellipse stay a mesh. An
+/// unevenly faceted slot and one whose facets run long across to a short tip are no slots either
+/// (the ends are not faceted as finely as a round hole's), but they are cut-outs of four arc
+/// sides, and those are recognised now (roadmap 5.2).
 #[test]
 fn near_slots_are_refused() {
     let rounded = synth::rounded(&[[30.0, 22.0], [50.0, 22.0], [50.0, 28.0], [30.0, 28.0]], Some(1.5), 32);
@@ -52,10 +54,16 @@ fn near_slots_are_refused() {
         }
     }
     // (A slot with ends of three facets is an octagonal cut-out, see `polygonal_cut_outs`.)
-    for cutout in [rounded, ellipse, uneven, cut] {
+    for cutout in [rounded, ellipse, uneven] {
         let why = reason(&plate_with_cutout(cutout));
         assert!(why.contains("not round") || why.contains("corners"), "{why}");
     }
+    // The slot with long facets across to a short tip is no slot, but its four sides lie on
+    // circles: one cut-out of four arc sides.
+    let (plate, _) = found_profile(&plate_with_cutout(cut));
+    assert_eq!(plate.cutouts.len(), 1);
+    assert_eq!(plate.cutouts[0].corners.len(), 4, "{:?}", plate.cutouts[0]);
+    assert_eq!(plate.cutouts[0].arc_sides().iter().filter(|a| a.is_some()).count(), 4, "{:?}", plate.cutouts[0]);
 }
 
 /// Ends faceted more finely below the axis than above it: the middle comes from the straight

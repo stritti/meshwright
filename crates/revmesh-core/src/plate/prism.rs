@@ -3,12 +3,16 @@
 
 use super::faces::{Faces, split_faces};
 use super::geometry::{boundary_loops, distance, signed_area};
-use super::holes::{BlindHole, Cutouts, FittedHole, FittedSlot, Stepped, axis_rectangle, polygon_cutout, round_hole, slot_shape};
+use super::holes::{
+    BlindHole, Cutouts, FittedHole, FittedSlot, Stepped, axis_rectangle, cutout_shape, polygon_cutout, round_hole, slot_shape,
+};
 use super::outline::outline_shape;
 use super::walls::Walls;
 use super::{AREA_MATCH_REL, CAP_NORMAL_MIN, CHORD_FACET_SPAN, MAX_VOLUME_ERROR, NOT_CLOSED, NOT_FLAT, P2, VOLUME_MATCH_REL, tolerance};
 use crate::mesh::{Mesh, Vec3, cross, length, snap_mm, sub};
-use crate::recognize::{ArcSide, Blind, HoleSpec, OutlinePocketSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec};
+use crate::recognize::{
+    ArcSide, Blind, CutoutSpec, HoleSpec, OutlinePocketSpec, PlateSpec, PocketSpec, ProfileSpec, Recognition, SlotSpec,
+};
 
 use super::holes::Footprint;
 /// Looks for a plate in `mesh`: a prism over its top face, with holes, slots, cut-outs, pockets
@@ -244,9 +248,10 @@ pub(super) struct PlateCutouts {
     pub(super) holes: Vec<HoleSpec>,
     /// The straight slots, in mesh2cad's order.
     pub(super) slots: Vec<SlotSpec>,
-    /// The polygonal cut-outs, each counter-clockwise from its lowest corner, the leftmost of
-    /// those, sorted by that corner.
-    pub(super) cutouts: Vec<Vec<P2>>,
+    /// The cut-outs, each counter-clockwise from its lowest corner, the leftmost of those,
+    /// sorted by that corner; their corners and arcs as fitted (the output parameters snap, in
+    /// `recognition`).
+    pub(super) cutouts: Vec<CutoutSpec>,
     /// The rectangular pockets, sorted from left to right.
     pub(super) pockets: Vec<PocketSpec>,
     /// The pockets of any other outline of straight sides, sorted by their first corner.
@@ -294,7 +299,7 @@ pub(super) fn fit_loops(loops: &[Vec<P2>], tol: f64) -> Result<Cutouts, String> 
                 if let Some((spec, geometry)) = slot_shape(l, tol) {
                     slots.push((spec, geometry, k));
                 } else {
-                    polygons.push((polygon_cutout(l, tol).ok_or(why)?, k));
+                    polygons.push((cutout_shape(l, tol).ok_or(why)?, k));
                 }
             }
         }
@@ -302,14 +307,14 @@ pub(super) fn fit_loops(loops: &[Vec<P2>], tol: f64) -> Result<Cutouts, String> 
     Ok((holes, slots, polygons))
 }
 
-/// The polygonal cut-outs. A cut-out on both faces goes through; a polygon on one face only is
-/// a pocket's mouth (a rectangle along X and Y, or any other outline of straight sides), its
+/// The cut-outs. A cut-out on both faces goes through; a polygon on one face only is a
+/// pocket's mouth (a rectangle along X and Y, or any other outline of straight sides), its
 /// floor found with the blind holes'. Returns the pockets' mouths. Each through cut-out is
 /// written counter-clockwise from its lowest corner, the leftmost of those.
 pub(super) fn pair_polygons(
     faces: &Faces,
-    top: &[(Vec<P2>, usize)],
-    bottom: &[(Vec<P2>, usize)],
+    top: &[(CutoutSpec, usize)],
+    bottom: &[(CutoutSpec, usize)],
     face_loops: &FaceLoops,
     out: &mut PlateCutouts,
     height: f64,
@@ -317,7 +322,9 @@ pub(super) fn pair_polygons(
 ) -> Result<Vec<BlindHole>, String> {
     let loops = &face_loops.loops;
     let bottom_loops = &face_loops.bottom_loops;
-    let same_polygon = |a: &[P2], b: &[P2]| a.len() == b.len() && a.iter().all(|p| b.iter().any(|q| distance(*p, *q) <= tol));
+    let same_polygon = |a: &CutoutSpec, b: &CutoutSpec| {
+        a.corners.len() == b.corners.len() && a.corners.iter().all(|p| b.corners.iter().any(|q| distance(*p, *q) <= tol))
+    };
     let pocket = |ring: &[P2], face_z: f64, inward: f64| -> Result<BlindHole, String> {
         let foot = match axis_rectangle(ring, tol) {
             Some((lo, hi)) => Footprint::Rect { lo, hi },
@@ -345,9 +352,16 @@ pub(super) fn pair_polygons(
             Some(j) => {
                 paired[j] = true;
                 out.wall_loops.push(loops[*k].clone());
-                let mut c: Vec<P2> = c.iter().rev().map(|p| p.map(snap_mm)).collect();
-                let first = (0..c.len()).min_by(|&a, &b| c[a][1].total_cmp(&c[b][1]).then(c[a][0].total_cmp(&c[b][0])));
-                c.rotate_left(first.unwrap_or(0));
+                // The shape is counter-clockwise already; its first corner is the lowest, the
+                // leftmost of those, and the arc sides rotate with the corners.
+                let mut c = c.clone();
+                let first = (0..c.corners.len())
+                    .min_by(|&a, &b| c.corners[a][1].total_cmp(&c.corners[b][1]).then(c.corners[a][0].total_cmp(&c.corners[b][0])));
+                let first = first.unwrap_or(0);
+                c.corners.rotate_left(first);
+                if !c.arcs.is_empty() {
+                    c.arcs.rotate_left(first);
+                }
                 out.cutouts.push(c);
             }
             None => pocket_mouths.push(pocket(&loops[*k], height, -1.0)?),
@@ -356,7 +370,7 @@ pub(super) fn pair_polygons(
     for ((_, k), _) in bottom.iter().zip(&paired).filter(|(_, paired)| !**paired) {
         pocket_mouths.push(pocket(&bottom_loops[*k], 0.0, 1.0)?);
     }
-    out.cutouts.sort_by(|a, b| a[0][1].total_cmp(&b[0][1]).then(a[0][0].total_cmp(&b[0][0])));
+    out.cutouts.sort_by(|a, b| a.corners[0][1].total_cmp(&b.corners[0][1]).then(a.corners[0][0].total_cmp(&b.corners[0][0])));
     Ok(pocket_mouths)
 }
 
@@ -691,7 +705,7 @@ fn walls_of(
         &cutouts.slot_arcs,
         arc_sides,
         wall_loops,
-        &[],
+        &cutouts.cutouts,
         &slot_sides_of(cutouts),
         scale,
         tol,
@@ -923,7 +937,21 @@ pub(super) fn recognition(
     // On a rounded rim the outline's own corner arcs are the leaked rim facets, not a fillet.
     let (z, outline_fillet_r) = (snap_mm(size[2]), if rim.is_some() { None } else { radius.map(snap_mm) });
     let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
-    let PlateCutouts { mut holes, slots, cutouts, pockets, outline_pockets, .. } = cutouts;
+    let PlateCutouts { mut holes, slots, mut cutouts, pockets, outline_pockets, .. } = cutouts;
+    // The cut-outs' output parameters snap, as the outline's corners and arcs do; the wall
+    // checks above kept the exact fits. An arc's radius must cover half its snapped corners'
+    // distance, or the sketch's Diameter constraint has no solution.
+    for c in &mut cutouts {
+        c.corners = c.corners.iter().map(|p| p.map(snap_mm)).collect();
+        for (i, arc) in c.arcs.iter_mut().enumerate() {
+            if let Some(a) = arc {
+                a.centre = a.centre.map(snap_mm);
+                a.r = snap_mm(a.r);
+                let chord = distance(c.corners[i], c.corners[(i + 1) % c.corners.len()]);
+                a.r = a.r.max(chord / 2.0);
+            }
+        }
+    }
     // A through hole in a pocket's or step's region goes only up to that level, not through the
     // whole plate: from the bottom face it is blind, as deep as the level lies above it. A blind
     // hole already measured beneath the region keeps its own depth. A hole whose counterbore,

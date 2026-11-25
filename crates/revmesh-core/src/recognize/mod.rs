@@ -28,7 +28,8 @@ mod to_design;
 pub use axis::Axis;
 pub use combined::{CombinedHole, CombinedSpec, Cut, Extrusion};
 pub use spec::{
-    ArcSide, Blind, BossChamfer, BossSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec,
+    ArcSide, Blind, BossChamfer, BossSpec, CutoutSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec,
+    SlotSpec,
 };
 pub use stack::{Band, StackSpec};
 

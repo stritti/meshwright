@@ -7,7 +7,7 @@
 use std::f64::consts::PI;
 
 use crate::mesh::{Mesh, Triangle, Vec3};
-use crate::recognize::{ArcSide, HoleSpec, PlateSpec, ProfileSpec};
+use crate::recognize::{ArcSide, CutoutSpec, HoleSpec, PlateSpec, ProfileSpec};
 
 type P2 = [f64; 2];
 
@@ -16,7 +16,7 @@ type P2 = [f64; 2];
 #[must_use]
 pub fn plate(spec: &PlateSpec, segments: usize, offset: Vec3) -> Mesh {
     let corners = [[0.0, 0.0], [spec.x, 0.0], [spec.x, spec.y], [0.0, spec.y]];
-    prism(&rounded(&corners, spec.outline_fillet_r, segments), &rings(&spec.holes, segments), spec.z, offset)
+    prism(&rounded(&corners, spec.outline_fillet_r, segments), &openings(&spec.holes, &spec.cutouts, segments), spec.z, offset)
 }
 
 /// The plate `spec` with any outline as a closed mesh, moved by `offset`, faceted as [`plate`].
@@ -24,11 +24,26 @@ pub fn plate(spec: &PlateSpec, segments: usize, offset: Vec3) -> Mesh {
 pub fn profile(spec: &ProfileSpec, segments: usize, offset: Vec3) -> Mesh {
     let arcs = spec.arc_sides();
     let outline = if arcs.iter().any(Option::is_some) {
-        expand_arcs(&spec.corners, arcs, segments)
+        faceted_polygon(&spec.corners, arcs, segments)
     } else {
         rounded(&spec.corners, spec.outline_fillet_r, segments)
     };
-    prism(&outline, &rings(&spec.holes, segments), spec.z, offset)
+    prism(&outline, &openings(&spec.holes, &spec.cutouts, segments), spec.z, offset)
+}
+
+/// The spec's openings — its holes and its cut-outs — as counter-clockwise rings, each hole a
+/// polygon of `segments` corners and each arc side faceted like [`faceted_polygon`].
+fn openings(holes: &[HoleSpec], cutouts: &[CutoutSpec], segments: usize) -> Vec<Vec<P2>> {
+    let mut rings = rings(holes, segments);
+    rings.extend(cutouts.iter().map(|c| faceted_polygon(&c.corners, c.arc_sides(), segments)));
+    rings
+}
+
+/// The closed polygon through `corners` (counter-clockwise) with each arc side `arcs[i]` faceted
+/// into about `segments` facets per quarter circle, as a CAD exporter meshes it.
+#[must_use]
+pub fn faceted_polygon(corners: &[P2], arcs: &[Option<ArcSide>], segments: usize) -> Vec<P2> {
+    expand_arcs(corners, arcs, segments)
 }
 
 /// The outline's corners with each arc side faceted into about `segments` facets per quarter

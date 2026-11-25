@@ -14,7 +14,9 @@
 //! - `rounded-box`: `plugin/revmesh/tests/rounded-box.stl`, a 60 x 40 x 30 mm box with all
 //!   twelve edges rounded with 5 mm (mesh2cad's `edge_fillet_r`);
 //! - `stadium`: `plugin/revmesh/tests/stadium.stl`, a 40 x 20 rectangle with a radius-10
-//!   semicircle arc side at each end.
+//!   semicircle arc side at each end;
+//! - `cutout-arc`: `plugin/revmesh/tests/cutout-arc.stl`, a 70 x 40 x 6 mm plate with a
+//!   16 x 16 cut-out whose top side is a radius-8 semicircle arc side.
 //!
 //! ```sh
 //! cargo run -p revmesh-core --example plate_stl > plugin/revmesh/tests/plate-holes.stl
@@ -24,12 +26,13 @@
 //! cargo run -p revmesh-core --example plate_stl -- x-plate > plugin/revmesh/tests/x-plate.stl
 //! cargo run -p revmesh-core --example plate_stl -- rounded-box > plugin/revmesh/tests/rounded-box.stl
 //! cargo run -p revmesh-core --example plate_stl -- stadium > plugin/revmesh/tests/stadium.stl
+//! cargo run -p revmesh-core --example plate_stl -- cutout-arc > plugin/revmesh/tests/cutout-arc.stl
 //! ```
 
 use std::io::Write as _;
 
 use revmesh_core::mesh::snap_mm;
-use revmesh_core::recognize::{ArcSide, Axis, HoleSpec, PlateSpec, ProfileSpec};
+use revmesh_core::recognize::{ArcSide, Axis, CutoutSpec, HoleSpec, PlateSpec, ProfileSpec};
 use revmesh_core::{stl, synth};
 
 /// The plate in `plate-holes.stl`.
@@ -137,6 +140,27 @@ fn stadium() -> ProfileSpec {
     }
 }
 
+/// The plate in `cutout-arc.stl`: a 70 x 40 x 6 mm plate with a 16 x 16 cut-out whose top side
+/// bulges out as a radius-8 semicircle.
+fn cutout_arc() -> ProfileSpec {
+    ProfileSpec {
+        corners: vec![[0.0, 0.0], [70.0, 0.0], [70.0, 40.0], [0.0, 40.0]],
+        z: 6.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: Vec::new(),
+        bosses: vec![],
+        cutouts: vec![CutoutSpec {
+            corners: vec![[10.0, 10.0], [26.0, 10.0], [26.0, 26.0], [10.0, 26.0]],
+            arcs: vec![None, None, Some(ArcSide { centre: [18.0, 26.0], r: 8.0 }), None],
+        }],
+        arcs: Vec::new(),
+        outline_fillet_r: None,
+    }
+}
+
 /// The box in `rounded-box.stl`: 60 x 40 x 30 mm with all twelve edges rounded with 5 mm.
 fn rounded_box() -> (PlateSpec, revmesh_core::mesh::Vec3) {
     (
@@ -194,6 +218,7 @@ fn main() -> std::io::Result<()> {
         Some("bracket") => Some((bracket(), [20.0, 10.0, 0.0])),
         Some("inside-hole") => Some((inside_hole(), [0.0; 3])),
         Some("stadium") => Some((stadium(), [0.0; 3])),
+        Some("cutout-arc") => Some((cutout_arc(), [0.0; 3])),
         _ => None,
     } {
         (synth::profile(&spec, 48, offset), spec.describe(), spec.volume())
