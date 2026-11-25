@@ -619,8 +619,10 @@ fn single_hole(b: &mut DesignBuilder, ctx: &HoleCtx, p: &str, h: &HoleSpec, n: u
         Some(HoleHead::Countersink { bottom, .. }) => {
             (HoleKind::Countersink { cs_diameter: format!("{p}_csk_d"), cs_angle: format!("{p}_csk_angle") }, bottom)
         }
-        // A rounded rim: a plain hole, and a fillet of its edge on that face below.
-        Some(HoleHead::Round { .. }) => (HoleKind::Simple, false),
+        // A rounded rim: a plain hole drilled from the face the rim is on, and a fillet of its
+        // edge on that face below — so a bottom-rimmed hole beneath a step drills from the
+        // bottom, as deep as the level lies above it, not from the top.
+        Some(HoleHead::Round { bottom, .. }) => (HoleKind::Simple, bottom),
     };
     let (face_w, face, direction) = if from_bottom { (0.0, ctx.bottom, ctx.axis.dir()) } else { (ctx.z, ctx.top, ctx.down) };
     let hole = b.feature(

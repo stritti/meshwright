@@ -795,3 +795,37 @@ fn drafted_and_chamfered_bosses_in_the_design() {
     let cut = |w: f64, h: f64| 2.0 * std::f64::consts::PI * (r - w / 3.0) * w * h / 2.0;
     assert!((spec.volume() - (80.0 * 40.0 * 6.0 + cone + 2.0 * cylinder - cut(1.0, 1.0) - cut(1.5, 0.5))).abs() < 1e-9);
 }
+
+/// A hole with a rounded bottom rim beneath a step carries a bottom-facing blind depth; it
+/// must be drilled from the bottom face, like a bottom counterbore — the Round head's origin
+/// must not be dropped (codex finding on #71). The rim fillet sits on the bore's bottom edge.
+#[test]
+fn a_bottom_rounded_hole_beneath_a_step_is_drilled_from_the_bottom() {
+    use super::spec::{Blind, HoleHead};
+    let spec = PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![HoleSpec {
+            x: 30.0,
+            y: 20.0,
+            d: 6.0,
+            head: Some(HoleHead::Round { r: 1.0, bottom: true }),
+            blind: Some(Blind { depth: 3.0, bottom: true }),
+        }],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        outline_fillet_r: None,
+        edge_fillet_r: None,
+    };
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let hole = features.iter().find(|f| f["type"] == "hole").expect("the hole");
+    assert_eq!(hole["direction"], serde_json::json!([0.0, 0.0, 1.0]), "drilled from the bottom face, not the top");
+    assert_eq!(hole["depth"].as_str().expect("depth"), "hole_1_depth", "blind to the step's level");
+    let rim = features.iter().find(|f| f["name"] == "Hole1Rim").expect("the rim fillet");
+    assert!(rim["edge_names"][0].as_str().expect("edge").contains(":start"), "the rim is on the bore's bottom edge: {rim}");
+}
