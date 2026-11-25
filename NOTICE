@@ -20,7 +20,7 @@ SolidCraft plugin interface (crates/revmesh-plugin/wit/plugin.wit)
 Copyright the SolidCraft authors (https://github.com/tangency-labs/solidcraft)
 Licensed under the Apache License, Version 2.0
 (https://www.apache.org/licenses/LICENSE-2.0).
-  Vendored unchanged from SolidCraft v0.48.1, crates/craft-plugin/wit/plugin.wit.
+  Vendored unchanged from SolidCraft v0.49.0, crates/craft-plugin/wit/plugin.wit.
 
 Real STL test files (plugin/revmesh/tests/printables/*.stl)
 Downloaded from Printables (https://www.printables.com) and used unchanged.

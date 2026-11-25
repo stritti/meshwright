@@ -5,7 +5,7 @@
 2. In SolidCraft, open **Preferences › Plugins › Install plugin…** (also *File › Plugins…*) and
    pick the zip.
 
-revmesh is tested against SolidCraft 0.48. SolidCraft's plugin support is experimental, so a
+revmesh is tested against SolidCraft 0.49. SolidCraft's plugin support is experimental, so a
 newer SolidCraft release may need a newer revmesh.
 
 To build the plugin yourself, see [Development](/development) and the
