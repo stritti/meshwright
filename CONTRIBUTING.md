@@ -56,6 +56,15 @@ cargo deny check            # cargo install cargo-deny
 cargo xtask plugin-test     # if you have SolidCraft
 ```
 
+On every pull request the `Coverage comment` workflow posts the coverage report as a comment and
+updates that one comment on each push, for pull requests from forks too. To see the same table
+locally:
+
+```sh
+cargo llvm-cov report --workspace --json --summary-only --output-path coverage.json
+scripts/coverage-markdown.sh coverage.json
+```
+
 ### Staying current with SolidCraft
 
 `SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml` is the SolidCraft release the plugin is built and
