@@ -101,8 +101,10 @@
       Fläche geprüft) und in `round_foot` für Zapfenfüße (`plate/bosses.rs`), statt des
       Mittelwerts pro Ecke) analytische Torus-Erkennung für die Verrundungen an Bohrungsrändern und
       Zapfenfüßen
-   4. pro-Ecken-Radien in Konturen (`plate/outline.rs` passt heute schon einen Kreis pro verrundeter
-      Ecke mit `CircleSums` an; heute müssen alle Ecken einen Radius teilen)
+   4. (erledigt: `outline_shape` in `plate/outline.rs` liefert einen angepassten Radius pro verrundeter
+      Ecke und das Design schreibt ein `Fillet<g>` pro Radius-Gruppe mit `fillet_r_<g>` /
+      `outline_fillet_r_<g>` — ein gemeinsamer Radius behält das schlichte `fillet_r` /
+      `outline_fillet_r` und `Fillet1`) pro-Ecken-Radien in Konturen
    5. Bohrungsreihen in beliebigem Winkel (die Richtung eines Musters ist in SolidCraft kein Ausdruck —
       als einzelne Bohrungen oder auf einer gedrehten Skizze schreiben)
    6. (done: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` lehnt, bevor eine Achse

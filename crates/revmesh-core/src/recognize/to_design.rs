@@ -36,6 +36,23 @@ fn pos_params(b: &mut DesignBuilder, name: &str, axis: Axis, at: Vec3, p: [f64; 
     }
 }
 
+/// The corner radii `radii` grouped by equal value, each group's radius with its corners' indices,
+/// in the order the groups first occur. A fillet feature takes one radius, so the design writes
+/// one feature per group; a single group keeps the plain parameter name (`fillet_r` /
+/// `outline_fillet_r`) and feature name `Fillet1`, so designs with one radius stay as they were.
+#[allow(clippy::float_cmp)] // exact equality is intended: the radii are snapped output values
+fn radius_groups(radii: &[f64]) -> Vec<(f64, Vec<usize>)> {
+    let mut groups: Vec<(f64, Vec<usize>)> = Vec::new();
+    for (i, &r) in radii.iter().enumerate() {
+        if let Some(g) = groups.iter_mut().find(|(gr, _)| *gr == r) {
+            g.1.push(i);
+        } else {
+            groups.push((r, vec![i]));
+        }
+    }
+    groups
+}
+
 impl PlateSpec {
     /// The plate as a parametric history, its corner at the origin; see [`PlateSpec::to_design_at`].
     #[must_use]
@@ -45,9 +62,10 @@ impl PlateSpec {
 
     /// The plate as a parametric history with its lowest corner at `at`, as mesh2cad writes it:
     /// parameters `base_x`, `base_y`, `base_t`, the centre `base_cx`, `base_cy` and the bottom
-    /// `base_z0`, `hole_<n>_x/_y/_d` (in world coordinates) and `fillet_r`; a sketch and an
+    /// `base_z0`, `hole_<n>_x/_y/_d` (in world coordinates) and `fillet_r` (or `fillet_r_<g>` per
+    /// radius group when the corners are rounded with different radii); a sketch and an
     /// extrusion at the origin, a move to where the plate is, a hole per hole and a fillet of the
-    /// four vertical corners. A plate is always a Z extrusion.
+    /// four vertical corners (one `Fillet<g>` per radius group). A plate is always a Z extrusion.
     #[must_use]
     pub fn to_design_at(&self, name: &str, at: Vec3) -> Design {
         let axis = Axis::Z;
@@ -60,8 +78,13 @@ impl PlateSpec {
         slot_params(&mut b, &self.slots, at, axis);
         boss_params(&mut b, &self.bosses, at, axis);
         block_params(&mut b, &self.pads, &self.pockets, at, axis);
-        if let Some(r) = self.outline_fillet_r {
-            b.param(Param::user("fillet_r", r));
+        let fillet_groups = radius_groups(&self.outline_fillet_rs);
+        if fillet_groups.len() == 1 {
+            b.param(Param::user("fillet_r", fillet_groups[0].0));
+        } else {
+            for (g, (r, _)) in fillet_groups.iter().enumerate() {
+                b.param(Param::user(format!("fillet_r_{}", g + 1), *r));
+            }
         }
         if let Some(r) = self.edge_fillet_r {
             b.param(Param::user("edge_fillet_r", r));
@@ -125,19 +148,25 @@ impl PlateSpec {
         slot_features(&mut b, &self.slots, at, axis);
         boss_features(&mut b, &self.bosses, at, self.z, axis, "base_z0 + base_t", extrude);
         block_features(&mut b, &self.pads, &self.pockets, &[], at, axis, "base_z0 + base_t", "base_z0", &mut pending_rims);
-        if self.outline_fillet_r.is_some() {
+        if !fillet_groups.is_empty() {
             let mid = at[2] + self.z / 2.0;
-            let side = |a: u32, b: u32| format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}");
-            let (x0, y0, x1, y1) = (at[0], at[1], at[0] + self.x, at[1] + self.y);
-            b.feature(
-                "Fillet1",
-                vec![],
-                FeatureKind::Fillet {
-                    edge_names: vec![side(1, 4), side(1, 2), side(2, 3), side(3, 4)],
-                    edges: vec![[x0, y0, mid], [x1, y0, mid], [x1, y1, mid], [x0, y1, mid]],
-                    radius: "fillet_r".into(),
-                },
-            );
+            let plate_corners = [[at[0], at[1]], [at[0] + self.x, at[1]], [at[0] + self.x, at[1] + self.y], [at[0], at[1] + self.y]];
+            // Corner i joins line l<i> (ending there) and line l<i+1> (starting there), l1..l4
+            // 1-based (see `rectangle_sketch`).
+            let corner_side = |i: usize| {
+                let (a, b) = (if i == 0 { 4 } else { i }, i + 1);
+                format!("F{extrude}:side:l{}|F{extrude}:side:l{}", a.min(b), a.max(b))
+            };
+            for (g, (_, idxs)) in fillet_groups.iter().enumerate() {
+                let (name, radius) = if fillet_groups.len() == 1 {
+                    ("Fillet1".to_owned(), "fillet_r".to_owned())
+                } else {
+                    (format!("Fillet{}", g + 1), format!("fillet_r_{}", g + 1))
+                };
+                let edge_names = idxs.iter().map(|&i| corner_side(i)).collect();
+                let edges = idxs.iter().map(|&i| [plate_corners[i][0], plate_corners[i][1], mid]).collect();
+                b.feature(name, vec![], FeatureKind::Fillet { edge_names, edges, radius });
+            }
         }
         b.build()
     }
@@ -164,11 +193,13 @@ impl ProfileSpec {
     /// straight side, `outline_<i>_angle` on the longest slanted side, `arc_<i>_d` per arc side
     /// (its centre a free sketch point the solver places equidistant from the side's two
     /// corners), `hole_<n>_<a>/_<b>/_d` for the profile plane's world axis letters and
-    /// `outline_fillet_r`;
+    /// `outline_fillet_r` (or `outline_fillet_r_<g>` per radius group when the corners are rounded
+    /// with different radii);
     /// a sketch of the outline on the axis's plane (see [`Axis::plane`]), every side dimensioned
     /// by its own parameter (a line side's `Length`, an arc side's `Diameter`), an extrusion along
     /// the plane's normal, a move to where the part is,
-    /// a fillet of every corner edge parallel to the axis and a hole per hole. The fillet comes
+    /// a fillet of every corner edge parallel to the axis (one `Fillet<g>` per radius group) and a
+    /// hole per hole. The fillet comes
     /// before the holes: an inside corner's rounding adds material, and a hole may lie in it.
     #[must_use]
     pub fn to_design_on(&self, name: &str, at: Vec3, axis: Axis) -> Design {
@@ -179,8 +210,13 @@ impl ProfileSpec {
         slot_params(&mut b, &self.slots, at, axis);
         boss_params(&mut b, &self.bosses, at, axis);
         block_params(&mut b, &self.pads, &self.pockets, at, axis);
-        if let Some(r) = self.outline_fillet_r {
-            b.param(Param::user("outline_fillet_r", r));
+        let fillet_groups = radius_groups(&self.outline_fillet_rs);
+        if fillet_groups.len() == 1 {
+            b.param(Param::user("outline_fillet_r", fillet_groups[0].0));
+        } else {
+            for (g, (r, _)) in fillet_groups.iter().enumerate() {
+                b.param(Param::user(format!("outline_fillet_r_{}", g + 1), *r));
+            }
         }
         let arcs = self.arc_sides();
         let has_arcs = arcs.iter().any(Option::is_some);
@@ -206,18 +242,26 @@ impl ProfileSpec {
             },
         );
         b.feature("Move1", vec![], FeatureKind::Move { bodies: vec!["Body1".into()], translate: axis.translate(at) });
-        if self.outline_fillet_r.is_some() {
+        if !fillet_groups.is_empty() {
             let n = self.corners.len();
-            // Corner i joins line l<i> (ending there) and line l<i+1> (starting there).
-            let edge_names = (0..n)
-                .map(|i| {
-                    let (a, b) = (if i == 0 { n } else { i }, i + 1);
-                    let (a, b) = (a.min(b), a.max(b));
-                    format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}")
-                })
-                .collect();
-            let edges = self.corners.iter().map(|c| axis.world(at, c[0], c[1], self.z / 2.0)).collect();
-            b.feature("Fillet1", vec![], FeatureKind::Fillet { edge_names, edges, radius: "outline_fillet_r".into() });
+            for (g, (_, idxs)) in fillet_groups.iter().enumerate() {
+                let (name, radius) = if fillet_groups.len() == 1 {
+                    ("Fillet1".to_owned(), "outline_fillet_r".to_owned())
+                } else {
+                    (format!("Fillet{}", g + 1), format!("outline_fillet_r_{}", g + 1))
+                };
+                // Corner i joins line l<i> (ending there) and line l<i+1> (starting there).
+                let edge_names = idxs
+                    .iter()
+                    .map(|&i| {
+                        let (a, b) = (if i == 0 { n } else { i }, i + 1);
+                        let (a, b) = (a.min(b), a.max(b));
+                        format!("F{extrude}:side:l{a}|F{extrude}:side:l{b}")
+                    })
+                    .collect();
+                let edges = idxs.iter().map(|&i| axis.world(at, self.corners[i][0], self.corners[i][1], self.z / 2.0)).collect();
+                b.feature(name, vec![], FeatureKind::Fillet { edge_names, edges, radius });
+            }
         }
         cutout_features(&mut b, &self.cutouts, at, axis);
         let mut pending_rims = Vec::new();

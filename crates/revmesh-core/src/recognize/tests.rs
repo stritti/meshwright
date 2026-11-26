@@ -59,7 +59,7 @@ fn recognises_block_on_origin() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     assert_eq!(found, Recognition::Plate { plate, offset: [0.0; 3] });
@@ -77,7 +77,7 @@ fn moves_offset_block_to_the_origin() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     assert_eq!(recognize(&block(1.0, 1.0, 1.0, [5.0, 0.0, 0.0])), Recognition::Plate { plate, offset: [5.0, 0.0, 0.0] });
@@ -95,7 +95,7 @@ fn describes_plates() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(3.0),
+        outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,
     };
     assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with 3 mm rounded corners");
@@ -119,7 +119,7 @@ fn slots_become_sketches_and_cuts() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![slot(15.0, 0.0), slot(40.0, 30.0)],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [-30.0, 0.0, 0.0]).to_json()).expect("valid");
@@ -166,7 +166,7 @@ fn cut_outs_are_cut_after_the_fillet() {
         pockets: vec![],
         bosses: vec![],
         cutouts: vec![cutout(&[[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]])],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [5.0, 0.0, 0.0]).to_json()).expect("valid");
@@ -192,7 +192,7 @@ fn cut_outs_are_cut_after_the_fillet() {
         bosses: vec![],
         cutouts: vec![cutout(&[[15.8, 15.8], [16.2, 15.8], [16.0, 16.2]])],
         arcs: Vec::new(),
-        outline_fillet_r: Some(5.0),
+        outline_fillet_rs: vec![5.0; 6],
     };
     let json: serde_json::Value = serde_json::from_str(&ell.to_design("").to_json()).expect("valid");
     let names: Vec<String> =
@@ -216,7 +216,7 @@ fn outline_and_cutout_sides_are_dimensioned() {
         bosses: vec![],
         cutouts: vec![cutout(&[[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]])],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let params = json["params"].as_array().expect("params");
@@ -320,7 +320,7 @@ fn orthogonal_outline_skips_the_dependent_sides() {
         bosses: vec![],
         cutouts: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let params = json["params"].as_array().expect("params");
@@ -368,7 +368,7 @@ fn slanted_side_below_the_x_axis_keeps_its_direction() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None; 3],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let params = json["params"].as_array().expect("params");
@@ -423,7 +423,7 @@ fn right_triangle_releases_a_leg_length_for_the_angle() {
         bosses: vec![],
         cutouts: vec![cutout(&[[10.0, 10.0], [30.0, 10.0], [30.0, 20.0]])],
         arcs: vec![None; 3],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let params = json["params"].as_array().expect("params");
@@ -473,7 +473,7 @@ fn thin_triangle_keeps_slanted_length_precision() {
         bosses: vec![],
         cutouts: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let params = json["params"].as_array().expect("params");
@@ -498,7 +498,7 @@ fn outline_pockets_get_their_own_sketch_and_cut() {
         outline_pockets: vec![OutlinePocketSpec { corners: vec![[30.0, 10.0], [50.0, 10.0], [40.0, 25.0]], depth: 3.0, bottom: false }],
         bosses: vec![],
         cutouts: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let params = json["params"].as_array().expect("params");
@@ -544,7 +544,7 @@ fn outline_arc_sides_become_sketch_arcs() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let params = json["params"].as_array().expect("params");
@@ -609,7 +609,7 @@ fn stadium_straight_sides_do_not_drive_beside_arc_sides() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, Some(ArcSide { centre: [40.0, 20.0], r: 10.0 }), None, Some(ArcSide { centre: [0.0, 20.0], r: 10.0 })],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let params = json["params"].as_array().expect("params");
@@ -663,7 +663,7 @@ fn pads_and_pockets_become_boxes() {
         ],
         bosses: vec![],
         cutouts: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -690,7 +690,7 @@ fn bosses_become_cylinders() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![BossSpec { x: 20.0, y: 15.0, d: 10.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [5.0, 0.0, 2.0]).to_json()).expect("valid");
@@ -719,7 +719,7 @@ fn plate_volume_matches_solidcraft() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(3.0),
+        outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,
     };
     assert!((spec.volume() - 16_452.05).abs() < 0.01, "{}", spec.volume());
@@ -738,7 +738,7 @@ fn describes_profiles() {
         bosses: vec![],
         slots: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: Some(2.0),
+        outline_fillet_rs: vec![2.0; 6],
     };
     assert_eq!(spec.describe(), "A 60 x 40 x 5 mm plate with a 6-sided outline, 1 hole and 2 mm rounded corners");
     let names = |d: &Design| -> Vec<String> {
@@ -764,7 +764,7 @@ fn profile_volume_counts_inside_and_outside_corners() {
         bosses: vec![],
         slots: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: Some(2.0),
+        outline_fillet_rs: vec![2.0; 6],
     };
     let corner = (4.0 - std::f64::consts::PI) / 4.0 * 4.0;
     let expected = (60.0 * 15.0 + 15.0 * 25.0 - 5.0 * corner + corner - std::f64::consts::PI * 6.25) * 5.0;
@@ -786,7 +786,7 @@ fn profile_fillet_comes_before_the_holes() {
         bosses: vec![],
         slots: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: Some(5.0),
+        outline_fillet_rs: vec![5.0; 6],
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let types: Vec<&str> = json["features"].as_array().expect("features").iter().filter_map(|f| f["type"].as_str()).collect();
@@ -824,7 +824,7 @@ fn x_extruded_plate_becomes_a_yz_profile() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let mesh = Axis::X.unrotate_mesh(&synth::plate(&spec, 32, [3.0, 7.0, 11.0]));
@@ -873,7 +873,7 @@ fn oversized_mesh_skips_rotated_attempts() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let mesh = Axis::X.unrotate_mesh(&synth::plate(&spec, 32, [3.0, 7.0, 11.0]));
@@ -900,7 +900,7 @@ fn y_extruded_profile_uses_the_xz_plane() {
         bosses: vec![],
         slots: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: Some(2.0),
+        outline_fillet_rs: vec![2.0; 6],
     };
     let mesh = Axis::Y.unrotate_mesh(&synth::profile(&spec, 32, [3.0, 7.0, 11.0]));
     let Recognition::Profile { profile, offset, axis } = recognize(&mesh) else { panic!("not recognised: {:?}", recognize(&mesh)) };
@@ -910,7 +910,7 @@ fn y_extruded_profile_uses_the_xz_plane() {
     assert_eq!(profile.corners, spec.corners);
     assert_eq!(profile.z, 50.0);
     assert_eq!(profile.holes, spec.holes);
-    assert_eq!(profile.outline_fillet_r, Some(2.0));
+    assert_eq!(profile.outline_fillet_rs, vec![2.0; 6]);
 
     let json: serde_json::Value = serde_json::from_str(&profile.to_design_on("", offset, axis).to_json()).expect("valid");
     let features = json["features"].as_array().expect("features");
@@ -933,6 +933,72 @@ fn y_extruded_profile_uses_the_xz_plane() {
     assert_eq!(fillet["edge_names"][0], "F2:side:l1|F2:side:l6");
 }
 
+/// Roadmap 6.4: corners rounded with different radii write one fillet feature per radius group
+/// (`Fillet<g>` with the parameter `fillet_r_<g>` / `outline_fillet_r_<g>`, the group's corners'
+/// edges in corner order); one shared radius keeps the plain `fillet_r` / `outline_fillet_r` and
+/// `Fillet1` (see `plate_design_matches_golden_file`).
+#[test]
+fn mixed_corner_radii_write_one_fillet_per_radius_group() {
+    use crate::i18n::Locale;
+    let spec = PlateSpec {
+        x: 70.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_rs: vec![2.0, 3.0, 5.0, 4.0],
+        edge_fillet_r: None,
+    };
+    assert_eq!(spec.describe(), "A 70 x 40 x 6 mm plate with rounded corners with radii 2, 3, 5, 4 mm");
+    assert_eq!(spec.describe_in(Locale::De), "Eine 70 x 40 x 6 mm Platte mit verrundeten Ecken mit Radien 2, 3, 5, 4 mm");
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let param = |name: &str| {
+        json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"))
+    };
+    assert_eq!(param("fillet_r"), None);
+    for (g, r) in [(1, "2 mm"), (2, "3 mm"), (3, "5 mm"), (4, "4 mm")] {
+        assert_eq!(param(&format!("fillet_r_{g}")), Some(r));
+    }
+    let fillets: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "fillet").collect();
+    assert_eq!(fillets.len(), 4);
+    assert_eq!(fillets[0]["name"], "Fillet1");
+    assert_eq!(fillets[0]["radius"], "fillet_r_1");
+    assert_eq!(fillets[0]["edges"], serde_json::json!([[0.0, 0.0, 3.0]]));
+    assert_eq!(fillets[0]["edge_names"], serde_json::json!(["F2:side:l1|F2:side:l4"]));
+    assert_eq!(fillets[2]["edges"], serde_json::json!([[70.0, 40.0, 3.0]]));
+    assert_eq!(fillets[2]["edge_names"], serde_json::json!(["F2:side:l2|F2:side:l3"]));
+    assert_eq!(fillets[3]["radius"], "fillet_r_4");
+
+    let ell = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: Vec::new(),
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: Vec::new(),
+        outline_fillet_rs: vec![2.0, 2.0, 3.0, 4.0, 4.0, 5.0],
+    };
+    assert_eq!(ell.describe(), "A 60 x 40 x 5 mm plate with a 6-sided outline and rounded corners with radii 2, 3, 4, 5 mm");
+    let json: serde_json::Value = serde_json::from_str(&ell.to_design("").to_json()).expect("valid");
+    let fillets: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "fillet").collect();
+    assert_eq!(fillets.len(), 4);
+    assert_eq!(fillets[0]["edge_names"], serde_json::json!(["F2:side:l1|F2:side:l6", "F2:side:l1|F2:side:l2"]));
+    assert_eq!(fillets[1]["edge_names"], serde_json::json!(["F2:side:l2|F2:side:l3"]));
+    assert_eq!(fillets[2]["edge_names"], serde_json::json!(["F2:side:l3|F2:side:l4", "F2:side:l4|F2:side:l5"]));
+    assert_eq!(fillets[3]["edge_names"], serde_json::json!(["F2:side:l5|F2:side:l6"]));
+    assert_eq!(fillets[3]["radius"], "outline_fillet_r_4");
+}
+
 /// The design the spike opened in SolidCraft 0.50: a plate with a centred hole and rounded
 /// corners. The golden file was opened in SolidCraft and rebuilt without errors or warnings
 /// after changing `base_x` and `hole_1_d`.
@@ -948,7 +1014,7 @@ fn plate_design_matches_golden_file() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(3.0),
+        outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,
     };
     let actual = spec.to_design("plate-with-hole").to_json_pretty();
@@ -971,7 +1037,7 @@ fn rounded_box_fillets_all_twelve_edges_before_the_holes() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: Some(5.0),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design_at("", [2.0, 3.0, 1.0]).to_json()).expect("valid");
@@ -1026,7 +1092,7 @@ fn y_extrusion_negates_the_second_profile_coordinate_in_expressions() {
         bosses: vec![],
         slots: vec![SlotSpec { x: 10.0, y: 8.0, len: 16.0, w: 5.0, angle: 30.0 }],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let at = [3.0, 11.0, -7.0];
     let json: serde_json::Value = serde_json::from_str(&spec.to_design_on("", at, Axis::Y).to_json()).expect("valid");
@@ -1094,7 +1160,7 @@ fn drafted_and_chamfered_bosses_in_the_design() {
         pads: vec![],
         pockets: vec![],
         cutouts: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -1135,7 +1201,7 @@ fn arc_side_extrema_count_towards_the_reported_size() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     assert_eq!(bulge.size(), [60.0, 70.0], "the semicircle's top at y = 70 bounds the report");
     let stadium = ProfileSpec {
@@ -1149,7 +1215,7 @@ fn arc_side_extrema_count_towards_the_reported_size() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, Some(ArcSide { centre: [40.0, 20.0], r: 10.0 }), None, Some(ArcSide { centre: [0.0, 20.0], r: 10.0 })],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     assert_eq!(stadium.size(), [60.0, 20.0], "the arc ends' bulges to x = -10 and x = 50 bound the report");
 }
@@ -1174,7 +1240,7 @@ fn chord_arc_junctions_get_no_tangent_constraint() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![Some(ArcSide { centre: [0.0, 0.0], r }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let constraints = json["features"][0]["sketch"]["constraints"].as_array().expect("constraints");
@@ -1204,7 +1270,7 @@ fn a_bottom_rounded_hole_beneath_a_step_is_drilled_from_the_bottom() {
         pockets: vec![],
         bosses: vec![],
         cutouts: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
@@ -1239,7 +1305,7 @@ fn a_counterbore_opening_on_a_step_level_is_drilled_from_the_level() {
         bosses: vec![],
         slots: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let features = json["features"].as_array().expect("features");
@@ -1284,7 +1350,7 @@ fn a_headed_hole_beside_a_step_edge_is_drilled_from_the_top_face() {
         bosses: vec![],
         slots: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let features = json["features"].as_array().expect("features");
@@ -1323,7 +1389,7 @@ fn a_rounded_rim_on_a_step_level_fillets_the_pockets_start_edge() {
         bosses: vec![],
         slots: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let features = json["features"].as_array().expect("features");
@@ -1363,7 +1429,7 @@ fn arc_sided_cut_out_gets_its_own_arc_sketch() {
             arcs: vec![None, None, Some(ArcSide { centre: [20.0, 30.0], r: 10.0 }), None],
         }],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let features = json["features"].as_array().expect("features");
@@ -1442,7 +1508,7 @@ fn a_straight_cut_out_beside_an_arc_sided_one_gets_its_own_sketch() {
             },
         ],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
     let features = json["features"].as_array().expect("features");

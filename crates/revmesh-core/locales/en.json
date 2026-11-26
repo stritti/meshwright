@@ -41,6 +41,7 @@
   "summary.pocket.one": "1 pocket",
   "summary.pocket.other": "{n} pockets",
   "summary.rounded_corners": "{r} mm rounded corners",
+  "summary.rounded_corners_rs": "rounded corners with radii {rs} mm",
   "summary.rounded_edges": "{r} mm rounded edges",
   "stl.too_short": "the file is too short to be an STL file",
   "stl.truncated": "the binary STL header announces {expected} triangles, but the file has only {actual} bytes",

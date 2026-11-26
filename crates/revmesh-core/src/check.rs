@@ -326,7 +326,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
-            outline_fillet_r: None,
+            outline_fillet_rs: Vec::new(),
             edge_fillet_r: None,
         };
         let coarse = synth::plate(&spec, 16, [0.0; 3]);

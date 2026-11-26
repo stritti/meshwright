@@ -393,7 +393,7 @@ fn split_hole_rims_stay_round() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let mut mesh = synth::plate(&expected, 16, [0.0; 3]);

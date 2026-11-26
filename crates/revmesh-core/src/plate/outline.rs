@@ -10,12 +10,13 @@ use crate::recognize::ArcSide;
 use std::f64::consts::PI;
 
 /// Reads `outline` (counter-clockwise) as a polygon of sides whose corners are all sharp or all
-/// rounded with one radius, where any side may instead be a circular arc (a curved side).
-/// Returns the corners as if they were sharp, the corner radius, and for each side the arc it
-/// is (`None` for a straight side).
+/// rounded (each with its own radius), where any side may instead be a circular arc (a curved
+/// side). Returns the corners as if they were sharp, one radius per corner parallel to them
+/// (empty when every corner is sharp), and for each side the arc it is (`None` for a straight
+/// side).
 #[allow(clippy::too_many_lines)] // one scan, read best in one piece
-#[allow(clippy::type_complexity)] // corners, corner radius, arc per side
-pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option<f64>, Vec<Option<ArcSide>>), String> {
+#[allow(clippy::type_complexity)] // corners, radius per corner, arc per side
+pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Vec<f64>, Vec<Option<ArcSide>>), String> {
     let mut v = merge_collinear(outline);
     let n = v.len();
     if n < 3 {
@@ -251,21 +252,24 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
     };
     let mut corners = Vec::new();
     let mut corner_src = Vec::new();
+    let mut corner_r = Vec::new();
     let mut k = 0;
     while k < n {
         if inside_arc_side(k) {
             k += 1;
             continue;
         }
-        if let Some(&(first, last, _)) = arcs.iter().find(|a| a.0 == k) {
+        if let Some(&(first, last, r)) = arcs.iter().find(|a| a.0 == k) {
             let corner = intersect(v[(first + n - 1) % n], v[first], v[last], v[(last + 1) % n])
                 .ok_or("a corner is rounded all the way round (slot-shaped ends are not recognised yet)")?;
             corners.push(corner);
             corner_src.push(first);
+            corner_r.push(r);
             k = last + 1;
         } else {
             corners.push(v[k]);
             corner_src.push(k);
+            corner_r.push(0.0);
             k += 1;
         }
     }
@@ -280,16 +284,12 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Option
     let arc_of = |src: usize| arc_sides.iter().find(|(f, _, _, _)| *f == src).map(|&(_, _, c, r)| ArcSide { centre: c, r });
     let side_arcs: Vec<Option<ArcSide>> = corner_src.iter().map(|&src| arc_of(src)).collect();
     if arcs.is_empty() {
-        return Ok((corners, None, side_arcs));
+        return Ok((corners, Vec::new(), side_arcs));
     }
     if arcs.len() != corners.len() {
         return Err("only some corners of the outline are rounded (mixed corners are not recognised yet)".into());
     }
-    let (low, high) = arcs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), a| (lo.min(a.2), hi.max(a.2)));
-    if high - low > tol {
-        return Err("the corners are rounded with different radii (mixed radii are not recognised yet)".into());
-    }
-    Ok((corners, Some(arcs.iter().map(|a| a.2).sum::<f64>() / arcs.len() as f64), side_arcs))
+    Ok((corners, corner_r, side_arcs))
 }
 
 /// Running sums for a least-squares circle (Kåsa's algebraic fit) through points added one at a
@@ -379,11 +379,6 @@ pub(super) fn intersect(a: P2, b: P2, c: P2, d: P2) -> Option<P2> {
     }
     let t = ((c[0] - a[0]) * w[1] - (c[1] - a[1]) * w[0]) / den;
     Some([a[0] + t * u[0], a[1] + t * u[1]])
-}
-
-/// The area the four corners of a rectangle lose to roundings of radius `r`.
-pub(crate) fn corner_loss(r: f64) -> f64 {
-    (4.0 - PI) * r * r
 }
 
 /// The volume a sharp box `x` by `y` by `z` loses when all twelve edges are rounded with radius

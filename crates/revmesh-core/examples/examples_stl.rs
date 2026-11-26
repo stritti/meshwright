@@ -36,13 +36,14 @@ fn plate(x: f64, y: f64, z: f64, holes: Vec<HoleSpec>, fillet: Option<f64>) -> P
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: fillet,
+        outline_fillet_rs: fillet.map_or_else(Vec::new, |r| vec![r; 4]),
         edge_fillet_r: None,
     }
 }
 
 /// An outline of straight sides, `z` thick, with `holes` and rounded vertical corners.
 fn profile(corners: Vec<[f64; 2]>, z: f64, holes: Vec<HoleSpec>, fillet: Option<f64>) -> ProfileSpec {
+    let n = corners.len();
     ProfileSpec {
         corners,
         z,
@@ -53,7 +54,7 @@ fn profile(corners: Vec<[f64; 2]>, z: f64, holes: Vec<HoleSpec>, fillet: Option<
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: fillet,
+        outline_fillet_rs: fillet.map_or_else(Vec::new, |r| vec![r; n]),
         arcs: Vec::new(),
     }
 }

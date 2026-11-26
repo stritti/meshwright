@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "mixed-radii.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 8, "loss_report": {"summary": "A 70 x 40 x 6 mm plate with 1 hole and rounded corners with radii 2, 3, 5, 4 mm"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 16428.876110}},
+    "tolerance": 1e-4
+  }
+}

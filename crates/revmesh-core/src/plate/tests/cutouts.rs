@@ -110,7 +110,7 @@ fn arc_sided_cut_out_is_recognised() {
 /// cut-out's vertical edges, which is not recognised yet.
 #[test]
 fn rounded_corner_cut_out_stays_a_mesh() {
-    let ring = synth::rounded(&[[10.0, 10.0], [30.0, 10.0], [30.0, 30.0], [10.0, 30.0]], Some(3.0), 32);
+    let ring = synth::rounded(&[[10.0, 10.0], [30.0, 10.0], [30.0, 30.0], [10.0, 30.0]], &[3.0; 4], 32);
     reason(&plate_with_cutout(ring));
 }
 

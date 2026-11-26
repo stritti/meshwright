@@ -309,7 +309,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
-            outline_fillet_r: None,
+            outline_fillet_rs: Vec::new(),
             edge_fillet_r: None,
         };
         let options = ImportOptions::default();
@@ -357,7 +357,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
-            outline_fillet_r: None,
+            outline_fillet_rs: Vec::new(),
             edge_fillet_r: None,
         };
         let mesh_mm = crate::synth::plate(&spec, 24, [0.0; 3]);
@@ -416,7 +416,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
-            outline_fillet_r: Some(2.5),
+            outline_fillet_rs: vec![2.5; 4],
             edge_fillet_r: None,
         };
         let bytes = stl::write_binary(&crate::synth::plate(&spec, 24, [0.0; 3]));
@@ -427,7 +427,7 @@ mod tests {
         assert!(result.report.items[0].message.contains(','), "a decimal comma: {}", result.report.items[0].message);
 
         spec.holes.push(spec.holes[0].clone());
-        spec.outline_fillet_r = None;
+        spec.outline_fillet_rs.clear();
         spec.edge_fillet_r = Some(2.0);
         assert_eq!(spec.describe_in(Locale::De), "Eine 60 x 40 x 5 mm Platte mit 2 Bohrungen und 2 mm verrundeten Kanten");
         spec.holes.clear();
@@ -444,7 +444,7 @@ mod tests {
             outline_pockets: Vec::new(),
             cutouts: vec![],
             arcs: Vec::new(),
-            outline_fillet_r: None,
+            outline_fillet_rs: Vec::new(),
         };
         assert_eq!(profile.describe_in(Locale::De), "Eine 60 x 40 x 5 mm Platte mit einer 4-eckigen Kontur");
         assert_eq!(profile.describe(), "A 60 x 40 x 5 mm plate with a 4-sided outline");
@@ -469,7 +469,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
-            outline_fillet_r: Some(4.0),
+            outline_fillet_rs: vec![4.0; 4],
             edge_fillet_r: None,
         };
         let bytes = stl::write_binary(&crate::synth::plate(&spec, 24, [-30.0, -20.0, 0.0]));
@@ -613,7 +613,7 @@ mod tests {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
-            outline_fillet_r: None,
+            outline_fillet_rs: Vec::new(),
             edge_fillet_r: None,
         };
         let mesh = Axis::X.unrotate_mesh(&crate::synth::plate(&spec, 32, [3.0, 7.0, 11.0]));
@@ -643,7 +643,7 @@ mod tests {
             bosses: vec![],
             slots: vec![],
             arcs: Vec::new(),
-            outline_fillet_r: None,
+            outline_fillet_rs: Vec::new(),
         };
         let bytes = stl::write_binary(&crate::synth::profile(&spec, 32, [20.0, 10.0, 3.0]));
         let result = import(&bytes, "l.stl", &ImportOptions::default()).expect("imports");
@@ -669,6 +669,25 @@ mod tests {
         assert_eq!(result.design.params[2].expr, "27.5 mm");
         assert_eq!(json["features"][2]["translate"], serde_json::json!(["20", "10", "extrude_0"]));
         assert_eq!(json["features"][3]["at"], serde_json::json!(["hole_1_x", "hole_1_y", "extrude_0 + extrude_len"]));
+    }
+
+    /// Keeps the mixed-corner-radii plate's plugin fixture and its expectations in step (roadmap
+    /// 6.4): one fillet feature per radius group, `fillet_r_<g>`.
+    #[test]
+    fn plugin_test_mixed_radii_fixture() {
+        let case: serde_json::Value =
+            serde_json::from_str(include_str!("../../../plugin/revmesh/tests/mixed-radii.json")).expect("valid case");
+        let bytes = include_bytes!("../../../plugin/revmesh/tests/mixed-radii.stl");
+        let result = import(bytes, "mixed-radii.stl", &ImportOptions::default()).expect("imports");
+        let Recognition::Plate { plate, .. } = recognize(&stl::parse(bytes).expect("parses")) else { panic!("not a plate") };
+        assert_eq!(plate.outline_fillet_rs, vec![2.0, 3.0, 5.0, 4.0]);
+        let expect = &case["expect"];
+        assert_eq!(result.design.features.len() as u64, expect["reply"]["features"].as_u64().expect("count"));
+        assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));
+        let names: Vec<&str> = result.design.params.iter().filter(|p| !p.model).map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"fillet_r_1") && names.contains(&"fillet_r_4") && !names.contains(&"fillet_r"));
+        let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
+        assert!((plate.volume() - volume).abs() < 1e-6 * volume, "{} vs {volume}", plate.volume());
     }
 
     /// Keeps the standing plate's plugin fixture and its expectations in step.
@@ -750,7 +769,7 @@ mod tests {
         let result = import(bytes, "rounded-box.stl", &ImportOptions::default()).expect("imports");
         let Recognition::Plate { plate, .. } = recognize(&stl::parse(bytes).expect("parses")) else { panic!("not a plate") };
         assert_eq!(plate.edge_fillet_r, Some(5.0));
-        assert_eq!(plate.outline_fillet_r, None);
+        assert_eq!(plate.outline_fillet_rs, [] as [f64; 0]);
         let expect = &case["expect"];
         assert_eq!(result.design.features.len() as u64, expect["reply"]["features"].as_u64().expect("count"));
         assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));

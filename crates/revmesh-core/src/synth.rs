@@ -16,7 +16,7 @@ type P2 = [f64; 2];
 #[must_use]
 pub fn plate(spec: &PlateSpec, segments: usize, offset: Vec3) -> Mesh {
     let corners = [[0.0, 0.0], [spec.x, 0.0], [spec.x, spec.y], [0.0, spec.y]];
-    prism(&rounded(&corners, spec.outline_fillet_r, segments), &openings(&spec.holes, &spec.cutouts, segments), spec.z, offset)
+    prism(&rounded(&corners, &spec.outline_fillet_rs, segments), &openings(&spec.holes, &spec.cutouts, segments), spec.z, offset)
 }
 
 /// The plate `spec` with any outline as a closed mesh, moved by `offset`, faceted as [`plate`].
@@ -26,7 +26,7 @@ pub fn profile(spec: &ProfileSpec, segments: usize, offset: Vec3) -> Mesh {
     let outline = if arcs.iter().any(Option::is_some) {
         faceted_polygon(&spec.corners, arcs, segments)
     } else {
-        rounded(&spec.corners, spec.outline_fillet_r, segments)
+        rounded(&spec.corners, &spec.outline_fillet_rs, segments)
     };
     prism(&outline, &openings(&spec.holes, &spec.cutouts, segments), spec.z, offset)
 }
@@ -247,13 +247,18 @@ pub(crate) fn rings(holes: &[HoleSpec], segments: usize) -> Vec<Vec<P2>> {
         .collect()
 }
 
-/// The outline through `corners` (counter-clockwise) with every corner rounded with radius `r`,
-/// each arc faceted like a circle of `segments` facets (at least one facet per corner).
-pub(crate) fn rounded(corners: &[P2], r: Option<f64>, segments: usize) -> Vec<P2> {
-    let Some(r) = r else { return corners.to_vec() };
+/// The outline through `corners` (counter-clockwise) with corner `i` rounded with radius
+/// `radii[i]` (`0` or missing for a sharp corner), each arc faceted like a circle of `segments`
+/// facets (at least one facet per corner).
+pub(crate) fn rounded(corners: &[P2], radii: &[f64], segments: usize) -> Vec<P2> {
     let n = corners.len();
     let mut out = Vec::new();
     for i in 0..n {
+        let r = radii.get(i).copied().unwrap_or(0.0);
+        if r <= 0.0 {
+            out.push(corners[i]);
+            continue;
+        }
         let (a, c, b) = (corners[(i + n - 1) % n], corners[i], corners[(i + 1) % n]);
         let unit = |p: P2, q: P2| {
             let len = (q[0] - p[0]).hypot(q[1] - p[1]);

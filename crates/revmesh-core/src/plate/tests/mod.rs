@@ -26,7 +26,7 @@ fn spec(holes: &[(f64, f64, f64)], r: Option<f64>) -> PlateSpec {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: r,
+        outline_fillet_rs: r.map_or_else(Vec::new, |r| vec![r; 4]),
         edge_fillet_r: None,
     }
 }
@@ -46,7 +46,7 @@ fn ell(r: Option<f64>) -> ProfileSpec {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: r,
+        outline_fillet_rs: r.map_or_else(Vec::new, |r| vec![r; 6]),
         arcs: Vec::new(),
     }
 }

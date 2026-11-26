@@ -35,7 +35,7 @@ fn synthetic_slots() {
 /// sides, and those are recognised now (roadmap 5.2).
 #[test]
 fn near_slots_are_refused() {
-    let rounded = synth::rounded(&[[30.0, 22.0], [50.0, 22.0], [50.0, 28.0], [30.0, 28.0]], Some(1.5), 32);
+    let rounded = synth::rounded(&[[30.0, 22.0], [50.0, 22.0], [50.0, 28.0], [30.0, 28.0]], &[1.5; 4], 32);
     let ellipse: Vec<P2> = (0..48).map(|i| 2.0 * PI * f64::from(i) / 48.0).map(|a| [40.0 + 12.0 * a.cos(), 25.0 + 4.0 * a.sin()]).collect();
     let mut uneven = stadium([40.0, 25.0], 18.0, 7.0, 0.0, 16);
     for p in &mut uneven[..17] {
