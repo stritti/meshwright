@@ -1,5 +1,5 @@
 {
-  "manifest.description": "Öffnet STL-Netze als bearbeitbare Konstruktionen: erkennt Platten, Bohrungen und Verrundungen und baut sie als parametrische Historie neu auf.",
+  "manifest.description": "Öffnet STL-Netze als bearbeitbare Konstruktionen: erkennt Platten, Bohrungen und Verrundungen und baut sie als parametrische Historie neu auf. Projekt: https://github.com/stritti/revmesh",
   "manifest.stl.mode.title": "Importieren als",
   "manifest.stl.mode.description": "auto: Features erkennen und das Netz behalten, wo keine gefunden werden; mesh: das Netz unverändert übernehmen",
 

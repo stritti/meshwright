@@ -1,5 +1,5 @@
 {
-  "manifest.description": "Opens STL meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history.",
+  "manifest.description": "Opens STL meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history. Project: https://github.com/stritti/revmesh",
   "manifest.stl.mode.title": "Import as",
   "manifest.stl.mode.description": "auto: recognise features and keep the mesh where none are found; mesh: keep the mesh as it is",
 

@@ -2,7 +2,7 @@
   "id": "revmesh",
   "name": "revmesh",
   "version": "0.1.0",
-  "description": "Opens STL meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history.",
+  "description": "Opens STL meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history. Project: https://github.com/stritti/revmesh",
   "updates": {
     "github": "stritti/revmesh"
   },
