@@ -2,7 +2,7 @@
   "id": "revmesh",
   "name": "revmesh",
   "version": "0.2.0",
-  "description": "Opens STL meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history. Project: https://github.com/stritti/revmesh",
+  "description": "Opens STL, OBJ and PLY meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history. Project: https://github.com/stritti/revmesh",
   "updates": {
     "github": "stritti/revmesh"
   },
@@ -18,7 +18,9 @@
         "name": "stl",
         "kind": "importer",
         "extensions": [
-          "stl"
+          "stl",
+          "obj",
+          "ply"
         ],
         "slots": [
           {
@@ -38,7 +40,7 @@
                 "mesh"
               ],
               "default": "auto",
-              "description": "auto: recognise features and rebuild the part parametrically (facets become ideal faces; the report notes the deviation); the mesh is kept only where nothing is found. STL up to 16 MiB. mesh: keep the mesh exactly as it is. STL up to 32 MiB"
+              "description": "auto: recognise features and rebuild the part parametrically (facets become ideal faces; the report notes the deviation); the mesh is kept where nothing is found. File up to 16 MiB. mesh: keep the mesh exactly as it is. File up to 32 MiB"
             },
             "units": {
               "type": "string",
@@ -48,7 +50,7 @@
                 "inch"
               ],
               "default": "mm",
-              "description": "STL is unitless and assumed to be mm; inch: the file is read as inches and converted to millimetres"
+              "description": "Mesh files are unitless and assumed to be mm; inch: the file is read as inches and converted to millimetres"
             }
           }
         }

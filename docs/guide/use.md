@@ -6,11 +6,12 @@
    revmesh is reached through the Insert tab or the Plugins menu.
 2. The dialog offers **Import as**: `auto` (recognise features and rebuild the part
    parametrically — facets become ideal faces, the import report notes the deviation; the mesh is
-   kept only where nothing is found; STL up to 16 MiB; the default) or `mesh` (keep the mesh
-   exactly as it is; STL up to 32 MiB), and **Units**: `mm` (the default — STL is unitless and read
-   as millimetres) or `inch`, which is converted to millimetres (× 25.4) and noted in the
-   report.
-3. Its button chooses the STL file. It opens as a new, unsaved design.
+   kept only where nothing is found; file up to 16 MiB; the default) or `mesh` (keep the mesh
+   exactly as it is; file up to 32 MiB), and **Units**: `mm` (the default — mesh files are unitless
+   and read as millimetres) or `inch`, which is converted to millimetres (× 25.4) and noted in
+   the report.
+3. Its button chooses the mesh file (`.stl`, `.obj` or `.ply`). It opens as a new, unsaved
+   design.
 4. The **Import report** follows: a summary, one line per kind of change, and everything in
    detail under *Details*. **Plugins › Last import report…** shows it again later.
 
@@ -34,8 +35,9 @@ Which parts are recognised, and which parameters they get, is on
 
 ## Limits
 
-STL input: up to 16 MiB in `auto` mode, 32 MiB in `mesh` mode (`AUTO_MAX_BYTES` / `MESH_MAX_BYTES`
-in `crates/revmesh-plugin/src/lib.rs`). Runtime: 128 MiB memory, a 120 s deadline and 10¹¹ fuel, as
-requested in `plugin/revmesh/plugin.json`. The file is streamed in 1 MiB chunks, so a 16 MiB STL
-peaks at ≈ 90 MiB in memory. Measured numbers and the reasoning behind them:
+Mesh input (STL, OBJ, PLY): up to 16 MiB in `auto` mode, 32 MiB in `mesh` mode (`AUTO_MAX_BYTES`
+/ `MESH_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`). Runtime: 128 MiB memory, a 120 s
+deadline and 10¹¹ fuel, as requested in `plugin/revmesh/plugin.json`. The file is streamed in
+1 MiB chunks, so a 16 MiB file peaks at ≈ 90 MiB in memory (binary STL; OBJ and PLY hold shared
+vertices, so they expand less). Measured numbers and the reasoning behind them:
 [Architecture](/architecture#limits-inside-solidcraft).

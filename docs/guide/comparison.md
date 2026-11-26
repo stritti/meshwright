@@ -75,7 +75,7 @@ GPU.
 
 | Feature | revmesh | mesh2cad | MeshWright (meshwright.io) | FreeCAD RE workbench | Detessellate | MeshRemodel | CAD Sketcher |
 |---|---|---|---|---|---|---|---|
-| Input meshes | STL (≤ 16 MiB in auto, 32 MiB mesh-only) | STL, OBJ, PLY | STL, OBJ, PLY, 3MF | mesh + point cloud | STL, OBJ, 3MF | mesh (STL, OBJ, …) | mesh as sketch reference |
+| Input meshes | STL, OBJ, PLY (≤ 16 MiB in auto, 32 MiB mesh-only) | STL, OBJ, PLY | STL, OBJ, PLY, 3MF | mesh + point cloud | STL, OBJ, 3MF | mesh (STL, OBJ, …) | mesh as sketch reference |
 | Plate/outline extruded along Z | ✓ | ✓ | ~ AI-built features | – | ~ cross-sections | ~ manual | ~ projected sketch |
 | Extrusion along X or Y | ✓ | ✓ (tries X, Y, Z) | ~ | – | – | – | ~ |
 | Through holes | ✓ | ✓ | ✓ fitted from mesh | – | – | – | – |

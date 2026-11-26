@@ -326,6 +326,10 @@ fn binary_count(bytes: &[u8]) -> Option<u64> {
     Some(u64::from(u32::from_le_bytes(raw)))
 }
 
+pub(crate) fn looks_ascii_pub(bytes: &[u8]) -> bool {
+    looks_ascii(bytes)
+}
+
 fn looks_ascii(bytes: &[u8]) -> bool {
     let start = bytes.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(bytes.len());
     bytes[start..].starts_with(b"solid")

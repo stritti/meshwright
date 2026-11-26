@@ -16,8 +16,11 @@ editable.
 
 ```text
 crates/
-  revmesh-core/     host-independent: STL → Mesh → Recognition → Design + LossReport
+  revmesh-core/     host-independent: STL/OBJ/PLY → Mesh → Recognition → Design + LossReport
+    src/format.rs      the format (by name or first bytes) and the chunked MeshReader, shared errors
     src/stl.rs         binary and ASCII STL
+    src/obj.rs         Wavefront OBJ
+    src/ply.rs         PLY, ASCII and binary little-endian
     src/mesh.rs        triangle soup, bounds, volume, area
     src/recognize/     what recognition finds (`Recognition`), the extrusion axis and the
                        rotations that align it with Z (axis.rs), the specs (spec.rs) and

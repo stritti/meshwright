@@ -77,21 +77,22 @@ Unterschiede, die erwartet sind, und warum:
 
 ## Fixtures
 
-STL-Fixtures werden generiert, nie von Hand bearbeitet: `crates/revmesh-core/examples/plate_stl.rs`
+Netz-Fixtures (STL, OBJ, PLY) werden generiert, nie von Hand bearbeitet: `crates/revmesh-core/examples/plate_stl.rs`
 schreibt sie aus einem Spec (`synth` tesselliert so, wie CAD-Exporteure es tun) und gibt das Volumen aus,
 das SolidCraft nach dem Neuaufbau messen soll. Jede Fixture in `plugin/revmesh/tests` hat eine
-`.json`-Case, die `cargo xtask plugin-test` in SolidCraft ausführt.
+`.json`-Case, die `cargo xtask plugin-test` in SolidCraft ausführt. Die OBJ/PLY-Fixtures sind der
+STL-Block im jeweiligen Format (`block-obj`/`block-ply`/`block-ply-bin`).
 
 Die absichtlich kaputten Fixtures (`broken.stl`, `empty.stl`, `nan.stl`, `truncated.stl`,
-`ascii-bad.stl`) kommen aus den Raw-Modi desselben Beispiels (in dessen Header aufgelistet). Ihre
+`ascii-bad.stl`, `obj-bad.obj`, `ply-bad.ply`) kommen aus den Raw-Modi desselben Beispiels (in dessen Header aufgelistet). Ihre
 `.json`-Cases erwarten einen Fehler — `{"error": "invalid_input", "message": "…"}` mit einem
 Ausschnitt des lokalisierten Grundes, wie `broken.json` zeigt.
 
 Echte STL-Dateien von Printables, unter CC0 oder CC BY und unverändert verwendet, liegen in
 `plugin/revmesh/tests/printables/` (Autoren und Lizenzen in dessen README);
 `crates/revmesh-core/tests/printables.rs` prüft sie gegen die veröffentlichten Quellen der Autoren, wo es
-sie gibt, und die `printables-*.json`-Cases importieren jede in SolidCraft. Für jede STL endet
-`cargo run -q -p revmesh-core --example params -- part.stl` mit der Feature-Anzahl und dem Volumen, das
+sie gibt, und die `printables-*.json`-Cases importieren jede in SolidCraft. Für jede Netzdatei endet
+`cargo run -q -p revmesh-core --example params -- part.obj` mit der Feature-Anzahl und dem Volumen, das
 eine Plugin-Test-Case erwartet.
 
 Die Beispielteile in `examples/` (in der [Beispiel-Galerie](/de/guide/examples) der Doku gezeigt) werden

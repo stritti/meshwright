@@ -16,8 +16,11 @@ was das Ergebnis bearbeitbar macht.
 
 ```text
 crates/
-  revmesh-core/     host-unabhängig: STL → Mesh → Erkennung → Design + LossReport
+  revmesh-core/     host-unabhängig: STL/OBJ/PLY → Mesh → Erkennung → Design + LossReport
+    src/format.rs      das Format (an Name oder ersten Bytes) und der gepufferte MeshReader, gemeinsame Fehler
     src/stl.rs         binäres und ASCII-STL
+    src/obj.rs         Wavefront OBJ
+    src/ply.rs         PLY, ASCII und binary little-endian
     src/mesh.rs        Dreieckssuppe, Bounds, Volumen, Fläche
     src/recognize/     was die Erkennung findet (`Recognition`), die Extrusionsachse und die
                        Rotationen, die sie auf Z ausrichten (axis.rs), die Specs (spec.rs) und

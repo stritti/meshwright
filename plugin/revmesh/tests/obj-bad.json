@@ -1,0 +1,8 @@
+{
+  "entry": "stl",
+  "file": "obj-bad.obj",
+  "expect": {
+    "error": "invalid_input",
+    "message": "OBJ line 4: vertex index 9 is out of range"
+  }
+}

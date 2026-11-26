@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-stritti.github.io%2Frevmesh-3e7bd6.svg)](https://stritti.github.io/revmesh/)
 
-**Open STL files in [SolidCraft](https://github.com/tangency-labs/solidcraft) as editable designs.**
+**Open STL, OBJ and PLY files in [SolidCraft](https://github.com/tangency-labs/solidcraft) as editable designs.**
 
 revmesh is a SolidCraft importer plugin. Instead of a dead triangle mesh, it recognises what
 the part was made of (plates, holes, slots, fillets, …) and writes a parametric feature history:
@@ -16,9 +16,8 @@ The recognition follows [mesh2cad](https://github.com/emirmrkaljevic/mesh2cad)
 (MIT): its approach, the parts it targets and its parameter names. It is written in Rust, so it
 runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascade.
 
-> **Status: early.** The plugin pipeline works end to end: STL in, design out, tested in
-> SolidCraft 0.50. Recognition finds plates: any outline of straight sides or circular arc
-> sides (rectangles, L-shapes, brackets, chamfered or slanted sides, bulges, stadium ends) extruded along Z — or along X or Y, a part
+> **Status: early.** The plugin pipeline works end to end: mesh in, design out, tested in
+> SolidCraft 0.50. Recognition finds plates: any outline of straight sides or circular arc> sides (rectangles, L-shapes, brackets, chamfered or slanted sides, bulges, stadium ends) extruded along Z — or along X or Y, a part
 > standing upright —, its corners parallel to that axis sharp or all rounded with one radius,
 > with round through holes; and boxes with all twelve edges rounded with one radius. Everything
 > else is imported as a mesh body, with the reason in the
@@ -51,9 +50,9 @@ older SolidCraft than the latest release, so current revmesh always targets the 
    revmesh is reached through the Insert tab or the Plugins menu.
 2. The dialog offers **Import as**: `auto` (recognise features and rebuild the part
    parametrically — facets become ideal faces, the import report notes the deviation; the mesh is
-   kept only where nothing is found; STL up to 16 MiB; the default) or `mesh` (keep the mesh
-   exactly as it is; STL up to 32 MiB).
-3. Its button chooses the STL file. It opens as a new, unsaved design.
+   kept only where nothing is found; file up to 16 MiB; the default) or `mesh` (keep the mesh
+   exactly as it is; file up to 32 MiB).
+3. Its button chooses the mesh file (`.stl`, `.obj` or `.ply`). It opens as a new, unsaved design.
 4. The **Import report** follows: a summary, one line per kind of change, and everything in
    detail under *Details*. **Plugins › Last import report…** shows it again later.
 
@@ -123,14 +122,15 @@ countersunk ones, stay single holes, not patterns.
 
 | Limit | Value | Set in |
 |---|---|---|
-| STL file size, `auto` | 16 MiB | `AUTO_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs` |
-| STL file size, `mesh` | 32 MiB | `MESH_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs` |
+| Mesh file size, `auto` | 16 MiB | `AUTO_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs` |
+| Mesh file size, `mesh` | 32 MiB | `MESH_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs` |
 | Memory | 128 MiB | `runtime.limits.memory_mib` in `plugin/revmesh/plugin.json` |
 | Import deadline | 120 s | `runtime.limits.deadline_ms` in `plugin/revmesh/plugin.json` |
 | Fuel | 10¹¹ | `runtime.limits.fuel` in `plugin/revmesh/plugin.json` |
 
 The file is streamed through the sandbox in 1 MiB chunks, so these limits are about peak memory,
-not file size: a 16 MiB STL peaks at ≈ 90 MiB (about 250 bytes per triangle) inside the 128 MiB
+not file size: a 16 MiB STL peaks at ≈ 90 MiB (about 250 bytes per triangle; OBJ/PLY hold shared
+vertices and expand less) inside the 128 MiB
 budget; `auto` at 32 MiB would need index-based face storage. In `auto` mode the rebuilt part must
 match the mesh's volume within 1 %, otherwise the mesh is kept. Measured numbers and the reasoning
 behind them: [docs/architecture.md](docs/architecture.md#limits-inside-solidcraft).
@@ -138,14 +138,14 @@ behind them: [docs/architecture.md](docs/architecture.md#limits-inside-solidcraf
 ## How it works
 
 ```text
- STL bytes ──► stl::parse ──► Mesh ──► recognize ──► PlateSpec … ──► Design (JSON) ──► SolidCraft
+ mesh file ──▶ format::parse ──▶ Mesh ──▶ recognize ──▶ PlateSpec … ──▶ Design (JSON) ──▶ SolidCraft
                                             │                               ▲
                                             └── nothing found ──► mesh body ┘   + loss report
 ```
 
 | Crate | What it does |
 |---|---|
-| [`revmesh-core`](crates/revmesh-core) | STL parsing, recognition and the SolidCraft document model. Pure Rust, no host calls, tested natively with `cargo test`. |
+| [`revmesh-core`](crates/revmesh-core) | STL/OBJ/PLY parsing, recognition and the SolidCraft document model. Pure Rust, no host calls, tested natively with `cargo test`. |
 | [`revmesh-plugin`](crates/revmesh-plugin) | The WebAssembly component (`craft:plugin@0.2.0`, `importer-plugin` world). Reads the file from SolidCraft, calls the core, writes the design back. |
 | [`xtask`](xtask) | Builds the component and the installable zip, and runs SolidCraft's plugin tests. |
 | [`plugin/revmesh`](plugin/revmesh) | The plugin package: `plugin.json` and the test cases SolidCraft runs. |
