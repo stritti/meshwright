@@ -3,8 +3,10 @@
 1. On the **Model** ribbon tab, click the label of the **Plugins** group to open the Plugins
    menu, and choose **revmesh › stl**. SolidCraft's own *File › Open* keeps using its built-in
    mesh import for `.stl`, so revmesh is reached through the Plugins menu.
-2. The dialog offers **Import as**: `auto` (recognise features, keep the mesh where none are
-   found; the default) or `mesh` (keep the mesh as it is).
+2. The dialog offers **Import as**: `auto` (recognise features and rebuild the part
+   parametrically — facets become ideal faces, the import report notes the deviation; the mesh is
+   kept only where nothing is found; STL up to 8 MiB; the default) or `mesh` (keep the mesh
+   exactly as it is; STL up to 32 MiB).
 3. Its button chooses the STL file. It opens as a new, unsaved design.
 4. The **Import report** follows: a summary, one line per kind of change, and everything in
    detail under *Details*. **Plugins › Last import report…** shows it again later.
