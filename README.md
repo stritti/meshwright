@@ -31,6 +31,20 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
 2. In SolidCraft, open **Preferences › Plugins › Install plugin…** (also *File › Plugins…*) and pick
    the zip.
 
+From a script, review the package first and install it with the approval hash it prints —
+SolidCraft runs plugin code only for the exact package that was reviewed:
+
+```sh
+solidcraft-cli exec plugin.check '{"path": "revmesh-<version>.zip"}'  # prints "approval": "…"
+solidcraft-cli exec plugin.install '{"path": "revmesh-<version>.zip", "approval": "…", "approve": {}}'
+```
+
+[`examples/cli/`](examples/cli) has a runnable end-to-end example (check → install → `file.import`
+→ export); `scripts/example-cli.sh` runs it in one command. Or unpack the zip into the per-user
+plugins folder yourself: `~/.local/share/solidcraft/plugins/` (Linux; `$XDG_DATA_HOME/solidcraft/plugins`
+when set), `%LOCALAPPDATA%\SolidCraft\plugins\` (Windows), `~/Library/Application Support/SolidCraft/plugins/`
+(macOS).
+
 ## Compatibility
 
 | revmesh | SolidCraft |

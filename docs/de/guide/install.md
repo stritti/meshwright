@@ -6,6 +6,22 @@
 2. Öffne in SolidCraft **Preferences › Plugins › Install plugin…** (auch *File › Plugins…*) und
    wähle die zip-Datei.
 
+Per Skript (`solidcraft-cli`) zuerst das Paket prüfen und mit dem ausgegebenen Approval-Hash
+installieren — SolidCraft führt Plugin-Code nur für genau das geprüfte Paket aus:
+
+```sh
+solidcraft-cli exec plugin.check '{"path": "revmesh-<version>.zip"}'  # gibt "approval": "…" aus
+solidcraft-cli exec plugin.install '{"path": "revmesh-<version>.zip", "approval": "…", "approve": {}}'
+```
+
+[examples/cli/](https://github.com/stritti/revmesh/tree/main/examples/cli) zeigt den kompletten
+Ablauf headless (check → install → `file.import` → export), und
+[scripts/example-cli.sh](https://github.com/stritti/revmesh/tree/main/scripts/example-cli.sh) führt
+ihn in einem Kommando aus (CI-Job `example-cli`). Oder entpacke die zip selbst in den
+Plugin-Ordner des Nutzers: `~/.local/share/solidcraft/plugins/` (Linux),
+`%LOCALAPPDATA%\SolidCraft\plugins\` (Windows), `~/Library/Application Support/SolidCraft/plugins/`
+(macOS).
+
 revmesh 0.2.x ist auf SolidCraft 0.50 ausgerichtet: Die Plugin-Schnittstelle ist unverändert aus
 SolidCraft v0.50.0 übernommen und CI testet gegen `solidcraft-cli` 0.50.0 (siehe
 [Kompatibilität](https://github.com/stritti/revmesh#compatibility) im README). Die

@@ -93,7 +93,9 @@ Echte STL-Dateien von Printables, unter CC0 oder CC BY und unverändert verwende
 `crates/revmesh-core/tests/printables.rs` prüft sie gegen die veröffentlichten Quellen der Autoren, wo es
 sie gibt, und die `printables-*.json`-Cases importieren jede in SolidCraft. Für jede Netzdatei endet
 `cargo run -q -p revmesh-core --example params -- part.obj` mit der Feature-Anzahl und dem Volumen, das
-eine Plugin-Test-Case erwartet.
+eine Plugin-Test-Case erwartet. Jede STL-Datei direkt messen:
+`python3 scripts/measure-stl.py part.stl` (Dreiecke, Volumen, Oberfläche, Bounding Box; `--json` für
+Skripte, `--gate 0.01 a.stl b.stl` zum Volumenvergleich zweier Dateien — das eigene 1-%-Gate des Imports).
 
 Die Beispielteile in `examples/` (in der [Beispiel-Galerie](/de/guide/examples) der Doku gezeigt) werden
 genauso erzeugt, von `crates/revmesh-core/examples/examples_stl.rs`; `crates/revmesh-core/tests/examples.rs`

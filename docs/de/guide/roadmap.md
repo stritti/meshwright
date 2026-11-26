@@ -138,8 +138,10 @@
       im Netz-Fallback an Präzision
    4. eine höhere `auto`-Eingabegrenze (heute 16 MiB gegen 32 MiB im mesh-Modus, `revmesh-plugin`), indem
       die Indexe, die die Erkennung über Flächen und Wände baut, schlanker werden
-   5. lokalisierte ASCII-STL-Syntaxgründe (sie bleiben heute Englisch, `stl.rs`) und eine optionale
-      `units`-Importoption (STL ist einheitenlos und wird als mm angenommen)
+   5. (erledigt: ASCII-STL-Syntaxfehler tragen einen `SyntaxReason` (`stl.rs`), gerendert in der
+      Importsprache über `stl.syntax.reason.*` in den Lokalisierungskatalogen; die Dialogoption
+      `units` (`plugin.json`) liest Zoll-Dateien als Zoll und skaliert sie direkt auf Millimeter
+      (`convert_units`, danach bereichsgeprüft), vermerkt im Bericht als `revmesh.units`)
 
 Beiträge sind sehr willkommen: Bug-Reports, STL-Dateien, die schlecht importieren, Erkenner, Doku.
 Fang an mit [CONTRIBUTING.md](https://github.com/stritti/revmesh/blob/main/CONTRIBUTING.md).

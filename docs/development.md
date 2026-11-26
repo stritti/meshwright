@@ -93,7 +93,9 @@ Real STL files from Printables, under CC0 or CC BY and used unchanged, are in
 `crates/revmesh-core/tests/printables.rs` checks them against the authors' published sources
 where there are any, and the `printables-*.json` cases import each in SolidCraft. For any mesh
 file, `cargo run -q -p revmesh-core --example params -- part.obj` ends with the feature count and the
-volume a plugin test case expects.
+volume a plugin test case expects. Measure any STL file directly with
+`python3 scripts/measure-stl.py part.stl` (triangles, volume, surface, bounding box; `--json` for
+scripts, `--gate 0.01 a.stl b.stl` to compare two volumes, the import's own gate).
 
 The example parts in `examples/` (shown in the docs' [examples](/guide/examples) gallery) are
 generated the same way, by `crates/revmesh-core/examples/examples_stl.rs`;
