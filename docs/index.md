@@ -6,8 +6,8 @@ hero:
   text: STL in, editable design out
   tagline: A SolidCraft importer plugin that turns triangle meshes into a parametric feature history you can keep designing on.
   image:
-    src: /logo.svg
-    alt: revmesh
+    src: /stl-to-design.svg
+    alt: 'Animated: an STL triangle mesh becomes an editable SolidCraft design — sketch, extrusion, hole, fillet, with editable parameters'
   actions:
     - theme: brand
       text: Install
