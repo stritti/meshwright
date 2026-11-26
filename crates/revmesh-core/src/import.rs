@@ -308,6 +308,7 @@ mod tests {
             pads: vec![],
             pockets: vec![],
             bosses: vec![],
+            side_bosses: Vec::new(),
             slots: vec![],
             outline_fillet_rs: Vec::new(),
             edge_fillet_r: None,
@@ -356,6 +357,7 @@ mod tests {
             pads: vec![],
             pockets: vec![],
             bosses: vec![],
+            side_bosses: Vec::new(),
             slots: vec![],
             outline_fillet_rs: Vec::new(),
             edge_fillet_r: None,
@@ -415,6 +417,7 @@ mod tests {
             pads: vec![],
             pockets: vec![],
             bosses: vec![],
+            side_bosses: Vec::new(),
             slots: vec![],
             outline_fillet_rs: vec![2.5; 4],
             edge_fillet_r: None,
@@ -468,6 +471,7 @@ mod tests {
             pads: vec![],
             pockets: vec![],
             bosses: vec![],
+            side_bosses: Vec::new(),
             slots: vec![],
             outline_fillet_rs: vec![4.0; 4],
             edge_fillet_r: None,
@@ -612,6 +616,7 @@ mod tests {
             pads: vec![],
             pockets: vec![],
             bosses: vec![],
+            side_bosses: Vec::new(),
             slots: vec![],
             outline_fillet_rs: Vec::new(),
             edge_fillet_r: None,
@@ -686,6 +691,32 @@ mod tests {
         assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));
         let names: Vec<&str> = result.design.params.iter().filter(|p| !p.model).map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"fillet_r_1") && names.contains(&"fillet_r_4") && !names.contains(&"fillet_r"));
+        let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
+        assert!((plate.volume() - volume).abs() < 1e-6 * volume, "{} vs {volume}", plate.volume());
+    }
+
+    /// Keeps the side-boss plate's plugin fixture and its expectations in step (roadmap 3.10):
+    /// one joined cylinder on the +X wall, `boss_1_*` parameters.
+    #[test]
+    fn plugin_test_side_boss_fixture() {
+        use crate::recognize::{SideBossSpec, Wall};
+        let case: serde_json::Value =
+            serde_json::from_str(include_str!("../../../plugin/revmesh/tests/side-boss.json")).expect("valid case");
+        let bytes = include_bytes!("../../../plugin/revmesh/tests/side-boss.stl");
+        let result = import(bytes, "side-boss.stl", &ImportOptions::default()).expect("imports");
+        let Recognition::Plate { plate, .. } = recognize(&stl::parse(bytes).expect("parses")) else { panic!("not a plate") };
+        assert_eq!(plate.side_bosses, [SideBossSpec { wall: Wall::PosX, at: [20.0, 3.0], d: 5.0, h: 5.0 }]);
+        let expect = &case["expect"];
+        assert_eq!(result.design.features.len() as u64, expect["reply"]["features"].as_u64().expect("count"));
+        assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"));
+        let names: Vec<&str> = result.design.params.iter().filter(|p| !p.model).map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"boss_1_d") && names.contains(&"boss_1_y") && names.contains(&"boss_1_z"));
+        let design: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid");
+        let cylinders: Vec<&serde_json::Value> =
+            design["features"].as_array().expect("features").iter().filter(|f| f["type"] == "cylinder").collect();
+        assert_eq!(cylinders.len(), 1);
+        assert_eq!(cylinders[0]["axis"], serde_json::json!([1.0, 0.0, 0.0]));
+        assert_eq!(cylinders[0]["base"], serde_json::json!(["base_cx + base_x / 2", "boss_1_y", "boss_1_z"]));
         let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
         assert!((plate.volume() - volume).abs() < 1e-6 * volume, "{} vs {volume}", plate.volume());
     }

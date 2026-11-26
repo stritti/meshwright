@@ -35,6 +35,7 @@ fn plate(x: f64, y: f64, z: f64, holes: Vec<HoleSpec>, fillet: Option<f64>) -> P
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: fillet.map_or_else(Vec::new, |r| vec![r; 4]),
         edge_fillet_r: None,

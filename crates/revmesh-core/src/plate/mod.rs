@@ -50,6 +50,7 @@ pub(crate) use outline::{edge_fillet_removed, fillet_loss};
 
 use std::f64::consts::PI;
 
+pub(crate) use bosses::strip_side_bosses;
 use bosses::{Shape, strip_bosses};
 use holes::Footprint;
 use prism::recognize_prism;
@@ -170,16 +171,33 @@ const NOT_FLAT: &str = "it is not a flat plate: some corners lie between its top
 
 const NOT_CLOSED: &str = "the mesh is not closed, or its top and bottom faces differ";
 
-/// Looks for a plate in `mesh`, possibly with round bosses on its top face. `Err` carries the
-/// reason in the user's words.
+/// Looks for a plate in `mesh`, possibly with round bosses on its top face or on a side wall
+/// (roadmap 3.10). `Err` carries the reason in the user's words.
 pub(crate) fn recognize_plate(mesh: &Mesh, allow_steps: bool) -> Result<Recognition, String> {
     let why = match recognize_prism(mesh, allow_steps) {
         Ok(found) => return Ok(found),
         Err(why) => why,
     };
+    // Something may stand on a side wall: strip it there (the wall rotated to face up) and
+    // recognise what lies behind it, which may have top bosses of its own. Only in the Z frame
+    // and below the rotated-mesh size cap — along X or Y a side boss is the top boss of the
+    // rotated attempt, which the caller tries anyway.
+    if allow_steps
+        && mesh.triangles.len() <= crate::recognize::MAX_ROTATED_TRIANGLES
+        && let Some((stripped, side_bosses)) = strip_side_bosses(mesh)
+        && let Ok(mut recognised) = recognize_plate(&stripped, allow_steps)
+        && let Recognition::Plate { plate, .. } = &mut recognised
+    {
+        plate.side_bosses = side_bosses;
+        let error = (plate.volume() - mesh.volume()) / mesh.volume();
+        if error.abs() > MAX_VOLUME_ERROR {
+            return Err(format!("the rebuilt plate would differ from the mesh by {:.1}% in volume", error.abs() * 100.0));
+        }
+        return Ok(recognised);
+    }
     // Something may stand on the top face: the plate is then what lies below it, its top face
     // closed over the bosses' footprints.
-    let Some((plate, found)) = strip_bosses(mesh)? else { return Err(why) };
+    let Some((plate, found, _)) = strip_bosses(mesh)? else { return Err(why) };
     let mut recognised = recognize_prism(&plate, allow_steps)?;
     let (offset, top) = match &recognised {
         Recognition::Plate { plate, offset } => (*offset, offset[2] + plate.z),

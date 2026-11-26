@@ -392,6 +392,7 @@ fn split_hole_rims_stay_round() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,

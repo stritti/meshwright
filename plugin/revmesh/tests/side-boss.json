@@ -1,0 +1,9 @@
+{
+  "entry": "stl",
+  "file": "side-boss.stl",
+  "expect": {
+    "reply": {"bodies": 1, "features": 5, "loss_report": {"summary": "A 60 x 40 x 6 mm plate with 1 hole and 1 boss"}},
+    "model": {"body_count": 1, "total": {"volume_mm3": 14328.528767}},
+    "tolerance": 1e-4
+  }
+}

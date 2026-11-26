@@ -16,6 +16,9 @@ pub struct PlateSpec {
     pub slots: Vec<SlotSpec>,
     /// Round bosses standing on the top face.
     pub bosses: Vec<BossSpec>,
+    /// Round bosses standing on a side wall, protruding along that wall's outward normal
+    /// (roadmap 3.10).
+    pub side_bosses: Vec<SideBossSpec>,
     /// Rectangular blocks standing on the top face.
     pub pads: Vec<PadSpec>,
     /// Rectangular blind pockets in the top or the bottom face.
@@ -125,6 +128,43 @@ pub struct BossSpec {
     pub draft_deg: Option<f64>,
     /// A chamfer of the boss's top edge: `w` in from the side, `h` down from the top.
     pub chamfer: Option<BossChamfer>,
+}
+
+/// A side wall of a plate standing along Z (the frame the part is recognised in): the wall a
+/// [`SideBossSpec`] protrudes from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Wall {
+    /// The wall at `x = size X`, protruding along +X.
+    PosX,
+    /// The wall at `x = 0`, protruding along −X.
+    NegX,
+    /// The wall at `y = size Y`, protruding along +Y.
+    PosY,
+    /// The wall at `y = 0`, protruding along −Y.
+    NegY,
+}
+
+/// A round boss standing on a side wall: a cylinder `d` wide and `h` out along the wall's
+/// outward normal, its axis through `at` — the two frame coordinates across the wall
+/// (`[y, z]` on an X wall, `[x, z]` on a Y wall), the part's corner at the origin.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SideBossSpec {
+    /// The wall it stands on.
+    pub wall: Wall,
+    /// The axis's two coordinates across the wall, as above.
+    pub at: [f64; 2],
+    /// Diameter.
+    pub d: f64,
+    /// How far it protrudes from the wall.
+    pub h: f64,
+}
+
+impl SideBossSpec {
+    /// The volume of the boss, in mm³: the whole cylinder lies outside the wall.
+    #[must_use]
+    pub fn volume(&self) -> f64 {
+        std::f64::consts::PI * (self.d / 2.0).powi(2) * self.h
+    }
 }
 
 /// A chamfer of a boss's top edge.
@@ -292,6 +332,7 @@ impl PlateSpec {
             outline_fillet_rs: self.outline_fillet_rs,
             // A box rounded all over is a Z plate (mesh2cad's box vocabulary is a Z
             // extrusion's); recognize() tries Z first and never converts it to a profile.
+            // Side bosses only attach in the Z frame, so they are always empty here.
             arcs: Vec::new(),
         }
     }
@@ -309,7 +350,14 @@ impl PlateSpec {
             locale,
             [self.x, self.y, self.z],
             None,
-            [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
+            [
+                self.holes.len(),
+                self.slots.len(),
+                self.bosses.len() + self.side_bosses.len(),
+                self.cutouts.len(),
+                self.pads.len(),
+                self.pockets.len(),
+            ],
             &self.outline_fillet_rs,
             self.edge_fillet_r,
         )
@@ -338,7 +386,8 @@ impl PlateSpec {
         };
         let holes: f64 = self.holes.iter().map(|h| h.volume(self.z)).sum();
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
-        let bosses: f64 = self.bosses.iter().map(BossSpec::volume).sum();
+        let bosses: f64 =
+            self.bosses.iter().map(BossSpec::volume).sum::<f64>() + self.side_bosses.iter().map(SideBossSpec::volume).sum::<f64>();
         let cutouts: f64 = self.cutouts.iter().map(|c| polygon_area_arcs(&c.corners, c.arc_sides()).abs()).sum();
         base - (slots + cutouts) * self.z - holes + bosses + blocks(&self.pads, &self.pockets)
     }

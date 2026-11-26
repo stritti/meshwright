@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::axis::Axis;
 use super::spec::{
     ArcSide, BossChamfer, BossSpec, CutoutSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec,
-    SlotSpec,
+    SideBossSpec, SlotSpec, Wall,
 };
 
 use crate::design::{
@@ -77,6 +77,7 @@ impl PlateSpec {
         hole_params(&mut b, &self.holes, at, axis);
         slot_params(&mut b, &self.slots, at, axis);
         boss_params(&mut b, &self.bosses, at, axis);
+        side_boss_params(&mut b, &self.side_bosses, at, self.bosses.len());
         block_params(&mut b, &self.pads, &self.pockets, at, axis);
         let fillet_groups = radius_groups(&self.outline_fillet_rs);
         if fillet_groups.len() == 1 {
@@ -147,6 +148,7 @@ impl PlateSpec {
         );
         slot_features(&mut b, &self.slots, at, axis);
         boss_features(&mut b, &self.bosses, at, self.z, axis, "base_z0 + base_t", extrude);
+        side_boss_features(&mut b, &self.side_bosses, self.bosses.len());
         block_features(&mut b, &self.pads, &self.pockets, &[], at, axis, "base_z0 + base_t", "base_z0", &mut pending_rims);
         if !fillet_groups.is_empty() {
             let mid = at[2] + self.z / 2.0;
@@ -667,6 +669,47 @@ fn boss_features(b: &mut DesignBuilder, bosses: &[BossSpec], at: Vec3, z: f64, a
                 },
             );
         }
+    }
+}
+
+/// The side bosses' parameters, numbered after the top bosses: `boss_<n>_d`, `boss_<n>_h` and the
+/// axis's two world coordinates across the wall (`boss_<n>_y`/`_z` on an X wall, `boss_<n>_x`/`_z`
+/// on a Y wall), in world coordinates for a plate whose corner is at `at`.
+fn side_boss_params(b: &mut DesignBuilder, bosses: &[SideBossSpec], at: Vec3, base: usize) {
+    for (i, s) in bosses.iter().enumerate() {
+        let p = format!("boss_{}", base + i + 1);
+        b.param(Param::user(format!("{p}_d"), s.d)).param(Param::user(format!("{p}_h"), s.h));
+        let (horiz, world) = match s.wall {
+            Wall::PosX | Wall::NegX => ("y", at[1] + s.at[0]),
+            Wall::PosY | Wall::NegY => ("x", at[0] + s.at[0]),
+        };
+        b.param(Param::user(format!("{p}_{horiz}"), snap_mm(world)));
+        b.param(Param::user(format!("{p}_z"), snap_mm(at[2] + s.at[1])));
+    }
+}
+
+/// One `cylinder` joined per side boss (roadmap 3.10): its base on the wall's expression, its
+/// axis the wall's outward normal, so it protrudes from the wall. A plate is always a Z
+/// extrusion, so the walls' expressions are the `base_*` parameters'.
+fn side_boss_features(b: &mut DesignBuilder, bosses: &[SideBossSpec], base: usize) {
+    for (i, s) in bosses.iter().enumerate() {
+        let n = base + i + 1;
+        let p = format!("boss_{n}");
+        let (axis, wall) = match s.wall {
+            Wall::PosX => ([1.0, 0.0, 0.0], "base_cx + base_x / 2"),
+            Wall::NegX => ([-1.0, 0.0, 0.0], "base_cx - base_x / 2"),
+            Wall::PosY => ([0.0, 1.0, 0.0], "base_cy + base_y / 2"),
+            Wall::NegY => ([0.0, -1.0, 0.0], "base_cy - base_y / 2"),
+        };
+        let base3 = match s.wall {
+            Wall::PosX | Wall::NegX => [wall.to_owned(), format!("{p}_y"), format!("{p}_z")],
+            Wall::PosY | Wall::NegY => [format!("{p}_x"), wall.to_owned(), format!("{p}_z")],
+        };
+        b.feature(
+            format!("Boss{n}"),
+            vec![],
+            FeatureKind::Cylinder { base: base3, axis, radius: format!("{p}_d / 2"), height: format!("{p}_h"), operation: Operation::Join },
+        );
     }
 }
 

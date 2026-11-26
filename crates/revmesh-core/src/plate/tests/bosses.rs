@@ -427,3 +427,108 @@ fn a_non_tangent_foot_round_is_no_fillet() {
     rings.push((r, 8.0));
     assert!(reason(&layered_boss(&rings, 48)).contains("neither a straight round boss"));
 }
+
+/// Roadmap 3.10: a round boss on a side wall is recognised on the Z plate — here with a through
+/// hole, so the X/Y attempts cannot read the boss as a top boss of the rotated part — on each of
+/// the four walls.
+#[test]
+fn recognises_side_bosses_on_all_four_walls() {
+    use crate::recognize::{HoleSpec, PlateSpec, SideBossSpec, Wall};
+    for wall in [Wall::PosX, Wall::NegX, Wall::PosY, Wall::NegY] {
+        let at = match wall {
+            Wall::PosX | Wall::NegX => [20.0, 3.0],
+            Wall::PosY | Wall::NegY => [30.0, 3.0],
+        };
+        let expected = PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 6.0, head: None, blind: None }],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            side_bosses: vec![SideBossSpec { wall, at, d: 5.0, h: 5.0 }],
+            slots: vec![],
+            outline_fillet_rs: vec![],
+            edge_fillet_r: None,
+        };
+        let mesh = synth::plate(&expected, 32, [0.0; 3]);
+        assert!(
+            (mesh.volume() - expected.volume()).abs() < 1e-3 * expected.volume(),
+            "{wall:?}: synth {} vs spec {}",
+            mesh.volume(),
+            expected.volume()
+        );
+        let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+        assert_eq!(found(&reread).0, expected, "{wall:?}");
+    }
+}
+
+/// A side boss together with a top boss: the side one is stripped first, the top one on the
+/// recursion, and the volume gate covers both.
+#[test]
+fn recognises_a_side_boss_next_to_a_top_boss() {
+    use crate::recognize::{PlateSpec, SideBossSpec, Wall};
+    let expected = PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![BossSpec { x: 15.0, y: 30.0, d: 8.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }],
+        side_bosses: vec![SideBossSpec { wall: Wall::PosY, at: [40.0, 3.0], d: 5.0, h: 6.0 }],
+        slots: vec![],
+        outline_fillet_rs: vec![],
+        edge_fillet_r: None,
+    };
+    let mesh = synth::plate(&expected, 32, [0.0; 3]);
+    let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+    assert_eq!(found(&reread).0, expected);
+}
+
+/// A rectangular block on a side wall is no round boss: no side boss is stripped from it.
+#[test]
+fn a_block_on_a_side_wall_is_no_side_boss() {
+    use crate::recognize::{PlateSpec, recognize};
+    let mut mesh = synth::plate(
+        &PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            side_bosses: vec![],
+            slots: vec![],
+            outline_fillet_rs: vec![],
+            edge_fillet_r: None,
+        },
+        32,
+        [0.0; 3],
+    );
+    // A 10 x 4 block on the +X wall, x from 60 to 65, y 15..25, z 1..5: the wall pierced by its
+    // footprint, the block's walls and cap added.
+    mesh.triangles.retain(|t| !t.iter().all(|p| (p[0] - 60.0).abs() < 1e-9));
+    let wall: Vec<P2> = vec![[0.0, 0.0], [40.0, 0.0], [40.0, 6.0], [0.0, 6.0]];
+    let foot: Vec<P2> = vec![[15.0, 1.0], [25.0, 1.0], [25.0, 5.0], [15.0, 5.0]];
+    for [a, b, c] in synth::triangulate(&wall, std::slice::from_ref(&foot)) {
+        mesh.triangles.push([[60.0, a[0], a[1]], [60.0, b[0], b[1]], [60.0, c[0], c[1]]]);
+    }
+    let at = |p: P2, w: f64| [w, p[0], p[1]];
+    for i in 0..4 {
+        let (a, b) = (foot[i], foot[(i + 1) % 4]);
+        mesh.triangles.push([at(a, 60.0), at(b, 65.0), at(a, 65.0)]);
+        mesh.triangles.push([at(a, 60.0), at(b, 60.0), at(b, 65.0)]);
+    }
+    for [a, b, c] in synth::triangulate(&foot, &[]) {
+        mesh.triangles.push([at(a, 65.0), at(b, 65.0), at(c, 65.0)]);
+    }
+    let found = recognize(&mesh);
+    let plate_with_side_boss = matches!(&found, Recognition::Plate { plate, .. } if !plate.side_bosses.is_empty());
+    assert!(!plate_with_side_boss, "{found:?}");
+}

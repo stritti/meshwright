@@ -1239,6 +1239,7 @@ pub(super) fn recognition(
             pads: vec![],
             pockets,
             bosses: vec![],
+            side_bosses: Vec::new(),
             cutouts,
             outline_fillet_rs: plate_radii,
             edge_fillet_r: rim.map(|rim| snap_mm(rim.r)),

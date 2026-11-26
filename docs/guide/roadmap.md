@@ -16,8 +16,10 @@
    7. (done) polygonal cut-outs
    8. (done) pads and rectangular pockets (steps and other pockets later)
    9. (done) extrusions along X and Y
-   10. (done) boxes with every edge rounded (`edge_fillet_r`), with through holes in them;
-       bosses on side faces still to do
+   10. (done) boxes with every edge rounded (`edge_fillet_r`), with through holes in them, and
+       (done: a side wall's round boss is stripped with the wall rotated to face up
+       (`plate/bosses.rs::strip_side_bosses`) and written as a `cylinder` joined on the wall's
+       `base_*` expression with the wall's outward normal as its axis) bosses on side faces
    11. (done) chamfers, drafts and the rounds at a boss's foot or a hole's rim
    12. combined extrusions: (done) the intersection of outlines extruded along X, Y and Z, with
        openings through them, straight blind cuts into them and round holes, and (done) unions
@@ -112,7 +114,7 @@
       walls' sagitta, so walls meet their face at 90°) ComplexGen-style topology gates
       alongside exact-or-nothing and the volume check: recognised faces close into loops, walls
       meet their face at 90°
-   plus what is still open in 3.10 and 3.12: bosses on side faces, roofs and bevels on stacks
+   plus what is still open in 3.12: roofs and bevels on stacks, holes that cross a combined part
 7. **Import and conversion**:
    1. (done: the manifest requests `evaluate@0.2`; in auto mode the serialised design is staged
       and rebuilt in the app's private sandbox (`document.inspect`) before it is written, and a

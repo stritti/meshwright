@@ -25,6 +25,7 @@ fn spec(holes: &[(f64, f64, f64)], r: Option<f64>) -> PlateSpec {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: r.map_or_else(Vec::new, |r| vec![r; 4]),
         edge_fillet_r: None,

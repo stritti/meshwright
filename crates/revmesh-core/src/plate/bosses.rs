@@ -4,7 +4,8 @@
 use super::geometry::{boundary_loops, signed_area};
 use super::holes::{axis_rectangle, drop_collinear, round_hole};
 use super::{CHORD_FACET_SPAN, P2, tolerance};
-use crate::mesh::{Mesh, Vec3, cross, length, sub};
+use crate::mesh::{Mesh, Vec3, cross, length, snap_mm, sub};
+use crate::recognize::{SideBossSpec, Wall};
 
 use super::holes::Footprint;
 /// A round boss as found, in the file's coordinates: its axis, radius, the height of its top,
@@ -38,10 +39,11 @@ pub(super) const NO_BOSS: &str = "something stands on the top face that is neith
                        (other shapes on the top face are not recognised yet)";
 
 /// The plate under round bosses: the mesh without what stands on its top face, that face closed
-/// over each boss's footprint, and the bosses. The top face is a flat face facing up, below the
-/// highest; each such face is tried, the largest first (a boss's top may be larger than what
-/// is left of the plate's). `Ok(None)`: nothing stands on round footprints in any of them.
-pub(super) fn strip_bosses(mesh: &Mesh) -> Result<Option<(Mesh, Vec<FoundBoss>)>, String> {
+/// over each boss's footprint, the bosses, and the face's height the stripping ran at. The top
+/// face is a flat face facing up, below the highest; each such face is tried, the largest first
+/// (a boss's top may be larger than what is left of the plate's). `Ok(None)`: nothing stands on
+/// round footprints in any of them.
+pub(super) fn strip_bosses(mesh: &Mesh) -> Result<Option<(Mesh, Vec<FoundBoss>, f64)>, String> {
     let Some(bounds) = mesh.bounds() else { return Ok(None) };
     let size = bounds.size();
     let tol = tolerance(size[0].max(size[1]).max(size[2]));
@@ -60,12 +62,51 @@ pub(super) fn strip_bosses(mesh: &Mesh) -> Result<Option<(Mesh, Vec<FoundBoss>)>
     let mut refused = None;
     for (top_z, _) in levels {
         match strip_bosses_at(mesh, top_z, tol) {
-            Ok(Some(found)) => return Ok(Some(found)),
+            Ok(Some((plate, found, at))) => return Ok(Some((plate, found, at))),
             Ok(None) => {}
             Err(why) => refused = refused.or(Some(why)),
         }
     }
     refused.map_or(Ok(None), Err)
+}
+
+/// What stands on a side wall: the mesh with every side wall's straight round bosses stripped
+/// (each wall closed over their footprints), and the bosses in the original frame. One wall
+/// direction at a time is rotated to face up and stripped there ([`strip_bosses`]); only straight
+/// round bosses count — a pad or a shaped boss on a side wall is not recognised yet, and that
+/// wall is left alone then. `None` when no side wall has a boss.
+pub(crate) fn strip_side_bosses(mesh: &Mesh) -> Option<(Mesh, Vec<SideBossSpec>)> {
+    mesh.bounds()?;
+    // Each wall's rotation to face up (+Z) and its inverse, as proper rotations (the mesh's
+    // winding survives them).
+    #[allow(clippy::type_complexity)] // wall, rotation, inverse rotation
+    let walls: [(Wall, fn(Vec3) -> Vec3, fn(Vec3) -> Vec3); 4] = [
+        (Wall::PosX, |p| [-p[2], p[1], p[0]], |p| [p[2], p[1], -p[0]]),
+        (Wall::NegX, |p| [p[2], p[1], -p[0]], |p| [-p[2], p[1], p[0]]),
+        (Wall::PosY, |p| [p[0], -p[2], p[1]], |p| [p[0], p[2], -p[1]]),
+        (Wall::NegY, |p| [p[0], p[2], -p[1]], |p| [p[0], -p[2], p[1]]),
+    ];
+    let mut current = mesh.clone();
+    let mut out = Vec::new();
+    for (wall, rot, unrot) in walls {
+        let rotated = Mesh::new(current.triangles.iter().map(|t| t.map(rot)).collect());
+        let Some((stripped, found, wall_at)) = strip_bosses(&rotated).ok().flatten() else { continue };
+        if found.is_empty() || found.iter().any(|b| !matches!(b.foot, Footprint::Round { .. }) || b.shape != Shape::Straight) {
+            continue;
+        }
+        for b in &found {
+            let Footprint::Round { centre, r } = b.foot else { continue };
+            let p = unrot([centre[0], centre[1], wall_at]);
+            // The output parameters snap, as the top bosses' do.
+            let at = match wall {
+                Wall::PosX | Wall::NegX => [snap_mm(p[1]), snap_mm(p[2])],
+                Wall::PosY | Wall::NegY => [snap_mm(p[0]), snap_mm(p[2])],
+            };
+            out.push(SideBossSpec { wall, at, d: snap_mm(2.0 * r), h: snap_mm(b.top - wall_at) });
+        }
+        current = Mesh::new(stripped.triangles.iter().map(|t| t.map(unrot)).collect());
+    }
+    (!out.is_empty()).then_some((current, out))
 }
 
 /// A facet's area (twice it) and how far its normal points up.
@@ -240,8 +281,8 @@ fn round_foot(upper: &[&crate::mesh::Triangle], foot: &Footprint, top: f64, top_
 
 /// [`strip_bosses`] with the top face at `top_z`: a boss's footprint is a round loop in that
 /// face, its wall stands straight on that loop (within the facets' sagitta), and its top is one
-/// flat face.
-pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Option<(Mesh, Vec<FoundBoss>)>, String> {
+/// flat face. Returns the face's height the stripping ran at alongside.
+pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Option<(Mesh, Vec<FoundBoss>, f64)>, String> {
     let flat = |p: &Vec3| [p[0], p[1]];
     // The face's own height: the one most of its area lies at (a round's first, nearly flat
     // facets may lie within the tolerance of it, a little higher).
@@ -337,7 +378,7 @@ pub(super) fn strip_bosses_at(mesh: &Mesh, top_z: f64, tol: f64) -> Result<Optio
             triangles.push([c, [p[0], p[1], top_z], [q[0], q[1], top_z]]);
         }
     }
-    Ok(Some((Mesh::new(triangles), bosses)))
+    Ok(Some((Mesh::new(triangles), bosses, top_z)))
 }
 
 /// The facet `t` of a straight boss or pad `b`: a piece of its flat top (put in `top`) or of its
