@@ -678,6 +678,17 @@ fn a_non_manifold_edge_is_refused() {
     assert!(why.contains("not a closed surface"), "{why}");
 }
 
+/// Two boxes touching only along one edge make it non-manifold (four facets on it): refused,
+/// not recognised as a stack of two.
+#[test]
+fn two_boxes_touching_on_an_edge_are_refused() {
+    let mut mesh = block(10.0, 10.0, 5.0);
+    let second = block(10.0, 10.0, 5.0);
+    mesh.triangles.extend(second.triangles.iter().map(|t| t.map(|p| [p[0] + 10.0, p[1] + 10.0, p[2]])));
+    let why = reason(&mesh);
+    assert!(why.contains("not a closed surface"), "{why}");
+}
+
 /// An exporter's T-junction (a corner lying on another facet's edge) is still watertight: the
 /// segment is covered by the sub-edges' lengths, so the box is recognised.
 #[test]

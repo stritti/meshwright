@@ -33,6 +33,8 @@ pub use spec::{
 };
 pub use stack::{Band, StackSpec};
 
+use std::collections::HashMap;
+
 use crate::mesh::{Mesh, Vec3, cross, dot, length, sub};
 use crate::plate::{WELD_GRID_TOL, tolerance};
 
@@ -174,15 +176,121 @@ pub enum Recognition {
 /// imported as a mesh body instead.
 const MAX_ROTATED_TRIANGLES: usize = 200_000;
 
+/// A supporting line of one or more non-standard edges: a point on it, its canonical unit
+/// direction, and the range the bad segments cover along it.
+struct Line {
+    pa: Vec3,
+    u: Vec3,
+    lo: f64,
+    hi: f64,
+    grid: f64,
+}
+
+/// Sweeps one line: every position of the bad range must be covered by exactly one facet in each
+/// direction (a T-junction's sub-edges cover it; a fin's double coverage or a gap's none do not
+/// balance), within twice the weld grid. `bucketed` holds every directed edge by its line key.
+#[allow(clippy::too_many_lines, clippy::many_single_char_names)] // points a, b, p, q, as in the geometry
+fn sweep_line(line: &Line, bucketed: &[([i64; 6], u32)], directed: &[(u32, u32)], coords: &[Vec3], grid: f64) -> Result<(), String> {
+    let k = line_key_of(line);
+    // Gather the directed edges on this line: the buckets within one step of the key.
+    let mut events: Vec<(f64, i8, i8)> = Vec::new();
+    let mut f_total = 0.0;
+    let mut b_total = 0.0;
+    for du in [-1i64, 0, 1] {
+        for dv in [-1, 0, 1] {
+            for dw in [-1, 0, 1] {
+                for dc in [-1i64, 0, 1] {
+                    for dd in [-1, 0, 1] {
+                        for de in [-1, 0, 1] {
+                            let nk = [k[0] + du, k[1] + dv, k[2] + dw, k[3] + dc, k[4] + dd, k[5] + de];
+                            let range = bucketed.partition_point(|(bk, _)| *bk < nk)..bucketed.partition_point(|(bk, _)| *bk <= nk);
+                            for &(_, ei) in &bucketed[range] {
+                                let (a, b) = directed[ei as usize];
+                                let (p, q) = (coords[a as usize], coords[b as usize]);
+                                let off = |p: Vec3| length(cross(sub(p, line.pa), line.u));
+                                if off(p) > grid || off(q) > grid {
+                                    continue;
+                                }
+                                let (s, e) = (dot(sub(p, line.pa), line.u), dot(sub(q, line.pa), line.u));
+                                let (lo, hi) = if s <= e { (s, e) } else { (e, s) };
+                                if hi < line.lo - grid || lo > line.hi + grid {
+                                    continue;
+                                }
+                                let fwd = dot(sub(q, p), line.u) > 0.0;
+                                let (cl, ch) = (lo.max(line.lo), hi.min(line.hi));
+                                if fwd {
+                                    f_total += ch - cl;
+                                    events.push((lo, 1, 0));
+                                    events.push((hi, -1, 0));
+                                } else {
+                                    b_total += ch - cl;
+                                    events.push((lo, 0, 1));
+                                    events.push((hi, 0, -1));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let len = line.hi - line.lo;
+    if (f_total - len).abs() > 2.0 * grid || (b_total - len).abs() > 2.0 * grid {
+        return Err("the mesh is not a closed surface: an edge belongs to more or fewer than two faces".into());
+    }
+    events.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (mut cf, mut cb) = (0i32, 0i32);
+    let mut prev = line.lo;
+    for &(pos, df, db) in &events {
+        if pos > prev && prev < line.hi && pos > line.lo && (cf > 1 || cb > 1) {
+            return Err("the mesh is not a closed surface: an edge belongs to more or fewer than two faces".into());
+        }
+        cf += i32::from(df);
+        cb += i32::from(db);
+        prev = pos;
+    }
+    Ok(())
+}
+
+/// The line key of `line` (see [`line_key`]).
+fn line_key_of(line: &Line) -> [i64; 6] {
+    line_key(line.pa, [line.pa[0] + line.u[0], line.pa[1] + line.u[1], line.pa[2] + line.u[2]], 4.0 * line.grid)
+}
+
+/// A line's key: canonical unit direction (first non-zero component positive) and the offset
+/// cross(p, u), quantised — collinear edges within the weld grid `grid` land in the same or a
+/// neighbouring bucket.
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+fn line_key(pa: Vec3, pb: Vec3, grid: f64) -> [i64; 6] {
+    let ab = sub(pb, pa);
+    let len = length(ab);
+    let mut u = [ab[0] / len, ab[1] / len, ab[2] / len];
+    if u.iter().copied().find(|c| *c != 0.0).is_some_and(|c| c < 0.0) {
+        for c in &mut u {
+            *c = -*c;
+        }
+    }
+    let c = cross(pa, u);
+    [
+        (u[0] * 20.0).round() as i64,
+        (u[1] * 20.0).round() as i64,
+        (u[2] * 20.0).round() as i64,
+        (c[0] / grid).round() as i64,
+        (c[1] / grid).round() as i64,
+        (c[2] / grid).round() as i64,
+    ]
+}
+
 /// Topology gate (roadmap 6.6, `ComplexGen`'s closed face loops): every edge of the mesh must be
-/// covered by exactly two facets, one in each direction, so the recognised faces close into
-/// loops. Corners are welded on a grid well below the tolerance, as `boundary_loops` does in
-/// 2D; an exporter's T-junction (a corner lying on another facet's edge) still counts, because
-/// the segment is then covered by the sub-edges' lengths. Sort-based, so the gate adds no
-/// per-triangle index beyond three `u64`/`u32`-pair vectors, freed before recognition builds
-/// its own indexes.
+/// covered by exactly one facet in each direction, so the recognised faces close into loops.
+/// Corners are welded on a grid well below the tolerance, as `boundary_loops` does in 2D. An
+/// exporter's T-junction (a corner lying on another facet's edge) still counts: the segment is
+/// then covered by the sub-edges. Edges that are not the usual one-each-way pair are grouped by
+/// their supporting line, and each line is swept once, so the gate costs O(edges log edges), not
+/// quadratic on T-junction meshes. Sort-based throughout: no per-triangle index beyond a few
+/// vectors, freed before recognition builds its own.
 #[allow(clippy::many_single_char_names)] // points a, b, p, the cell indices c, as in the geometry
-#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss, clippy::cast_lossless)] // the packed keys below are bounded: < 2^21 per axis, < 2^31 point ids
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss, clippy::cast_lossless)] // the packed keys are bounded: < 2^21 per axis, < 2^31 point ids
 fn closed_loops(mesh: &Mesh, tol: f64) -> Result<(), String> {
     let Some(bounds) = mesh.bounds() else { return Ok(()) };
     let grid = tol / WELD_GRID_TOL;
@@ -210,8 +318,7 @@ fn closed_loops(mesh: &Mesh, tol: f64) -> Result<(), String> {
         .map(|&(a, b)| if a < b { (u64::from(a) << 33) | (u64::from(b) << 1) } else { (u64::from(b) << 33) | (u64::from(a) << 1) | 1 })
         .collect();
     by_edge.sort_unstable();
-    // Welded points' coordinates, built only when an edge is not the usual one-each-way.
-    let mut coords: Option<Vec<Vec3>> = None;
+    let mut bad: Vec<(u32, u32)> = Vec::new();
     let mut i = 0;
     while i < by_edge.len() {
         let edge = by_edge[i] & !1;
@@ -224,46 +331,52 @@ fn closed_loops(mesh: &Mesh, tol: f64) -> Result<(), String> {
             }
             i += 1;
         }
-        if f == 1 && r == 1 {
-            continue; // the usual case: one facet each way
+        if f != 1 || r != 1 {
+            bad.push(((edge >> 33) as u32, (edge >> 1 & 0x7FFF_FFFF) as u32));
         }
-        let coords = coords.get_or_insert_with(|| {
-            let mut v: Vec<(u64, Vec3)> = mesh.triangles.iter().flatten().map(|&p| (key(p), p)).collect();
-            v.sort_unstable_by_key(|(k, _)| *k);
-            v.dedup_by_key(|(k, _)| *k);
-            v.into_iter().map(|(_, p)| p).collect()
-        });
-        let (lo, hi) = ((edge >> 33) as usize, (edge >> 1 & 0x7FFF_FFFF) as usize);
-        let (pa, pb) = (coords[lo], coords[hi]);
-        let ab = sub(pb, pa);
-        let len = length(ab);
-        if len <= grid {
-            continue; // welded into a point: nothing to cover
-        }
-        let u = [ab[0] / len, ab[1] / len, ab[2] / len];
-        // The total length of the collinear edges running each way over the segment.
-        let covered = |forward: bool| -> f64 {
-            let mut sum = 0.0;
-            for &(a, b) in &directed {
-                let (p, q) = (coords[a as usize], coords[b as usize]);
-                let along = dot(sub(q, p), ab);
-                if (along > 0.0) != forward {
-                    continue;
+    }
+    if bad.is_empty() {
+        return Ok(());
+    }
+    // Welded points' coordinates.
+    let mut v: Vec<(u64, Vec3)> = mesh.triangles.iter().flatten().map(|&p| (key(p), p)).collect();
+    v.sort_unstable_by_key(|(k, _)| *k);
+    v.dedup_by_key(|(k, _)| *k);
+    let coords: Vec<Vec3> = v.into_iter().map(|(_, p)| p).collect();
+    // A line's key: canonical unit direction (first non-zero component positive, quantised) and
+    // the offset cross(p, u), quantised to the weld grid. Collinear edges within the grid land in
+    // the same or a neighbouring bucket.
+    // Bucket every directed edge by its line key, once.
+    let mut bucketed: Vec<([i64; 6], u32)> =
+        directed.iter().enumerate().map(|(i, &(a, b))| (line_key(coords[a as usize], coords[b as usize], 4.0 * grid), i as u32)).collect();
+    bucketed.sort_unstable_by_key(|(k, _)| *k);
+    // Group the bad segments by their line; each line is swept once below.
+    let mut lines: Vec<Line> = Vec::new();
+    let mut line_at: HashMap<[i64; 6], usize> = HashMap::new();
+    for &(a, b) in &bad {
+        let (pa, pb) = (coords[a as usize], coords[b as usize]);
+        let k = line_key(pa, pb, 4.0 * grid);
+        let idx = *line_at.entry(k).or_insert_with(|| {
+            let ab = sub(pb, pa);
+            let len = length(ab);
+            let mut u = [ab[0] / len, ab[1] / len, ab[2] / len];
+            let mut origin = pa;
+            if u.iter().copied().find(|c| *c != 0.0).is_some_and(|c| c < 0.0) {
+                for c in &mut u {
+                    *c = -*c;
                 }
-                let off_line = |p: Vec3| length(cross(sub(p, pa), ab)) / len;
-                if off_line(p) > grid || off_line(q) > grid {
-                    continue;
-                }
-                let (tp, tq) = (dot(sub(p, pa), u), dot(sub(q, pa), u));
-                let (x, y) = if tp <= tq { (tp, tq) } else { (tq, tp) };
-                sum += y.clamp(0.0, len) - x.clamp(0.0, len);
+                origin = pb;
             }
-            sum
-        };
-        let tol_len = 2.0 * grid + len * 1e-9;
-        if (covered(true) - covered(false)).abs() > tol_len {
-            return Err("the mesh is not a closed surface: an edge belongs to more or fewer than two faces".into());
-        }
+            lines.push(Line { pa: origin, u, lo: f64::INFINITY, hi: f64::NEG_INFINITY, grid });
+            lines.len() - 1
+        });
+        let line = &mut lines[idx];
+        let (s, e) = (dot(sub(pa, line.pa), line.u), dot(sub(pb, line.pa), line.u));
+        line.lo = line.lo.min(s.min(e));
+        line.hi = line.hi.max(s.max(e));
+    }
+    for line in &lines {
+        sweep_line(line, &bucketed, &directed, &coords, grid)?;
     }
     Ok(())
 }

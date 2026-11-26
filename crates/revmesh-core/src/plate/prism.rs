@@ -1141,7 +1141,8 @@ pub(super) fn check_walls(
         let plan_area2 = ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs();
         let plan_long = [distance(a, b), distance(b, c), distance(c, a)].into_iter().fold(0.0, f64::max);
         let sag = if min_round_r.is_finite() { CHORD_FACET_SPAN * plan_long * plan_long / (8.0 * min_round_r) } else { 0.0 };
-        if plan_long > 0.0 && 2.0 * plan_area2 / plan_long > tol + sag {
+        // The plan's height off its longest side: twice the area over the base.
+        if plan_long > 0.0 && plan_area2 / plan_long > tol + sag {
             return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
         }
     }
