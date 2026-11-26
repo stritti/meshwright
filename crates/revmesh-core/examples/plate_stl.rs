@@ -16,7 +16,10 @@
 //! - `stadium`: `plugin/revmesh/tests/stadium.stl`, a 40 x 20 rectangle with a radius-10
 //!   semicircle arc side at each end;
 //! - `cutout-arc`: `plugin/revmesh/tests/cutout-arc.stl`, a 70 x 40 x 6 mm plate with a
-//!   16 x 16 cut-out whose top side is a radius-8 semicircle arc side.
+//!   16 x 16 cut-out whose top side is a radius-8 semicircle arc side;
+//! - `mixed-radii`: `plugin/revmesh/tests/mixed-radii.stl`, a 70 x 40 x 6 mm plate with one
+//!   through hole and its four corners rounded with different radii (2, 3, 5 and 4 mm,
+//!   counter-clockwise from the origin corner).
 //! - `block-obj`, `block-ply`, `block-ply-bin`: `plugin/revmesh/tests/block-60x40x6.obj`,
 //!   `block-60x40x6.ply` (ASCII) and `block-60x40x6-bin.ply` (binary) — the block of
 //!   `block-60x40x6.stl` written as OBJ and PLY, so the format cases import the same geometry.
@@ -30,6 +33,7 @@
 //! cargo run -p revmesh-core --example plate_stl -- rounded-box > plugin/revmesh/tests/rounded-box.stl
 //! cargo run -p revmesh-core --example plate_stl -- stadium > plugin/revmesh/tests/stadium.stl
 //! cargo run -p revmesh-core --example plate_stl -- cutout-arc > plugin/revmesh/tests/cutout-arc.stl
+//! cargo run -p revmesh-core --example plate_stl -- mixed-radii > plugin/revmesh/tests/mixed-radii.stl
 //! cargo run -p revmesh-core --example plate_stl -- block-obj > plugin/revmesh/tests/block-60x40x6.obj
 //! cargo run -p revmesh-core --example plate_stl -- block-ply > plugin/revmesh/tests/block-60x40x6.ply
 //! cargo run -p revmesh-core --example plate_stl -- block-ply-bin > plugin/revmesh/tests/block-60x40x6-bin.ply
@@ -81,7 +85,7 @@ fn plate() -> PlateSpec {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(3.0),
+        outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,
     }
 }
@@ -101,7 +105,7 @@ fn bracket() -> ProfileSpec {
         outline_pockets: Vec::new(),
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(2.0),
+        outline_fillet_rs: vec![2.0; 6],
         arcs: Vec::new(),
     }
 }
@@ -133,7 +137,7 @@ fn patterns() -> PlateSpec {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(4.0),
+        outline_fillet_rs: vec![4.0; 4],
         edge_fillet_r: None,
     }
 }
@@ -145,7 +149,7 @@ fn inside_hole() -> ProfileSpec {
         cutouts: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(5.0),
+        outline_fillet_rs: vec![5.0; 6],
         outline_pockets: Vec::new(),
         arcs: Vec::new(),
         ..bracket()
@@ -166,7 +170,7 @@ fn stadium() -> ProfileSpec {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, Some(ArcSide { centre: [40.0, 20.0], r: 10.0 }), None, Some(ArcSide { centre: [0.0, 20.0], r: 10.0 })],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     }
 }
 
@@ -187,7 +191,25 @@ fn cutout_arc() -> ProfileSpec {
             arcs: vec![None, None, Some(ArcSide { centre: [18.0, 26.0], r: 8.0 }), None],
         }],
         arcs: Vec::new(),
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
+    }
+}
+
+/// The plate in `mixed-radii.stl`: a 70 x 40 x 6 mm plate with one centred hole and its four
+/// corners rounded with different radii, counter-clockwise from the origin corner.
+fn mixed_radii() -> PlateSpec {
+    PlateSpec {
+        x: 70.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_rs: vec![2.0, 3.0, 5.0, 4.0],
+        edge_fillet_r: None,
     }
 }
 
@@ -204,7 +226,7 @@ fn rounded_box() -> (PlateSpec, revmesh_core::mesh::Vec3) {
             pockets: vec![],
             bosses: vec![],
             slots: vec![],
-            outline_fillet_r: None,
+            outline_fillet_rs: Vec::new(),
             edge_fillet_r: Some(5.0),
         },
         [0.0; 3],
@@ -225,7 +247,7 @@ fn x_plate() -> (revmesh_core::mesh::Mesh, String, f64) {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let mesh = Axis::X.unrotate_mesh(&synth::plate(&spec, 48, [3.0, 7.0, 11.0]));
@@ -298,7 +320,11 @@ fn main() -> std::io::Result<()> {
     } {
         (synth::profile(&spec, 48, offset), spec.describe(), spec.volume())
     } else {
-        let spec = if which.as_deref() == Some("patterns") { patterns() } else { plate() };
+        let spec = match which.as_deref() {
+            Some("patterns") => patterns(),
+            Some("mixed-radii") => mixed_radii(),
+            _ => plate(),
+        };
         (synth::plate(&spec, 48, [0.0; 3]), spec.describe(), spec.volume())
     };
     std::io::stdout().write_all(&stl::write_binary(&mesh))?;

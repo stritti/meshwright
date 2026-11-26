@@ -23,11 +23,13 @@ pub struct PlateSpec {
     /// Openings through the plate, each a polygon of straight sides or of straight and arc
     /// sides.
     pub cutouts: Vec<CutoutSpec>,
-    /// The radius of the four vertical corner edges, if they are rounded.
-    pub outline_fillet_r: Option<f64>,
+    /// One radius per vertical corner edge, parallel to the corners `[0, 0]`, `[x, 0]`,
+    /// `[x, y]`, `[0, y]`; empty when the corners are sharp. All four corners are rounded or
+    /// none.
+    pub outline_fillet_rs: Vec<f64>,
     /// The radius of all twelve edges (the four vertical corner edges and the eight on the top
     /// and bottom faces), if the box is rounded all over; mesh2cad's `edge_fillet_r`. Never set
-    /// together with `outline_fillet_r`.
+    /// together with `outline_fillet_rs`.
     pub edge_fillet_r: Option<f64>,
 }
 
@@ -287,7 +289,7 @@ impl PlateSpec {
             pockets: self.pockets,
             outline_pockets: Vec::new(),
             cutouts: self.cutouts,
-            outline_fillet_r: self.outline_fillet_r,
+            outline_fillet_rs: self.outline_fillet_rs,
             // A box rounded all over is a Z plate (mesh2cad's box vocabulary is a Z
             // extrusion's); recognize() tries Z first and never converts it to a profile.
             arcs: Vec::new(),
@@ -308,7 +310,7 @@ impl PlateSpec {
             [self.x, self.y, self.z],
             None,
             [self.holes.len(), self.slots.len(), self.bosses.len(), self.cutouts.len(), self.pads.len(), self.pockets.len()],
-            self.outline_fillet_r,
+            &self.outline_fillet_rs,
             self.edge_fillet_r,
         )
     }
@@ -320,7 +322,19 @@ impl PlateSpec {
         let base = if let Some(r) = self.edge_fillet_r {
             self.x * self.y * self.z - crate::plate::edge_fillet_removed(self.x, self.y, self.z, r)
         } else {
-            (self.x * self.y - self.outline_fillet_r.map_or(0.0, crate::plate::corner_loss)) * self.z
+            // Each rounded corner loses its own `fillet_loss` (a 90° corner's square minus its
+            // quarter circle), in the corners' order `[0,0]`, `[x,0]`, `[x,y]`, `[0,y]`.
+            let corners = [[0.0, 0.0], [self.x, 0.0], [self.x, self.y], [0.0, self.y]];
+            let loss: f64 = self
+                .outline_fillet_rs
+                .iter()
+                .enumerate()
+                .map(|(i, &r)| {
+                    let (a, c, b) = (corners[(i + 3) % 4], corners[i], corners[(i + 1) % 4]);
+                    crate::plate::fillet_loss(a, c, b, r)
+                })
+                .sum();
+            (self.x * self.y - loss) * self.z
         };
         let holes: f64 = self.holes.iter().map(|h| h.volume(self.z)).sum();
         let slots: f64 = self.slots.iter().map(SlotSpec::area).sum();
@@ -393,9 +407,9 @@ pub struct ProfileSpec {
     /// Openings through the plate, each a polygon of straight sides or of straight and arc
     /// sides.
     pub cutouts: Vec<CutoutSpec>,
-    /// The radius of every vertical corner edge, inside and outside corners alike, if they are
-    /// rounded.
-    pub outline_fillet_r: Option<f64>,
+    /// One radius per vertical corner edge, parallel to `corners`, inside and outside corners
+    /// alike; empty when the corners are sharp. All corners are rounded or none.
+    pub outline_fillet_rs: Vec<f64>,
 }
 
 impl ProfileSpec {
@@ -428,7 +442,7 @@ impl ProfileSpec {
                 self.pads.len(),
                 self.pockets.len() + self.outline_pockets.len(),
             ],
-            self.outline_fillet_r,
+            &self.outline_fillet_rs,
             None,
         )
     }
@@ -469,11 +483,13 @@ impl ProfileSpec {
 
     /// The volume of the plate this spec describes, in mm³.
     #[must_use]
+    #[allow(clippy::many_single_char_names)] // n and the corners a, c, b, as in the geometry
     pub fn volume(&self) -> f64 {
         let n = self.corners.len();
         let mut area = polygon_area_arcs(&self.corners, self.arc_sides());
-        if let Some(r) = self.outline_fillet_r {
-            for i in 0..n {
+        for i in 0..n {
+            let r = self.outline_fillet_rs.get(i).copied().unwrap_or(0.0);
+            if r > 0.0 {
                 let (a, c, b) = (self.corners[(i + n - 1) % n], self.corners[i], self.corners[(i + 1) % n]);
                 area -= crate::plate::fillet_loss(a, c, b, r);
             }
@@ -516,14 +532,7 @@ fn blocks(pads: &[PadSpec], pockets: &[PocketSpec]) -> f64 {
 }
 
 /// `counts` are the holes, the slots, the bosses, the cut-outs, the pads and the pockets.
-fn describe(
-    locale: Locale,
-    size: [f64; 3],
-    sides: Option<usize>,
-    counts: [usize; 6],
-    fillet_r: Option<f64>,
-    edge_r: Option<f64>,
-) -> String {
+fn describe(locale: Locale, size: [f64; 3], sides: Option<usize>, counts: [usize; 6], fillet_rs: &[f64], edge_r: Option<f64>) -> String {
     let number = |v: f64| locale.decimal(&fmt_number(v));
     let [x, y, z] = size.map(number);
     let mut parts = Vec::new();
@@ -537,8 +546,20 @@ fn describe(
             n => parts.push(locale.format(&format!("summary.{kind}.other"), &[("n", &n)])),
         }
     }
-    if let Some(r) = fillet_r {
-        parts.push(locale.format("summary.rounded_corners", &[("r", &number(r))]));
+    // One radius reads as before ("3 mm rounded corners"); different radii list them.
+    let mut distinct: Vec<f64> = Vec::new();
+    for &r in fillet_rs {
+        if !distinct.contains(&r) {
+            distinct.push(r);
+        }
+    }
+    match distinct.len() {
+        0 => {}
+        1 => parts.push(locale.format("summary.rounded_corners", &[("r", &number(distinct[0]))])),
+        _ => {
+            let rs = distinct.iter().map(|&r| number(r)).collect::<Vec<_>>().join(", ");
+            parts.push(locale.format("summary.rounded_corners_rs", &[("rs", &rs)]));
+        }
     }
     if let Some(r) = edge_r {
         parts.push(locale.format("summary.rounded_edges", &[("r", &number(r))]));

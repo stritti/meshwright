@@ -1,9 +1,9 @@
-//! Recognising a plate: an outline of straight sides, optionally with one radius on every
-//! vertical corner, extruded along Z, with round vertical through holes.
+//! Recognising a plate: an outline of straight sides, optionally with a radius on every
+//! vertical corner (each corner its own), extruded along Z, with round vertical through holes.
 //!
 //! Written independently from mesh2cad's published description (a Z extrusion with one radius on
 //! every vertical corner of the outline, through holes, the parameter names `base_x`,
-//! `hole_<n>_d` and `outline_fillet_r`); no mesh2cad code was used for it.
+//! `hole_<n>_d` and `outline_fillet_rs`); no mesh2cad code was used for it.
 //!
 //! The mesh is taken as exported by a CAD tool: corners of the true part's facets lie on its
 //! surfaces, so a round hole is a polygon whose corners lie on a circle. The steps are:
@@ -46,7 +46,7 @@ mod prism;
 mod tests;
 mod walls;
 
-pub(crate) use outline::{corner_loss, edge_fillet_removed, fillet_loss};
+pub(crate) use outline::{edge_fillet_removed, fillet_loss};
 
 use std::f64::consts::PI;
 

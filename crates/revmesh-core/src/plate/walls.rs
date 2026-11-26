@@ -51,7 +51,8 @@ pub(super) struct Walls {
 }
 
 impl Walls {
-    /// The walls of the outline `corners` (rounded with `radius`), of the holes' `circles` (each
+    /// The walls of the outline `corners` (rounded per corner with `radii`, parallel to
+    /// `corners`; empty or all zero for sharp corners), of the holes' `circles` (each
     /// carrying its hole's index in the design's sorted holes, where the design numbers them
     /// `hole_<n>`) and, as meshed, of the top face's boundary `loops` (a facet's chord of an arc
     /// is no wall of the true part, but its corners and its subdivisions lie on it).
@@ -71,7 +72,7 @@ impl Walls {
     #[allow(clippy::too_many_lines)] // one piece pushed per wall kind, each with its label
     pub(super) fn new(
         corners: &[P2],
-        radius: Option<f64>,
+        radii: &[f64],
         circles: &[(usize, P2, f64)],
         arcs: &[(usize, P2, f64, P2, f64)],
         arc_sides: &[Option<ArcSide>],
@@ -84,7 +85,6 @@ impl Walls {
         tol: f64,
     ) -> Self {
         let n = corners.len();
-        let r = radius.unwrap_or(0.0);
         let unit = |p: P2, q: P2| {
             let len = distance(p, q);
             [(q[0] - p[0]) / len, (q[1] - p[1]) / len]
@@ -93,6 +93,7 @@ impl Walls {
         // sharp), and the arc's centre (inside the turn, `r` from both sides).
         let rounds: Vec<(f64, P2)> = (0..n)
             .map(|i| {
+                let r = radii.get(i).copied().unwrap_or(0.0);
                 let (a, c, b) = (corners[(i + n - 1) % n], corners[i], corners[(i + 1) % n]);
                 let (d1, d2) = (unit(a, c), unit(c, b));
                 let turn = (d1[0] * d2[1] - d1[1] * d2[0]).atan2(d1[0] * d2[0] + d1[1] * d2[1]);
@@ -116,8 +117,9 @@ impl Walls {
                 walls.push(Wall::Segment([c[0] + d[0] * t0, c[1] + d[1] * t0], [b[0] - d[0] * t1, b[1] - d[1] * t1]));
                 labels.push(format!("side {}", i + 1));
             }
-            if r > 0.0 {
-                walls.push(Wall::Arc { centre: rounds[i].1, r, corner: c, t: rounds[i].0 });
+            let ri = radii.get(i).copied().unwrap_or(0.0);
+            if ri > 0.0 {
+                walls.push(Wall::Arc { centre: rounds[i].1, r: ri, corner: c, t: rounds[i].0 });
                 labels.push(format!("corner {} round", i + 1));
             }
         }

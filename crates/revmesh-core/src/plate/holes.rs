@@ -521,8 +521,8 @@ pub(super) fn cutout_shape(ring: &[P2], tol: f64) -> Option<CutoutSpec> {
     if signed_area(&ccw) < 0.0 {
         ccw.reverse();
     }
-    let (corners, radius, arcs) = outline_shape(&ccw, tol).ok()?;
-    if radius.is_some() || corners.len() < 3 || arcs.iter().all(Option::is_none) {
+    let (corners, radii, arcs) = outline_shape(&ccw, tol).ok()?;
+    if !radii.is_empty() || corners.len() < 3 || arcs.iter().all(Option::is_none) {
         return None;
     }
     Some(CutoutSpec { corners, arcs })

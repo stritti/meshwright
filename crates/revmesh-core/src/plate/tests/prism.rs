@@ -60,7 +60,7 @@ fn recognises_solidcraft_exports() {
         profile.holes,
         [HoleSpec { x: 7.5, y: 30.0, d: 5.0, head: None, blind: None }, HoleSpec { x: 45.0, y: 7.5, d: 6.0, head: None, blind: None }]
     );
-    assert_eq!((profile.z, profile.outline_fillet_r), (5.0, Some(2.0)));
+    assert_eq!((profile.z, profile.outline_fillet_rs), (5.0, vec![2.0; 6]));
 }
 
 /// A plate standing along Y (turned by `(x, y, z) -> (x, z, -y)`) is recognised as an outline
@@ -100,7 +100,7 @@ fn rounded_box_is_recognised_with_all_edges_filleted() {
         pads: vec![],
         pockets: vec![],
         cutouts: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: Some(5.0),
     };
     let (plate, offset) = found(&synth::rounded_box(60.0, 40.0, 30.0, 5.0, 32, [0.0; 3]));
@@ -176,7 +176,7 @@ fn rounded_box_with_a_hole_is_recognised() {
         pads: vec![],
         pockets: vec![],
         cutouts: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: Some(5.0),
     };
     let (plate, offset) = found(&rounded_box_with_openings(60.0, 40.0, 30.0, 5.0, &[circle_loop(30.0, 20.0, 8.0, 32)], 32));
@@ -190,7 +190,7 @@ fn rounded_box_with_a_hole_is_recognised() {
 #[test]
 fn finely_tessellated_rounded_box_is_recognised() {
     let (plate, _) = found(&synth::rounded_box(60.0, 40.0, 30.0, 5.0, 128, [0.0; 3]));
-    assert_eq!((plate.x, plate.y, plate.z, plate.outline_fillet_r, plate.edge_fillet_r), (60.0, 40.0, 30.0, None, Some(5.0)));
+    assert_eq!((plate.x, plate.y, plate.z, plate.outline_fillet_rs, plate.edge_fillet_r), (60.0, 40.0, 30.0, Vec::<f64>::new(), Some(5.0)));
     let (plate, _) = found(&synth::rounded_box(60.0, 40.0, 30.0, 5.0, 256, [0.0; 3]));
     assert_eq!(plate.edge_fillet_r, Some(5.0));
 }
@@ -245,7 +245,7 @@ fn synthetic_volumes_match_the_specs() {
         pads: vec![],
         pockets: vec![],
         cutouts: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: Some(5.0),
     };
     let mesh = synth::rounded_box(60.0, 40.0, 30.0, 5.0, 128, [0.0; 3]);
@@ -283,7 +283,7 @@ fn deviation_of_a_coarse_hole_is_its_sagitta() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
     let deviations = crate::plate::face_deviations(&synth::plate(&s, 8, [0.0; 3]));
@@ -473,7 +473,7 @@ fn deviation_of_a_chord_stays_with_its_owning_wall() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(16.0),
+        outline_fillet_rs: vec![16.0; 4],
         edge_fillet_r: None,
     };
     let deviations = crate::plate::face_deviations(&synth::plate(&s, 8, [0.0; 3]));
@@ -632,7 +632,7 @@ fn deviation_of_a_clockwise_chord_stays_with_its_own_wall() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(16.0),
+        outline_fillet_rs: vec![16.0; 4],
         edge_fillet_r: None,
     };
     let deviations = crate::plate::face_deviations(&synth::plate(&s, 8, [0.0; 3]));

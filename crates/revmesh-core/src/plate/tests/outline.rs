@@ -62,11 +62,54 @@ fn recognises_slanted_sides() {
         bosses: vec![],
         slots: vec![],
         arcs: Vec::new(),
-        outline_fillet_r: Some(3.0),
+        outline_fillet_rs: vec![3.0; 5],
     };
     let mesh = synth::profile(&expected, 64, [0.0; 3]);
     let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
     assert_eq!(found_profile(&reread).0, expected);
+}
+
+/// Roadmap 6.4: every rounded corner keeps its own radius — here 2, 3, 5 and 4 mm on a
+/// 70 x 40 x 6 mm plate, counter-clockwise from the origin corner.
+#[test]
+fn recognises_a_plate_with_different_corner_radii() {
+    let expected = PlateSpec {
+        x: 70.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![HoleSpec { x: 35.0, y: 20.0, d: 8.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_rs: vec![2.0, 3.0, 5.0, 4.0],
+        edge_fillet_r: None,
+    };
+    let mesh = synth::plate(&expected, 48, [0.0; 3]);
+    let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+    assert_eq!(found(&reread).0, expected);
+}
+
+/// An L with a different radius on its corners (two pairs sharing one), the inside corner
+/// included.
+#[test]
+fn recognises_an_l_with_different_corner_radii() {
+    let mut expected = ell(None);
+    expected.outline_fillet_rs = vec![2.0, 2.0, 3.0, 4.0, 4.0, 5.0];
+    let mesh = synth::profile(&expected, 48, [12.5, 7.0, 0.0]);
+    let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+    assert_eq!(found_profile(&reread).0, expected);
+}
+
+/// Only some corners rounded (three of four) stays a mesh: sharp and rounded corners are not
+/// mixed in one outline.
+#[test]
+fn only_some_rounded_corners_stay_a_mesh() {
+    let mut mixed = spec(&[], Some(3.0));
+    mixed.outline_fillet_rs = vec![3.0, 3.0, 3.0, 0.0];
+    let why = reason(&synth::plate(&mixed, 32, [0.0; 3]));
+    assert!(why.contains("only some corners"), "{why}");
 }
 
 /// Roadmap 5.2: a side of the outline that is a circular arc is recognised as an arc side —
@@ -84,7 +127,7 @@ fn recognises_an_arc_side_in_the_outline() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     for segments in [4, 32] {
         let mesh = synth::profile(&expected, segments, [0.0; 3]);
@@ -111,7 +154,7 @@ fn recognises_a_stadium_outline_as_two_arc_sides() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, Some(ArcSide { centre: [40.0, 20.0], r: 10.0 }), None, Some(ArcSide { centre: [0.0, 20.0], r: 10.0 })],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let mesh = synth::profile(&shape, 16, [0.0; 3]);
     let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
@@ -128,7 +171,7 @@ fn recognises_a_stadium_outline_as_two_arc_sides() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, Some(ArcSide { centre: [50.0, 10.0], r: 10.0 }), None, Some(ArcSide { centre: [10.0, 10.0], r: 10.0 })],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     assert_eq!(profile, expected);
 }
@@ -151,7 +194,7 @@ fn chamfered_corners_make_an_eight_sided_outline() {
             bosses: vec![],
             slots: vec![],
             arcs: Vec::new(),
-            outline_fillet_r: None
+            outline_fillet_rs: Vec::new()
         }
     );
 }
@@ -193,7 +236,7 @@ fn arcs_short_of_their_sides_are_no_fillets() {
     let mesh = synth::prism(&outline, &[], 5.0, [0.0; 3]);
     let (profile, _) = found_profile(&mesh);
     // Not fillets (no corner radius), but arc sides with sharp corners between them.
-    assert_eq!(profile.outline_fillet_r, None);
+    assert_eq!(profile.outline_fillet_rs, [] as [f64; 0]);
     assert_eq!(profile.corners.len(), 8);
     let arcs: Vec<ArcSide> = profile.arc_sides().iter().flatten().copied().collect();
     assert_eq!(arcs.len(), 4);
@@ -213,7 +256,7 @@ fn small_fine_rounds() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(0.5),
+        outline_fillet_rs: vec![0.5; 4],
         edge_fillet_r: None,
     };
     let mesh = crate::stl::parse(&crate::stl::write_binary(&synth::plate(&expected, 96, [0.0; 3]))).expect("round trip");
@@ -250,10 +293,10 @@ fn subdivided_outline_facets() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(3.0),
+        outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,
     };
-    let outline = synth::rounded(&[[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]], Some(3.0), 32);
+    let outline = synth::rounded(&[[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]], &[3.0; 4], 32);
     let mut split = Vec::new();
     for i in 0..outline.len() {
         let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
@@ -300,7 +343,7 @@ fn short_sides_between_large_rounds() {
         pockets: vec![],
         bosses: vec![],
         slots: vec![],
-        outline_fillet_r: Some(24.95),
+        outline_fillet_rs: vec![24.95; 4],
         edge_fillet_r: None,
     };
     assert_eq!(found(&synth::plate(&expected, 32, [0.0; 3])).0, expected);
@@ -322,7 +365,7 @@ fn arc_run_starts_after_a_sharp_junction() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, None, Some(ArcSide { centre: [60.0, 40.0], r: 30.0 }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let mesh = synth::profile(&expected, 16, [0.0; 3]);
     let (profile, _) = found_profile(&mesh);
@@ -346,7 +389,7 @@ fn arc_sides_meeting_at_a_sharp_corner_are_fitted_independently() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, Some(ArcSide { centre: [-5.0, 0.0], r: 25.0 }), Some(ArcSide { centre: [25.0, 0.0], r: 25.0 })],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let mesh = synth::profile(&expected, 32, [0.0; 3]);
     let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
@@ -372,7 +415,7 @@ fn chord_and_arc_close_a_two_corner_outline() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![Some(ArcSide { centre: [cx, cy], r }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let mesh = synth::profile(&shape, 16, [0.0; 3]);
     let (profile, offset) = found_profile(&mesh);
@@ -388,7 +431,7 @@ fn chord_and_arc_close_a_two_corner_outline() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![Some(ArcSide { centre: [0.0, 0.0], r }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     assert_eq!(profile, expected);
     assert!((profile.volume() - mesh.volume()).abs() / mesh.volume() < 0.01, "{} vs {}", profile.volume(), mesh.volume());
@@ -409,7 +452,7 @@ fn banded_arc_walls_pass_the_wall_checks() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, None, Some(ArcSide { centre: [30.0, 40.0], r: 30.0 }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let mesh = banded(&synth::profile(&spec, 8, [0.0; 3]), 0.0, [30.0, 20.0]);
     let (profile, _) = found_profile(&mesh);
@@ -431,7 +474,7 @@ fn arc_radius_covers_its_snapped_chord() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, None, Some(ArcSide { centre: [30.0004, 40.0], r: 30.0004 }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let mesh = synth::profile(&spec, 32, [0.0; 3]);
     let (profile, _) = found_profile(&mesh);
@@ -476,7 +519,7 @@ fn adjoining_short_straight_sides_are_trimmed_from_the_arc_fit() {
         bosses: vec![],
         cutouts: vec![],
         arcs: vec![None, None, Some(ArcSide { centre: [30.0, 5.0], r: 30.0 }), None],
-        outline_fillet_r: None,
+        outline_fillet_rs: Vec::new(),
     };
     let mesh = synth::profile(&expected, 16, [0.0; 3]);
     let (profile, offset) = found_profile(&mesh);
@@ -523,7 +566,7 @@ fn a_straight_zigzag_stays_a_polygon() {
         vec![[0.0, 0.0], [60.0, 0.0], [60.0, 20.0], [50.0, 22.0], [40.0, 20.0], [30.0, 22.0], [20.0, 20.0], [10.0, 22.0], [0.0, 20.0]];
     let (corners, fillet, side_arcs) = outline_shape(&outline, 0.001).expect("the zigzag stays a polygon");
     assert_eq!(corners.len(), 9, "all nine corners stay: {corners:?}");
-    assert!(fillet.is_none() && side_arcs.iter().all(Option::is_none), "no arc side, no corner round");
+    assert!(fillet.is_empty() && side_arcs.iter().all(Option::is_none), "no arc side, no corner round");
 }
 
 /// A short run of consistently gently turning edges that fits no circle is a polygonal run, not
@@ -535,5 +578,5 @@ fn a_short_gently_turning_run_stays_a_polygon() {
     let outline: Vec<P2> = vec![[0.0, 0.0], [60.0, 0.0], [60.0, 20.0], [50.0, 25.0], [40.0, 28.0], [30.0, 29.0], [0.0, 20.0]];
     let (corners, fillet, side_arcs) = outline_shape(&outline, 0.001).expect("the short run stays a polygon");
     assert_eq!(corners.len(), 7, "all seven corners stay: {corners:?}");
-    assert!(fillet.is_none() && side_arcs.iter().all(Option::is_none), "no arc side, no corner round");
+    assert!(fillet.is_empty() && side_arcs.iter().all(Option::is_none), "no arc side, no corner round");
 }

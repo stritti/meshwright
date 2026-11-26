@@ -98,8 +98,10 @@
       (`plate/prism.rs`, with tangency to the bore's wall and to the face checked) and in
       `round_foot` for boss feet (`plate/bosses.rs`), replacing the per-corner averaging) analytic
       torus detection for the rounds at hole rims and boss feet
-   4. per-corner radii in outlines (`plate/outline.rs` already fits one circle per rounded corner
-      with `CircleSums`; today all corners must share one radius)
+   4. (done: `outline_shape` in `plate/outline.rs` returns one fitted radius per rounded corner and
+      the design writes one `Fillet<g>` per radius group with `fillet_r_<g>` / `outline_fillet_r_<g>`
+      — a single shared radius keeps the plain `fillet_r` / `outline_fillet_r` and `Fillet1`)
+      per-corner radii in outlines
    5. hole rows at any angle (a pattern's direction is not an expression in SolidCraft — write
       them as single holes or on a rotated sketch)
    6. (done: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` refuses, before any axis

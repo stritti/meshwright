@@ -40,14 +40,14 @@ pub(super) fn recognize_prism(mesh: &Mesh, allow_steps: bool) -> Result<Recognit
     // better written as an intersection of extrusions (roadmap 5.3).
     let steps = if allow_steps { step_levels(&faces, size[2], tol)? } else { Vec::new() };
     let face_loops = face_outlines(&faces, &steps, size[2], tol)?;
-    let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
-    let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
+    let (corners, radii, side_arcs) = outline_shape(&face_loops.outline, tol)?;
+    let rim = rim_fillet(&face_loops.outline, &corners, &radii, size, tol);
     let mut cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
     add_steps(&mut cutouts, &steps, size[2], tol)?;
     check_prism(&faces, mesh_volume, size[2], &cutouts.stepped, &cutouts.blinds, rim.as_ref())?;
-    check_walls(mesh, bounds.min, bounds.max[2], &faces, &corners, radius, &side_arcs, &cutouts, scale, tol, rim.as_ref())?;
+    check_walls(mesh, bounds.min, bounds.max[2], &faces, &corners, &radii, &side_arcs, &cutouts, scale, tol, rim.as_ref())?;
     let offset = bounds.min.map(snap_mm);
-    recognition(&corners, radius, side_arcs, cutouts, size, offset, mesh_volume, rim.as_ref())
+    recognition(&corners, &radii, side_arcs, cutouts, size, offset, mesh_volume, rim.as_ref())
 }
 
 /// A box rounded all over (mesh2cad's `edge_fillet_r`): its rim radius and size, for the checks
@@ -108,8 +108,10 @@ impl Rim {
 /// rounded all over has its flat top and bottom faces inset by the radius, so the top face's
 /// outline is that inner rectangle. Finely tessellated rims leak near-tangent facets into the cap
 /// (their corners lie within the tolerance of its plane), which bulges the outline out by the
-/// corner arcs' radius `radius`; the true inset is the bounding box's inset plus that radius.
-pub(super) fn rim_fillet(outline: &[P2], corners: &[P2], radius: Option<f64>, size: Vec3, tol: f64) -> Option<Rim> {
+/// corner arcs' radius; the true inset is the bounding box's inset plus that radius. The rim
+/// needs one radius on every corner (`radii` all equal): mixed corner radii are outline fillets,
+/// not a rounded box.
+pub(super) fn rim_fillet(outline: &[P2], corners: &[P2], radii: &[f64], size: Vec3, tol: f64) -> Option<Rim> {
     if corners.len() != 4 {
         return None;
     }
@@ -131,7 +133,12 @@ pub(super) fn rim_fillet(outline: &[P2], corners: &[P2], radius: Option<f64>, si
     if insets.iter().any(|&d| (d - inset).abs() > tol) || inset <= tol {
         return None;
     }
-    let r = inset + radius.unwrap_or(0.0);
+    let corner_r = match radii.split_first() {
+        None => 0.0,
+        Some((&first, rest)) if rest.iter().all(|&r| (r - first).abs() <= tol) => first,
+        Some(_) => return None,
+    };
+    let r = inset + corner_r;
     if 2.0 * r >= size[0].min(size[1]).min(size[2]) {
         return None;
     }
@@ -759,18 +766,18 @@ pub(super) fn check_prism(
 /// box, so its segments must not count as walls — only the cut-outs' walls stay.
 fn walls_of(
     corners: &[P2],
-    radius: Option<f64>,
+    radii: &[f64],
     arc_sides: &[Option<ArcSide>],
     cutouts: &PlateCutouts,
     scale: f64,
     tol: f64,
     rim: Option<&Rim>,
 ) -> Walls {
-    let (wall_corners, wall_radius, wall_loops): (&[P2], Option<f64>, &[Vec<P2>]) =
-        if rim.is_some() { (&[], None, &cutouts.wall_loops[1..]) } else { (corners, radius, &cutouts.wall_loops[..]) };
+    let (wall_corners, wall_radii, wall_loops): (&[P2], &[f64], &[Vec<P2>]) =
+        if rim.is_some() { (&[], &[], &cutouts.wall_loops[1..]) } else { (corners, radii, &cutouts.wall_loops[..]) };
     Walls::new(
         wall_corners,
-        wall_radius,
+        wall_radii,
         &cutouts.circles,
         &cutouts.slot_arcs,
         arc_sides,
@@ -826,8 +833,8 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         let faces = split_faces(mesh, bounds.min, bounds.max[2], tol)?;
         let steps = step_levels(&faces, size[2], tol)?;
         let face_loops = face_outlines(&faces, &steps, size[2], tol)?;
-        let (corners, radius, side_arcs) = outline_shape(&face_loops.outline, tol)?;
-        let rim = rim_fillet(&face_loops.outline, &corners, radius, size, tol);
+        let (corners, radii, side_arcs) = outline_shape(&face_loops.outline, tol)?;
+        let rim = rim_fillet(&face_loops.outline, &corners, &radii, size, tol);
         let mut cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
         add_steps(&mut cutouts, &steps, size[2], tol)?;
         // Against the ideal walls only, not the meshed boundary loops (a facet's own chord would
@@ -837,11 +844,11 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
         // measured directly, and only its holes' circles are indexed.
         let slot_sides = slot_sides_of(&cutouts);
         let walls = if rim.is_some() {
-            Walls::new(&[], None, &cutouts.circles, &cutouts.slot_arcs, &[], &[], &[], &slot_sides, &[], 0, scale, tol)
+            Walls::new(&[], &[], &cutouts.circles, &cutouts.slot_arcs, &[], &[], &[], &slot_sides, &[], 0, scale, tol)
         } else {
             Walls::new(
                 &corners,
-                radius,
+                &radii,
                 &cutouts.circles,
                 &cutouts.slot_arcs,
                 &side_arcs,
@@ -994,7 +1001,7 @@ pub(crate) fn walls_deviations(
         let size = bounds.size();
         let scale = size[0].max(size[1]).max(size[2]);
         let tol = tolerance(scale);
-        let mut walls = Walls::new(outline, None, circles, &[], &[], &[], cutouts, &[], cuts, cutout_base, scale, tol);
+        let mut walls = Walls::new(outline, &[], circles, &[], &[], &[], cutouts, &[], cuts, cutout_base, scale, tol);
         for label in &mut walls.labels {
             *label = format!("{prefix} {label}");
         }
@@ -1047,7 +1054,7 @@ pub(super) fn check_walls(
     top_z: f64,
     faces: &Faces,
     corners: &[P2],
-    radius: Option<f64>,
+    radii: &[f64],
     arc_sides: &[Option<ArcSide>],
     cutouts: &PlateCutouts,
     scale: f64,
@@ -1080,7 +1087,7 @@ pub(super) fn check_walls(
     }) {
         return Err(NOT_FLAT.into());
     }
-    let walls = walls_of(corners, radius, arc_sides, cutouts, scale, tol, rim);
+    let walls = walls_of(corners, radii, arc_sides, cutouts, scale, tol, rim);
     let in_step = |p: Vec3| cutouts.stepped.iter().any(|s| s.holds(p, tol)) || cutouts.blinds.iter().any(|b| b.holds(p, tol));
     if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p) && !on_rim(*p, 0.0)) {
         return Err(NOT_FLAT.into());
@@ -1122,7 +1129,7 @@ pub(super) fn check_walls(
         .map(|(_, _, r)| *r)
         .chain(cutouts.slot_arcs.iter().map(|(_, _, r, _, _)| *r))
         .chain(arc_sides.iter().flatten().map(|a| a.r))
-        .chain(radius)
+        .chain(radii.iter().copied())
         .chain(rim.map(|r| r.r))
         .fold(f64::INFINITY, f64::min);
     for t in &mesh.triangles {
@@ -1155,7 +1162,7 @@ pub(super) fn check_walls(
 #[allow(clippy::too_many_arguments)] // the outline, its cut-outs and the frame, one recognition
 pub(super) fn recognition(
     corners: &[P2],
-    radius: Option<f64>,
+    radii: &[f64],
     side_arcs: Vec<Option<ArcSide>>,
     cutouts: PlateCutouts,
     size: Vec3,
@@ -1164,8 +1171,10 @@ pub(super) fn recognition(
     rim: Option<&Rim>,
 ) -> Result<Recognition, String> {
     let tol = tolerance(size[0].max(size[1]).max(size[2]));
+    let z = snap_mm(size[2]);
     // On a rounded rim the outline's own corner arcs are the leaked rim facets, not a fillet.
-    let (z, outline_fillet_r) = (snap_mm(size[2]), if rim.is_some() { None } else { radius.map(snap_mm) });
+    // The output radii snap, one per corner, in the outline's corner order.
+    let radii: Vec<f64> = if rim.is_some() { Vec::new() } else { radii.iter().map(|&r| snap_mm(r)).collect() };
     let box_corners = [[0.0, 0.0], [size[0], 0.0], [size[0], size[1]], [0.0, size[1]]];
     let PlateCutouts { mut holes, slots, mut cutouts, pockets, outline_pockets, .. } = cutouts;
     // The cut-outs' output parameters snap, as the outline's corners and arcs do; the wall
@@ -1211,6 +1220,16 @@ pub(super) fn recognition(
         return Err("a box with all edges rounded and cut-outs is not recognised yet".into());
     }
     let (found, volume) = if rectangle {
+        // The plate's corners are the box's in the fixed order, so its radii are the outline's
+        // reordered to match (the outline may start anywhere).
+        let plate_radii: Vec<f64> = if radii.is_empty() {
+            Vec::new()
+        } else {
+            box_corners
+                .iter()
+                .map(|q| corners.iter().position(|c| (c[0] - q[0]).abs() <= tol && (c[1] - q[1]).abs() <= tol).map_or(0.0, |i| radii[i]))
+                .collect()
+        };
         let plate = PlateSpec {
             x: snap_mm(size[0]),
             y: snap_mm(size[1]),
@@ -1221,7 +1240,7 @@ pub(super) fn recognition(
             pockets,
             bosses: vec![],
             cutouts,
-            outline_fillet_r,
+            outline_fillet_rs: plate_radii,
             edge_fillet_r: rim.map(|rim| snap_mm(rim.r)),
         };
         let volume = plate.volume();
@@ -1232,9 +1251,14 @@ pub(super) fn recognition(
         let first =
             (0..corners.len()).min_by(|&a, &b| corners[a][1].total_cmp(&corners[b][1]).then(corners[a][0].total_cmp(&corners[b][0])));
         corners.rotate_left(first.unwrap_or(0));
-        // The arc sides are parallel to the corners, so they rotate with them.
+        // The arc sides and the corner radii are parallel to the corners, so they rotate with them
+        // (the radii are empty when every corner is sharp, then there is nothing to rotate).
         let mut side_arcs = side_arcs;
         side_arcs.rotate_left(first.unwrap_or(0));
+        let mut radii = radii;
+        if !radii.is_empty() {
+            radii.rotate_left(first.unwrap_or(0));
+        }
         let mut arcs = if side_arcs.iter().any(Option::is_some) { side_arcs } else { Vec::new() };
         // The output parameters snap; the wall checks above kept the exact fitted circles. An
         // arc's diameter must cover the distance between its snapped endpoints, or the sketch's
@@ -1258,7 +1282,7 @@ pub(super) fn recognition(
             outline_pockets,
             bosses: vec![],
             cutouts,
-            outline_fillet_r,
+            outline_fillet_rs: radii,
         };
         let volume = profile.volume();
         // The pipeline runs in a frame where the extrusion axis is Z.

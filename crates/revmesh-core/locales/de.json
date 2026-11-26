@@ -41,6 +41,7 @@
   "summary.pocket.one": "1 Tasche",
   "summary.pocket.other": "{n} Taschen",
   "summary.rounded_corners": "{r} mm verrundeten Ecken",
+  "summary.rounded_corners_rs": "verrundeten Ecken mit Radien {rs} mm",
   "summary.rounded_edges": "{r} mm verrundeten Kanten",
   "stl.too_short": "die Datei ist zu kurz für eine STL-Datei",
   "stl.truncated": "der Kopf der binären STL kündigt {expected} Dreiecke an, die Datei hat aber nur {actual} Bytes",
