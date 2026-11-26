@@ -177,25 +177,26 @@ pub enum Recognition {
 const MAX_ROTATED_TRIANGLES: usize = 200_000;
 
 /// A supporting line of one or more non-standard edges: a point on it, its canonical unit
-/// direction, and the range the bad segments cover along it.
+/// direction, and the bad segments along it (merged where they overlap or touch). Coverage is
+/// checked only inside the segments, so a gap between two of them — a stretch of the line with
+/// no edge at all — is fine.
 struct Line {
     pa: Vec3,
     u: Vec3,
-    lo: f64,
-    hi: f64,
+    segments: Vec<(f64, f64)>,
     grid: f64,
 }
 
-/// Sweeps one line: every position of the bad range must be covered by exactly one facet in each
-/// direction (a T-junction's sub-edges cover it; a fin's double coverage or a gap's none do not
-/// balance), within twice the weld grid. `bucketed` holds every directed edge by its line key.
+/// Sweeps one line: every position inside a bad segment must be covered by exactly one facet in
+/// each direction (a T-junction's sub-edges cover it; a fin's double coverage or an open edge's
+/// none do not balance). `bucketed` holds every directed edge by its line key.
 #[allow(clippy::too_many_lines, clippy::many_single_char_names)] // points a, b, p, q, as in the geometry
 fn sweep_line(line: &Line, bucketed: &[([i64; 6], u32)], directed: &[(u32, u32)], coords: &[Vec3], grid: f64) -> Result<(), String> {
     let k = line_key_of(line);
+    let (outer_lo, outer_hi) =
+        line.segments.iter().copied().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (a, b)| (lo.min(a), hi.max(b)));
     // Gather the directed edges on this line: the buckets within one step of the key.
     let mut events: Vec<(f64, i8, i8)> = Vec::new();
-    let mut f_total = 0.0;
-    let mut b_total = 0.0;
     for du in [-1i64, 0, 1] {
         for dv in [-1, 0, 1] {
             for dw in [-1, 0, 1] {
@@ -213,17 +214,13 @@ fn sweep_line(line: &Line, bucketed: &[([i64; 6], u32)], directed: &[(u32, u32)]
                                 }
                                 let (s, e) = (dot(sub(p, line.pa), line.u), dot(sub(q, line.pa), line.u));
                                 let (lo, hi) = if s <= e { (s, e) } else { (e, s) };
-                                if hi < line.lo - grid || lo > line.hi + grid {
+                                if hi < outer_lo - grid || lo > outer_hi + grid {
                                     continue;
                                 }
-                                let fwd = dot(sub(q, p), line.u) > 0.0;
-                                let (cl, ch) = (lo.max(line.lo), hi.min(line.hi));
-                                if fwd {
-                                    f_total += ch - cl;
+                                if dot(sub(q, p), line.u) > 0.0 {
                                     events.push((lo, 1, 0));
                                     events.push((hi, -1, 0));
                                 } else {
-                                    b_total += ch - cl;
                                     events.push((lo, 0, 1));
                                     events.push((hi, 0, -1));
                                 }
@@ -234,20 +231,24 @@ fn sweep_line(line: &Line, bucketed: &[([i64; 6], u32)], directed: &[(u32, u32)]
             }
         }
     }
-    let len = line.hi - line.lo;
-    if (f_total - len).abs() > 2.0 * grid || (b_total - len).abs() > 2.0 * grid {
-        return Err("the mesh is not a closed surface: an edge belongs to more or fewer than two faces".into());
-    }
     events.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let (mut cf, mut cb) = (0i32, 0i32);
-    let mut prev = line.lo;
-    for &(pos, df, db) in &events {
-        if pos > prev && prev < line.hi && pos > line.lo && (cf > 1 || cb > 1) {
+    // Each bad segment on its own: every stretch inside it must be covered exactly once each
+    // way. A gap between two segments has no edge at all, so it is not checked.
+    for &(s_lo, s_hi) in &line.segments {
+        let (mut cf, mut cb) = (0i32, 0i32);
+        let mut prev = s_lo;
+        for &(pos, df, db) in &events {
+            let (a, b) = (prev.max(s_lo), pos.min(s_hi));
+            if a < b && (cf != 1 || cb != 1) {
+                return Err("the mesh is not a closed surface: an edge belongs to more or fewer than two faces".into());
+            }
+            cf += i32::from(df);
+            cb += i32::from(db);
+            prev = pos;
+        }
+        if prev < s_hi && (cf != 1 || cb != 1) {
             return Err("the mesh is not a closed surface: an edge belongs to more or fewer than two faces".into());
         }
-        cf += i32::from(df);
-        cb += i32::from(db);
-        prev = pos;
     }
     Ok(())
 }
@@ -257,19 +258,29 @@ fn line_key_of(line: &Line) -> [i64; 6] {
     line_key(line.pa, [line.pa[0] + line.u[0], line.pa[1] + line.u[1], line.pa[2] + line.u[2]], 4.0 * line.grid)
 }
 
-/// A line's key: canonical unit direction (first non-zero component positive) and the offset
-/// cross(p, u), quantised — collinear edges within the weld grid `grid` land in the same or a
-/// neighbouring bucket.
-#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-fn line_key(pa: Vec3, pb: Vec3, grid: f64) -> [i64; 6] {
+/// The canonical unit direction of the edge `pa`→`pb`: normalised, and sign-fixed on its
+/// largest-magnitude component, so float noise on the other components (an edge meant to be
+/// axis-aligned, perturbed by 1e-8) cannot flip the sign and with it the line key. When two
+/// components are nearly equal in magnitude, the ±1 bucket search still finds both signs.
+fn unit_dir(pa: Vec3, pb: Vec3) -> Vec3 {
     let ab = sub(pb, pa);
     let len = length(ab);
     let mut u = [ab[0] / len, ab[1] / len, ab[2] / len];
-    if u.iter().copied().find(|c| *c != 0.0).is_some_and(|c| c < 0.0) {
+    let i = (0..3).max_by(|&a, &b| u[a].abs().total_cmp(&u[b].abs())).unwrap_or(0);
+    if u[i] < 0.0 {
         for c in &mut u {
             *c = -*c;
         }
     }
+    u
+}
+
+/// A line's key: canonical unit direction (largest-magnitude component positive) and the offset
+/// cross(p, u), quantised — collinear edges within the weld grid `grid` land in the same or a
+/// neighbouring bucket.
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+fn line_key(pa: Vec3, pb: Vec3, grid: f64) -> [i64; 6] {
+    let u = unit_dir(pa, pb);
     let c = cross(pa, u);
     [
         (u[0] * 20.0).round() as i64,
@@ -343,9 +354,9 @@ fn closed_loops(mesh: &Mesh, tol: f64) -> Result<(), String> {
     v.sort_unstable_by_key(|(k, _)| *k);
     v.dedup_by_key(|(k, _)| *k);
     let coords: Vec<Vec3> = v.into_iter().map(|(_, p)| p).collect();
-    // A line's key: canonical unit direction (first non-zero component positive, quantised) and
-    // the offset cross(p, u), quantised to the weld grid. Collinear edges within the grid land in
-    // the same or a neighbouring bucket.
+    // A line's key: canonical unit direction (see [`unit_dir`]) and the offset cross(p, u),
+    // quantised to the weld grid. Collinear edges within the grid land in the same or a
+    // neighbouring bucket.
     // Bucket every directed edge by its line key, once.
     let mut bucketed: Vec<([i64; 6], u32)> =
         directed.iter().enumerate().map(|(i, &(a, b))| (line_key(coords[a as usize], coords[b as usize], 4.0 * grid), i as u32)).collect();
@@ -357,23 +368,28 @@ fn closed_loops(mesh: &Mesh, tol: f64) -> Result<(), String> {
         let (pa, pb) = (coords[a as usize], coords[b as usize]);
         let k = line_key(pa, pb, 4.0 * grid);
         let idx = *line_at.entry(k).or_insert_with(|| {
-            let ab = sub(pb, pa);
-            let len = length(ab);
-            let mut u = [ab[0] / len, ab[1] / len, ab[2] / len];
-            let mut origin = pa;
-            if u.iter().copied().find(|c| *c != 0.0).is_some_and(|c| c < 0.0) {
-                for c in &mut u {
-                    *c = -*c;
-                }
-                origin = pb;
-            }
-            lines.push(Line { pa: origin, u, lo: f64::INFINITY, hi: f64::NEG_INFINITY, grid });
+            lines.push(Line { pa, u: unit_dir(pa, pb), segments: Vec::new(), grid });
             lines.len() - 1
         });
         let line = &mut lines[idx];
         let (s, e) = (dot(sub(pa, line.pa), line.u), dot(sub(pb, line.pa), line.u));
-        line.lo = line.lo.min(s.min(e));
-        line.hi = line.hi.max(s.max(e));
+        line.segments.push((s.min(e), s.max(e)));
+    }
+    // Merge each line's segments where they overlap or touch, so coverage is checked per
+    // separate bad stretch, not across the gaps between them.
+    for line in &mut lines {
+        line.segments.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut merged: Vec<(f64, f64)> = Vec::with_capacity(line.segments.len());
+        for &(lo, hi) in &line.segments {
+            if let Some(last) = merged.last_mut()
+                && lo <= last.1 + line.grid
+            {
+                last.1 = last.1.max(hi);
+                continue;
+            }
+            merged.push((lo, hi));
+        }
+        line.segments = merged;
     }
     for line in &lines {
         sweep_line(line, &bucketed, &directed, &coords, grid)?;
