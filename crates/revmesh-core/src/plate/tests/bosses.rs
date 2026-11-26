@@ -392,3 +392,20 @@ fn a_six_faceted_boss_foot_is_not_round() {
         other => panic!("expected a stack of the plate and a hexagonal band, got {other:?}"),
     }
 }
+
+/// A 2 mm round at a boss's foot banded unevenly (15°, 40°, 65° along the quarter circle):
+/// the torus fit in the (radial, height) profile plane reads its radius exactly (roadmap 6.3).
+#[test]
+fn unevenly_banded_rounded_feet() {
+    let (r, f) = (5.0, 2.0);
+    let mut rings: Vec<(f64, f64)> = [0.0, 15.0_f64, 40.0, 65.0, 90.0]
+        .iter()
+        .map(|deg| {
+            let a = deg.to_radians();
+            (r + f - f * a.sin(), f - f * a.cos())
+        })
+        .collect();
+    rings.push((r, 8.0));
+    let (plate, _) = found(&layered_boss(&rings, 48));
+    assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }]);
+}

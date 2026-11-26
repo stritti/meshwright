@@ -136,6 +136,21 @@ fn circle_from_3(a: P2, b: P2, c: P2) -> Option<(P2, f64)> {
     (r.is_finite() && r > 0.0).then_some(([ux, uy], r))
 }
 
+/// The torus about a known axis, fitted to profile points `(radial, axial)`: about the axis a
+/// torus is a circle in the profile plane, so this is the least-squares circle through them, as
+/// centre (major radius, height of the centre circle) and radius (the round's) — roadmap 6.3,
+/// a round at a hole's rim or a boss's foot. `None` when there are fewer than three points or
+/// they do not lie on one circle: a circle through (nearly) coincident points is garbage, and a
+/// corner an exporter added within a facet lies inside it by up to that facet's sagitta.
+pub(crate) fn fit_torus(profile: &[P2], tol: f64) -> Option<(P2, f64)> {
+    if profile.len() < 3 {
+        return None;
+    }
+    let (c, f) = fit_circle(profile)?;
+    let bound = f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + tol;
+    (f > tol && profile.iter().all(|p| ((p[0] - c[0]).hypot(p[1] - c[1]) - f).abs() <= bound)).then_some((c, f))
+}
+
 /// A circle fitted by fixed-seed RANSAC (Schnabel, Wahl, Klein 2007): 3-point minimal samples,
 /// inliers within `tol`, the best sample by inlier count and then by residual sum, with the
 /// iteration count adapted to the inlier ratio seen so far (`N = ln(1 - p) / ln(1 - w^3)`,

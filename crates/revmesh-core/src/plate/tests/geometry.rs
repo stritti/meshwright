@@ -1,7 +1,7 @@
 use std::f64::consts::PI;
 
 use crate::plate::P2;
-use crate::plate::geometry::{fit_circle, ransac_circle};
+use crate::plate::geometry::{fit_circle, fit_torus, ransac_circle};
 
 #[test]
 fn fits_a_circle_exactly() {
@@ -30,4 +30,20 @@ fn ransac_fits_a_circle_drops_outliers_and_is_deterministic() {
 fn ransac_finds_no_circle_in_collinear_points() {
     let points: Vec<P2> = (0..6).map(|i| [f64::from(i), 2.0 * f64::from(i)]).collect();
     assert!(ransac_circle(&points, 1e-3).is_none());
+}
+
+/// The torus about a known axis is a circle in the (radial, axial) profile plane (roadmap 6.3):
+/// the fit recovers a quarter round's centre and radius exactly, and gives up on coincident or
+/// collinear profile points.
+#[test]
+fn fits_a_torus_profile_exactly() {
+    let f = 1.5;
+    let profile: Vec<P2> = [0.0, 0.3, 0.9, 1.2, PI / 2.0].iter().map(|a| [11.0 - f * a.sin(), f - f * a.cos()]).collect();
+    let ([hr, d], r) = fit_torus(&profile, 1e-3).expect("a torus");
+    assert!((hr - 11.0).abs() < 1e-9 && (d - f).abs() < 1e-9 && (r - f).abs() < 1e-9);
+    // Coincident points fit no circle (the algebraic system is singular, and a garbage fit is
+    // refused by the on-circle check).
+    assert!(fit_torus(&[[0.5, 0.5], [0.5, 0.5], [0.5, 0.5]], 1e-3).is_none());
+    // Collinear points neither.
+    assert!(fit_torus(&[[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]], 1e-3).is_none());
 }
