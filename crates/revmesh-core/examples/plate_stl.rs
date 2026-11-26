@@ -244,9 +244,7 @@ fn broken(which: Option<&str>) -> Option<Vec<u8>> {
             bytes.truncate(bytes.len() - 10);
             Some(bytes)
         }
-        "ascii-bad" => Some(
-            b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 x 0\nendloop\nendfacet\nendsolid t\n".to_vec(),
-        ),
+        "ascii-bad" => Some(b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 x 0\nendloop\nendfacet\nendsolid t\n".to_vec()),
         _ => None,
     }
 }
