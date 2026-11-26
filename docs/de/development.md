@@ -61,7 +61,8 @@ gibt pro Datei eine Markdown-Tabelle aus: jeder Parametername, den eines der bei
 mesh2cads Wert (aus dem CadQuery-Skript, das es schreibt) und revmeshs, mit `≠` wo sie um mehr als 0.001
 abweichen. Unter jeder Tabelle stehen mesh2cads Verdict (das Skript und seine Abweichung vom Netz, oder
 warum es abgelehnt hat) und revmeshs Import-Zusammenfassung. Ein Pull Request, der einen Erkenner ergänzt
-oder ändert, enthält diese Tabelle für seine Testdateien.
+oder ändert, enthält diese Tabelle für seine Testdateien. Die Abbildung der mesh2cad-Module auf unsere und die
+bewussten Abweichungen stehen in [research/mesh2cad-parity.md](../../research/mesh2cad-parity.md).
 
 Unterschiede, die erwartet sind, und warum:
 
