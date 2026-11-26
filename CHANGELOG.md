@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.0](https://github.com/stritti/revmesh/compare/v0.1.0...v0.2.0) (2026-11-26)
+
+
+### Features
+
+* **design:** dimension the stack's and combined's sketches ([#84](https://github.com/stritti/revmesh/issues/84)) ([dd18ad9](https://github.com/stritti/revmesh/commit/dd18ad940f437ad87a59cab412b23ac64765d949))
+* **plugin:** check the recognised design in the app's sandbox before writing it ([#90](https://github.com/stritti/revmesh/issues/90)) ([322e7d7](https://github.com/stritti/revmesh/commit/322e7d7d8a92f553e14465eb87416d218cfa43d4))
+* **plugin:** name the GitHub repository in plugin.json for SolidCraft's plugin card ([#87](https://github.com/stritti/revmesh/issues/87)) ([7d87983](https://github.com/stritti/revmesh/commit/7d87983b328df6c9bd563c86e29725a45912f28c))
+* **plugin:** spell out the auto/mesh differences in the import dialog ([#91](https://github.com/stritti/revmesh/issues/91)) ([a8ad87e](https://github.com/stritti/revmesh/commit/a8ad87ebd99fcf81dc1db00b487fd4dbfb58ccf7))
+* **recognize:** arc sides in cut-outs ([#82](https://github.com/stritti/revmesh/issues/82)) ([065147c](https://github.com/stritti/revmesh/commit/065147c8dba08fb9a895ab64e3e82c34064de80f))
+* **recognize:** fit rim and foot rounds as tori in the profile plane ([#89](https://github.com/stritti/revmesh/issues/89)) ([71a13fe](https://github.com/stritti/revmesh/commit/71a13fe3a91b4d343585139b4539d2836c502a9d))
+* **recognize:** headed holes opening on a step's level ([#85](https://github.com/stritti/revmesh/issues/85)) ([246db61](https://github.com/stritti/revmesh/commit/246db61a19d1afe285c80d643168c5947c0de281))
+* **recognize:** robust circle fits for rim loops via fixed-seed RANSAC ([#88](https://github.com/stritti/revmesh/issues/88)) ([a2b4205](https://github.com/stritti/revmesh/commit/a2b42053d43b8aae8fc00ecdb96a1fd6b3f2b689))
+* **report:** deviation report for combined, stacked and all-over-rounded parts ([#86](https://github.com/stritti/revmesh/issues/86)) ([8565616](https://github.com/stritti/revmesh/commit/8565616f9d4a976f1496964cc4846f699fac7713))
+
+
+### Bug Fixes
+
+* [ImgBot] Optimize images ([#93](https://github.com/stritti/revmesh/issues/93)) ([dcac8cd](https://github.com/stritti/revmesh/commit/dcac8cdbb5f6047f0e4e9e92acc3f61599b27c06))
+
+
+### Documentation
+
+* animated STL-to-design SVG as the home page hero ([#92](https://github.com/stritti/revmesh/issues/92)) ([27a0157](https://github.com/stritti/revmesh/commit/27a0157d6703fe7945c70d41e1539b1a45858b2d))
+* make the home page benefit-first, move technical detail behind links ([#94](https://github.com/stritti/revmesh/issues/94)) ([81fab07](https://github.com/stritti/revmesh/commit/81fab072b52e8eb3cc1f0ebcf5e8a0d4ce03616e))
+* **skills:** always check SolidCraft plugin-interface compatibility and full utilization ([#81](https://github.com/stritti/revmesh/issues/81)) ([6b0c962](https://github.com/stritti/revmesh/commit/6b0c9628444977180ee5a32c9389bbefd50e418e))
+
 ## [0.1.0](https://github.com/stritti/revmesh/compare/v0.1.0-beta.6...v0.1.0) (2026-11-25)
 
 
