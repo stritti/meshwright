@@ -71,9 +71,20 @@ fn draft_angle(foot: f64, top: f64, h: f64) -> Option<f64> {
 /// Largest relative difference between the rebuilt plate's volume and the mesh's.
 pub const MAX_VOLUME_ERROR: f64 = 0.01;
 
-/// Fewest corners a polygon needs to be taken for a round hole. Six would turn hexagonal nut
-/// traps into round holes.
+/// Fewest corners a polygon needs to be taken for a round slot's end (slot ends stay at eight:
+/// a slot with coarser ends reads as a polygon cut-out).
 pub const MIN_HOLE_SEGMENTS: usize = 8;
+
+/// Fewest inliers of a rim loop's fixed-seed RANSAC circle fit for it to read as a round hole
+/// (roadmap 6.2), and they must be a strict majority of the loop with the excluded corners within
+/// one facet's sagitta of the circle; in a face's loops fewer than `MIN_HOLE_SEGMENTS` corners
+/// stay polygonal cut-outs anyway, and the ring's own edges keep the `MAX_HOLE_STEP` gate.
+const MIN_RING_SEGMENTS: usize = 6;
+
+/// Largest share of its circle one facet of a RANSAC-fitted rim may span (65°, twice over for
+/// the gap a dropped outlier leaves): six facets are the fewest, a pentagon's 72° are too
+/// coarse, and the flat side of a D-shaped cut-out spans far more.
+const MAX_RING_STEP: f64 = 65.0 * PI / 180.0;
 
 /// Largest share of its circle one facet of a round hole may span (50°): eight facets are the
 /// fewest, and the flat side of a D-shaped cut-out spans far more.

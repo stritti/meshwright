@@ -95,6 +95,87 @@ pub(super) fn distance(a: P2, b: P2) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
 
+/// A fixed-seed PRNG (SplitMix64): every sampling algorithm (RANSAC) in the plugin runs on
+/// `wasm32-unknown-unknown` with no system randomness, so results must be reproducible bit for
+/// bit — the seed is fixed.
+pub(crate) struct Rng(u64);
+
+impl Rng {
+    /// The fixed seed's generator.
+    pub(crate) fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    /// The next pseudo-random `u64`.
+    pub(crate) fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// A pseudo-random index below `n`.
+    pub(crate) fn below(&mut self, n: usize) -> usize {
+        (self.next_u64() % n as u64) as usize
+    }
+}
+
+/// The circle through three points, `None` when they are (nearly) collinear.
+fn circle_from_3(a: P2, b: P2, c: P2) -> Option<(P2, f64)> {
+    let d = 2.0 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+    if d.abs() <= f64::EPSILON {
+        return None;
+    }
+    let a2 = a[0] * a[0] + a[1] * a[1];
+    let b2 = b[0] * b[0] + b[1] * b[1];
+    let c2 = c[0] * c[0] + c[1] * c[1];
+    let ux = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
+    let uy = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
+    let r = distance([ux, uy], a);
+    (r.is_finite() && r > 0.0).then_some(([ux, uy], r))
+}
+
+/// A circle fitted by fixed-seed RANSAC (Schnabel, Wahl, Klein 2007): 3-point minimal samples,
+/// inliers within `tol`, the best sample by inlier count and then by residual sum, with the
+/// iteration count adapted to the inlier ratio seen so far (`N = ln(1 - p) / ln(1 - w^3)`,
+/// confidence `p = 0.99`); refined by the algebraic fit on its inliers. Returns the circle and
+/// the inliers' indices, or `None` when no sample has three inliers.
+pub(crate) fn ransac_circle(points: &[P2], tol: f64) -> Option<(P2, f64, Vec<usize>)> {
+    let n = points.len();
+    if n < 3 {
+        return None;
+    }
+    let mut rng = Rng::new(0x5EED_C1EC_1E00);
+    let mut best: Option<(usize, f64, P2, f64, Vec<usize>)> = None;
+    let mut w = 0.5_f64; // the inlier ratio estimate, adapted as samples come in
+    let mut iter = 0_usize;
+    loop {
+        let n_max = ((1.0 - 0.99_f64).ln() / (1.0 - w * w * w).ln()).ceil().clamp(3.0, 512.0);
+        if iter as f64 >= n_max {
+            break;
+        }
+        iter += 1;
+        let (i, j, k) = (rng.below(n), rng.below(n), rng.below(n));
+        if i == j || j == k || i == k {
+            continue;
+        }
+        let Some((centre, r)) = circle_from_3(points[i], points[j], points[k]) else { continue };
+        let inliers: Vec<usize> = (0..n).filter(|&i| (distance(points[i], centre) - r).abs() <= tol).collect();
+        let residual: f64 = inliers.iter().map(|&i| (distance(points[i], centre) - r).powi(2)).sum();
+        if inliers.len() >= 3
+            && best.as_ref().is_none_or(|(count, res, _, _, _)| inliers.len() > *count || (inliers.len() == *count && residual < *res))
+        {
+            best = Some((inliers.len(), residual, centre, r, inliers));
+            w = best.as_ref().expect("just set").0 as f64 / n as f64;
+        }
+    }
+    let (_, _, centre, r, inliers) = best?;
+    let pts: Vec<P2> = inliers.iter().map(|&i| points[i]).collect();
+    let (centre, r) = fit_circle(&pts).unwrap_or((centre, r));
+    Some((centre, r, inliers))
+}
+
 /// The least-squares circle through `points` (Kåsa's algebraic fit), as centre and radius.
 #[allow(clippy::many_single_char_names)] // the textbook symbols
 pub(crate) fn fit_circle(points: &[P2]) -> Option<(P2, f64)> {

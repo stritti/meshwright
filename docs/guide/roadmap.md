@@ -77,12 +77,21 @@
    list, applied to revmesh](/guide/comparison#concepts-from-the-list-applied-to-revmesh)):
    1. an arbitrary prism axis: detect the two dominant parallel planes with fixed-seed RANSAC
       (Schnabel et al. 2007) and rotate the mesh so their normal is +Z, instead of trying only
-      X, Y and Z (`recognize/axis.rs`) — today a part rotated in the file stays a mesh
-   2. robust circle fits on rim loops: a fixed-seed RANSAC circle (3-point minimal sample plus
-      inliers) or a geometric fit, augmenting the algebraic `fit_circle`
-      (`plate/geometry.rs::fit_circle`); with it, round holes with fewer than eight facets
-      (`MIN_HOLE_SEGMENTS`, `plate/mod.rs`) when their steps stay even — a D-shape's flat side
-      stays one long step and is still refused
+      X, Y and Z (`recognize/axis.rs`) — today a part rotated in the file stays a mesh.
+      Recognition-side only for now: SolidCraft 0.49.1's design format has origin-plane sketches
+      and translate-only moves, so a slanted prism cannot be written parametrically at the
+      pinned version (needs construction planes or a newer pin)
+   2. (done: a fixed-seed RANSAC circle in `plate/geometry.rs::ransac_circle` augmenting the
+      algebraic `fit_circle` — 3-point minimal samples, inliers within tolerance, the
+      iteration count adapted to the inlier ratio — behind `round_hole` in `plate/holes.rs`:
+      a rim loop with a few corners off the circle is fitted on its inliers when at least
+      `MIN_RING_SEGMENTS` (6) of them are a strict majority of the loop, their steps stay even
+      and the excluded corners lie within one facet's sagitta of the circle, while the ring's
+      own edges keep the original 50° gate, so an exporter's uneven rim reads as a round
+      hole but a real flat or lobe stays refused: in a face's own loops fewer than
+      `MIN_HOLE_SEGMENTS` (8) corners are read as a polygonal cut-out first, so a hexagon stays
+      a cut-out there, and a D-shape's flat side and an omitted facet's long step are still
+      one long step) robust circle fits on rim loops
    3. analytic torus detection for the rounds at hole rims and boss feet (today measured band by
       band in `plate/bosses.rs::round_foot`)
    4. per-corner radii in outlines (`plate/outline.rs` already fits one circle per rounded corner

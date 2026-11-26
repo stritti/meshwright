@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 
 use crate::mesh::Mesh;
 use crate::plate::P2;
-use crate::recognize::{BossChamfer, BossSpec, PadSpec};
+use crate::recognize::{BossChamfer, BossSpec, PadSpec, Recognition};
 use crate::synth;
 
 use super::{circle, found, reason};
@@ -378,4 +378,17 @@ fn chamfered_boss_tops() {
     assert_eq!(chamfer(&[(5.0, 0.0), (5.0, 7.0), (4.0, 8.0)]), Some(BossChamfer { w: 1.0, h: 1.0 }));
     assert_eq!(chamfer(&[(5.0, 0.0), (5.0, 7.5), (3.5, 8.0)]), Some(BossChamfer { w: 1.5, h: 0.5 }));
     reason(&layered_boss(&[(5.0, 0.0), (5.0, 6.0), (4.6, 7.0), (4.0, 8.0)], 48));
+}
+
+/// A boss whose foot is faceted into only six corners is a hexagonal block, not a round one:
+/// the RANSAC fit keeps the original 50° gate on the ring's own edges, so no corner is dropped
+/// and the foot never becomes a round boss (roadmap 6.2) — a hexagon in a face's loop stays a
+/// cut-out too. The block comes over as a stack's hexagonal band instead.
+#[test]
+fn a_six_faceted_boss_foot_is_not_round() {
+    let foot = circle([20.0, 20.0], 5.0, 6);
+    match crate::recognize::recognize(&standing(&foot, &|p| p, 4.0)) {
+        Recognition::Stack { spec, .. } => assert_eq!(spec.bands[1].outline.len(), 6),
+        other => panic!("expected a stack of the plate and a hexagonal band, got {other:?}"),
+    }
 }

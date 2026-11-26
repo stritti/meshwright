@@ -555,3 +555,33 @@ fn flat_two_band_countersinks_are_no_rounds() {
     let (plate, _) = super::found(&rim_plate(&profile, 12));
     assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Countersink { d: 22.0, angle: 130.0, bottom: false }));
 }
+
+/// A rim whose exporter pushed one corner half a millimetre off the circle (the tolerance is
+/// 0.0008 mm): the direct fit fails, the fixed-seed RANSAC fit reads the other eleven facets
+/// as the round hole (roadmap 6.2).
+#[test]
+fn a_rim_with_one_corner_off_the_circle_is_a_round_hole() {
+    let outline = [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]];
+    let mut ring: Vec<P2> = (0..12).map(|i| 2.0 * PI * f64::from(i) / 12.0).map(|a| [40.0 + 5.0 * a.cos(), 25.0 + 5.0 * a.sin()]).collect();
+    ring[3][0] += 0.5;
+    let (plate, _) = found(&synth::prism(&outline, &[ring], 5.0, [0.0; 3]));
+    assert_eq!(plate.holes, [HoleSpec { x: 40.0, y: 25.0, d: 10.0, head: None, blind: None }]);
+    assert_eq!(plate.cutouts, []);
+}
+
+/// A twelve-corner loop whose corners alternate between radii 5 and 6 mm (a six-lobed shape):
+/// the RANSAC fit must not discard half the corners for one circle — the strict majority and
+/// the sagitta bound on the excluded corners refuse it, and it stays a mesh, not a round hole
+/// (roadmap 6.2).
+#[test]
+fn a_lobed_cut_out_is_not_a_round_hole() {
+    let outline = [[0.0, 0.0], [80.0, 0.0], [80.0, 50.0], [0.0, 50.0]];
+    let ring: Vec<P2> = (0..12)
+        .map(|i| {
+            let a = 2.0 * PI * f64::from(i) / 12.0;
+            let r = if i % 2 == 0 { 5.0 } else { 6.0 };
+            [40.0 + r * a.cos(), 25.0 + r * a.sin()]
+        })
+        .collect();
+    assert!(reason(&synth::prism(&outline, &[ring], 5.0, [0.0; 3])).contains("not round"));
+}
