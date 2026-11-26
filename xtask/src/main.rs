@@ -13,7 +13,7 @@
 //! - `plugin-test`: `component`, then runs `solidcraft-cli plugin test --require-cases` on the
 //!   package. The CLI is taken from `$SOLIDCRAFT_CLI`, else from `PATH`, else from the default
 //!   Windows install (`C:\Program Files\SolidCraft`, also found from WSL).
-//! - `check`: imports every `plugin/revmesh/tests/*.stl`, and checks the rebuild against the
+//! - `check`: imports every `plugin/revmesh/tests/*.{stl,obj,ply}`, and checks the rebuild against the
 //!   source mesh through SolidCraft (`solidcraft-cli eval` for feature errors and volume,
 //!   `run --out` to export the rebuilt part), measuring the volume error and the surface
 //!   deviation with mesh2cad's gate. Takes the CLI as `plugin-test` does.
@@ -239,25 +239,25 @@ fn check(root: &Path) -> Result<(), String> {
     let tests = root.join(PACKAGE_DIR).join("tests");
     let out = root.join("target").join("check");
     fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let mut stls: Vec<PathBuf> = fs::read_dir(&tests)
+    let mut meshes: Vec<PathBuf> = fs::read_dir(&tests)
         .map_err(|e| format!("{}: {e}", tests.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "stl"))
+        .filter(|p| p.extension().is_some_and(|e| matches!(e.to_str(), Some("stl" | "obj" | "ply"))))
         .collect();
-    stls.sort();
-    if stls.is_empty() {
-        return Err(format!("no STL fixtures in {}", tests.display()));
+    meshes.sort();
+    if meshes.is_empty() {
+        return Err(format!("no mesh fixtures in {}", tests.display()));
     }
     let mut failures: Vec<String> = Vec::new();
     let mut checked = 0;
-    for stl in &stls {
-        let name = stl.file_name().map_or_else(|| "part".into(), |n| n.to_string_lossy().into_owned());
-        let stem = stl.file_stem().map_or_else(|| "part".into(), |n| n.to_string_lossy().into_owned());
-        let bytes = fs::read(stl).map_err(|e| format!("{}: {e}", stl.display()))?;
-        let source = match revmesh_core::stl::parse(&bytes) {
+    for mesh_file in &meshes {
+        let name = mesh_file.file_name().map_or_else(|| "part".into(), |n| n.to_string_lossy().into_owned());
+        let stem = mesh_file.file_stem().map_or_else(|| "part".into(), |n| n.to_string_lossy().into_owned());
+        let bytes = fs::read(mesh_file).map_err(|e| format!("{}: {e}", mesh_file.display()))?;
+        let source = match revmesh_core::format::parse(&bytes, &name) {
             Ok(mesh) => mesh,
             Err(e) => {
-                println!("skip {name}: not an STL ({e})");
+                println!("skip {name}: not a mesh ({e})");
                 continue;
             }
         };

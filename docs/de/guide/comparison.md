@@ -74,7 +74,7 @@ brauchen eine GPU.
 
 | Feature | revmesh | mesh2cad | MeshWright (meshwright.io) | FreeCAD-RE-Workbench | Detessellate | MeshRemodel | CAD Sketcher |
 |---|---|---|---|---|---|---|---|
-| Eingabenetze | STL (≤ 16 MiB in auto, 32 MiB nur Netz) | STL, OBJ, PLY | STL, OBJ, PLY, 3MF | Netz + Punktwolke | STL, OBJ, 3MF | Netz (STL, OBJ, …) | Netz als Skizzen-Referenz |
+| Eingabenetze | STL, OBJ, PLY (≤ 16 MiB in auto, 32 MiB nur Netz) | STL, OBJ, PLY | STL, OBJ, PLY, 3MF | Netz + Punktwolke | STL, OBJ, 3MF | Netz (STL, OBJ, …) | Netz als Skizzen-Referenz |
 | Platte/Kontur entlang Z extrudiert | ✓ | ✓ | ~ KI-gebaute Features | – | ~ Querschnitte | ~ manuell | ~ projizierte Skizze |
 | Extrusion entlang X oder Y | ✓ | ✓ (probiert X, Y, Z) | ~ | – | – | – | ~ |
 | Durchgangsbohrungen | ✓ | ✓ | ✓ aus dem Netz angepasst | – | – | – | – |

@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: revmesh
-  text: STL in, editable design out
+  text: STL / OBJ / PLY in, editable design out
   tagline: A SolidCraft plugin that turns an STL into a design you can keep editing — every size a named parameter; change it and the part rebuilds.
   image:
     src: /stl-to-design.svg
@@ -34,8 +34,7 @@ features:
 ---
 
 ::: warning Status: early
-The pipeline works end to end — STL in, editable design out, tested in SolidCraft 0.50. Parts
-that are not recognised yet stay a mesh body, with the reason in the import report. What exactly
+The pipeline works end to end — mesh in, editable design out, tested in SolidCraft 0.50. Partsthat are not recognised yet stay a mesh body, with the reason in the import report. What exactly
 is recognised is listed under [What auto recognises](/guide/recognition); what is planned is on
 the [roadmap](/guide/roadmap).
 :::

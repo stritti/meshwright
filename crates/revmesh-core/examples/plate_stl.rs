@@ -17,6 +17,9 @@
 //!   semicircle arc side at each end;
 //! - `cutout-arc`: `plugin/revmesh/tests/cutout-arc.stl`, a 70 x 40 x 6 mm plate with a
 //!   16 x 16 cut-out whose top side is a radius-8 semicircle arc side.
+//! - `block-obj`, `block-ply`, `block-ply-bin`: `plugin/revmesh/tests/block-60x40x6.obj`,
+//!   `block-60x40x6.ply` (ASCII) and `block-60x40x6-bin.ply` (binary) — the block of
+//!   `block-60x40x6.stl` written as OBJ and PLY, so the format cases import the same geometry.
 //!
 //! ```sh
 //! cargo run -p revmesh-core --example plate_stl > plugin/revmesh/tests/plate-holes.stl
@@ -27,6 +30,9 @@
 //! cargo run -p revmesh-core --example plate_stl -- rounded-box > plugin/revmesh/tests/rounded-box.stl
 //! cargo run -p revmesh-core --example plate_stl -- stadium > plugin/revmesh/tests/stadium.stl
 //! cargo run -p revmesh-core --example plate_stl -- cutout-arc > plugin/revmesh/tests/cutout-arc.stl
+//! cargo run -p revmesh-core --example plate_stl -- block-obj > plugin/revmesh/tests/block-60x40x6.obj
+//! cargo run -p revmesh-core --example plate_stl -- block-ply > plugin/revmesh/tests/block-60x40x6.ply
+//! cargo run -p revmesh-core --example plate_stl -- block-ply-bin > plugin/revmesh/tests/block-60x40x6-bin.ply
 //! ```
 //!
 //! The intentionally broken fixtures for the error cases are written raw by the same example
@@ -39,7 +45,9 @@
 //! - `truncated`: `plugin/revmesh/tests/truncated.stl`, a binary STL whose header announces four
 //!   triangles but which ends ten bytes early;
 //! - `ascii-bad`: `plugin/revmesh/tests/ascii-bad.stl`, an ASCII STL whose fourth line is a
-//!   `vertex` with a coordinate that is not a number.
+//!   `vertex` with a coordinate that is not a number;
+//! - `obj-bad`: `plugin/revmesh/tests/obj-bad.obj`, an OBJ file whose face names vertex 9 of 3;
+//! - `ply-bad`: `plugin/revmesh/tests/ply-bad.ply`, a PLY header in `binary_big_endian`.
 //!
 //! ```sh
 //! cargo run -p revmesh-core --example plate_stl -- broken > plugin/revmesh/tests/broken.stl
@@ -47,13 +55,15 @@
 //! cargo run -p revmesh-core --example plate_stl -- nan > plugin/revmesh/tests/nan.stl
 //! cargo run -p revmesh-core --example plate_stl -- truncated > plugin/revmesh/tests/truncated.stl
 //! cargo run -p revmesh-core --example plate_stl -- ascii-bad > plugin/revmesh/tests/ascii-bad.stl
+//! cargo run -p revmesh-core --example plate_stl -- obj-bad > plugin/revmesh/tests/obj-bad.obj
+//! cargo run -p revmesh-core --example plate_stl -- ply-bad > plugin/revmesh/tests/ply-bad.ply
 //! ```
 
 use std::io::Write as _;
 
 use revmesh_core::mesh::{Mesh, snap_mm};
 use revmesh_core::recognize::{ArcSide, Axis, CutoutSpec, HoleSpec, PlateSpec, ProfileSpec};
-use revmesh_core::{stl, synth};
+use revmesh_core::{obj, ply, stl, synth};
 
 /// The plate in `plate-holes.stl`.
 fn plate() -> PlateSpec {
@@ -245,13 +255,28 @@ fn broken(which: Option<&str>) -> Option<Vec<u8>> {
             Some(bytes)
         }
         "ascii-bad" => Some(b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 x 0\nendloop\nendfacet\nendsolid t\n".to_vec()),
+        "obj-bad" => Some(b"v 0 0 0\nv 10 0 0\nv 10 10 0\nf 1 2 9\n".to_vec()),
+        "ply-bad" => Some(b"ply\nformat binary_big_endian 1.0\nend_header\n".to_vec()),
+        _ => None,
+    }
+}
+
+/// The block of `block-60x40x6.stl` written as OBJ or PLY (ASCII or binary), for the format
+/// cases of the plugin tests: the same geometry in every format the entry accepts.
+fn block_format(which: Option<&str>) -> Option<Vec<u8>> {
+    const BLOCK: &[u8] = include_bytes!("../../../plugin/revmesh/tests/block-60x40x6.stl");
+    let mesh = stl::parse(BLOCK).ok()?;
+    match which? {
+        "block-obj" => Some(obj::write(&mesh)),
+        "block-ply" => Some(ply::write_ascii(&mesh)),
+        "block-ply-bin" => Some(ply::write_binary(&mesh)),
         _ => None,
     }
 }
 
 fn main() -> std::io::Result<()> {
     let which = std::env::args().nth(1);
-    if let Some(bytes) = broken(which.as_deref()) {
+    if let Some(bytes) = broken(which.as_deref()).or_else(|| block_format(which.as_deref())) {
         std::io::stdout().write_all(&bytes)?;
         return Ok(());
     }

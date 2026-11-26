@@ -1,0 +1,8 @@
+{
+  "entry": "stl",
+  "file": "ply-bad.ply",
+  "expect": {
+    "error": "invalid_input",
+    "message": "PLY header line 2: unsupported PLY format binary_big_endian"
+  }
+}

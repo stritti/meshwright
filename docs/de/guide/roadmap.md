@@ -123,8 +123,14 @@
       eine Selbstprüfung in der App-Sandbox: die Capability `evaluate@0.2` anfordern, die erzeugte
       Konstruktion stagen und neu aufbauen, und bei Feature-Fehlern mit dem Grund im Bericht auf den
       Mesh-Body zurückfallen
-   2. OBJ- und PLY-Eingabe neben STL, mit demselben chunked Streaming und denselben Größenlimits wie
-      `StlReader` (`plugin.json` akzeptiert heute nur `stl`)
+   2. (erledigt: `plugin.json` akzeptiert `stl`, `obj` und `ply`; `format.rs` erkennt das Format an
+      Dateiname oder den ersten Bytes, und `MeshReader` streamt alle drei gepuffert mit denselben
+      Größenlimits wie `StlReader`; `obj.rs` und `ply.rs` (ASCII und binary little-endian) parsen
+      in dasselbe `Mesh` mit lokalisierten Zeilen-/Datensatz-Fehlern; `import`, `read_mesh` des
+      Plugins und `cargo xtask check` nehmen alle drei; die Plugin-Test-Fixtures
+      `block-60x40x6.obj`, `block-60x40x6.ply` und `block-60x40x6-bin.ply` importieren den
+      STL-Block unverändert, `obj-bad.obj`/`ply-bad.ply` decken die Fehlerfälle ab) OBJ- und
+      PLY-Eingabe neben STL
    3. doppeltgenaue Koordinaten in Mesh-Bodies jenseits des einfachgenauen Bereichs (die Konstruktion
       wird heute mit `f32`-Koordinaten geschrieben, `design/mod.rs`) — Teile weit vom Ursprung verlieren
       im Netz-Fallback an Präzision

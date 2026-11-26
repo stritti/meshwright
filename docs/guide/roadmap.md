@@ -120,8 +120,13 @@
       request the `evaluate@0.2` capability, stage the produced design
       and rebuild it, and on feature errors fall back to the mesh body with the reason in the
       report
-   2. OBJ and PLY input next to STL, with the same chunked streaming and size limits as
-      `StlReader` (`plugin.json` accepts only `stl` today)
+   2. (done: `plugin.json` accepts `stl`, `obj` and `ply`; `format.rs` tells the format by the
+      file's name or its first bytes, and `MeshReader` streams all three in chunks with the same
+      size limits as `StlReader`; `obj.rs` and `ply.rs` (ASCII and binary little-endian) parse
+      into the same `Mesh` with localised line/record errors; `import`, the plugin's `read_mesh`
+      and `cargo xtask check` take any of them; the plugin-test fixtures `block-60x40x6.obj`,
+      `block-60x40x6.ply` and `block-60x40x6-bin.ply` import the STL block unchanged, and
+      `obj-bad.obj`/`ply-bad.ply` cover the error cases) OBJ and PLY input next to STL
    3. double-precision coordinates in mesh bodies beyond the single-precision range (the design
       is written with `f32` coordinates today, `design/mod.rs`) — parts far from the origin lose
       precision in the mesh fallback

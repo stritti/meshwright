@@ -1,4 +1,4 @@
-//! Imports an STL file as the plugin would and prints what came out: one line per user
+//! Imports a mesh file (STL, OBJ or PLY) as the plugin would and prints what came out: one line per user
 //! parameter (`name value`), then the import report's summary and items on standard error, and
 //! the volume SolidCraft should measure after rebuilding the design (the exact volume of the
 //! recognised part, or the mesh's own where it is kept as a mesh): the `volume_mm3` a plugin test
@@ -6,7 +6,7 @@
 //!
 //! ```sh
 //! cargo run -q -p revmesh-core --example params -- part.stl
-//! cargo run -q -p revmesh-core --example params -- part.stl --design part.json
+//! cargo run -q -p revmesh-core --example params -- part.obj --design part.json
 //! ```
 //!
 //! `--design FILE` also writes the design, which SolidCraft opens (File › Open) or measures
@@ -16,12 +16,12 @@
 use std::process::ExitCode;
 
 use revmesh_core::recognize::{Recognition, recognize};
-use revmesh_core::{ImportOptions, import, stl};
+use revmesh_core::{ImportOptions, format, import};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(path) = args.first() else {
-        eprintln!("usage: params <file.stl> [--design <design.json>]");
+        eprintln!("usage: params <mesh-file> [--design <design.json>]");
         return ExitCode::from(2);
     };
     let design_out = args.iter().position(|a| a == "--design").and_then(|i| args.get(i + 1));
@@ -48,7 +48,7 @@ fn main() -> ExitCode {
     for item in &result.report.items {
         eprintln!("  {}: {}", item.title, item.message);
     }
-    if let Ok(mesh) = stl::parse(&bytes) {
+    if let Ok(mesh) = format::parse(&bytes, &name) {
         let volume = match recognize(&mesh) {
             Recognition::Plate { plate, .. } => plate.volume(),
             Recognition::Profile { profile, .. } => profile.volume(),

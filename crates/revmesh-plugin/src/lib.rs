@@ -37,15 +37,16 @@ wit_bindgen::generate!({ path: "wit", world: "importer-plugin" });
 use craft::plugin::types::{FieldFailure, PluginError};
 use craft::plugin::{control, design, evaluate, log, source};
 use exports::craft::plugin::importer::Guest;
+use revmesh_core::format::MeshReader;
 use revmesh_core::import::{self, Mode, SelfCheck};
 use revmesh_core::mesh::Mesh;
-use revmesh_core::stl::StlReader;
 use revmesh_core::{ImportOptions, Locale, import_mesh, version};
 
 /// Largest read or write the host accepts in one call.
 const CHUNK: usize = 1 << 20;
 
-// Binary STL expands from 50 to 72 bytes per triangle. Mesh mode also needs the
+// Binary STL expands from 50 to 72 bytes per triangle; OBJ and PLY hold shared vertices, so they
+// expand less. Mesh mode also needs the
 // read/write buffers, while auto recognition builds face and wall indexes on top of the mesh
 // (measured: about 250 bytes per triangle in all, so 16 MiB of STL peaks at roughly 90 MiB —
 // inside the 128 MiB the manifest asks for; 32 MiB would not fit without index-based face
@@ -104,7 +105,7 @@ impl Guest for Importer {
 /// Reads and parses the file being imported (path `""`) chunk by chunk.
 fn read_mesh(file: &source::FileInfo, max_bytes: u64, locale: Locale) -> Result<Mesh, PluginError> {
     let mut offset = 0u64;
-    let mut reader: Option<StlReader> = None;
+    let mut reader: Option<MeshReader> = None;
     while offset < file.size {
         if control::cancelled() {
             return Err(PluginError::Cancelled);
@@ -113,20 +114,22 @@ fn read_mesh(file: &source::FileInfo, max_bytes: u64, locale: Locale) -> Result<
         if chunk.is_empty() {
             break;
         }
-        let stl = match &mut reader {
-            Some(stl) => stl,
-            // The first chunk holds the header (1 MiB is far more than `StlReader::HEAD`).
-            None => {
-                reader.insert(StlReader::new_with_size_limit(&chunk, file.size, max_bytes).map_err(|e| invalid("file", e.message(locale)))?)
-            }
+        let mesh = match &mut reader {
+            Some(mesh) => mesh,
+            // The first chunk holds the header (1 MiB is far more than `MeshReader::HEAD`), and the
+            // file's name tells the format.
+            None => reader.insert(
+                MeshReader::new_with_size_limit(&chunk, file.size, max_bytes, &file.name)
+                    .map_err(|e| invalid("file", e.message(locale)))?,
+            ),
         };
-        stl.push(&chunk).map_err(|e| invalid("file", e.message(locale)))?;
+        mesh.push(&chunk).map_err(|e| invalid("file", e.message(locale)))?;
         offset += chunk.len() as u64;
         control::progress(0.4 * offset as f32 / file.size.max(1) as f32, locale.text("progress.reading"));
     }
     let reader = match reader {
         Some(reader) => reader,
-        None => StlReader::new(&[], 0).map_err(|e| invalid("file", e.message(locale)))?,
+        None => MeshReader::new(&[], 0, &file.name).map_err(|e| invalid("file", e.message(locale)))?,
     };
     reader.finish().map_err(|e| invalid("file", e.message(locale)))
 }

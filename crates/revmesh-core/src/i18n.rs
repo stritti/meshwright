@@ -188,7 +188,7 @@ mod tests {
         assert!(mode["description"].as_str().expect("description").starts_with("auto: Features erkennen"));
         assert_eq!(mode["enum"], serde_json::json!(["auto", "mesh"]));
         assert_eq!(mode["default"], "auto");
-        assert!(manifest["description"].as_str().expect("description").starts_with("Öffnet STL-Netze"));
+        assert!(manifest["description"].as_str().expect("description").starts_with("Öffnet STL-, OBJ- und PLY-Netze"));
         assert_eq!(manifest["id"], "revmesh");
         // SolidCraft refuses descriptions over 240 characters.
         assert!(manifest["description"].as_str().expect("description").chars().count() <= 240);

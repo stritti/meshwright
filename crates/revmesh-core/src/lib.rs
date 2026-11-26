@@ -5,7 +5,7 @@
 //!
 //! The pipeline is:
 //!
-//! 1. [`stl::parse`] reads binary or ASCII STL into a [`mesh::Mesh`].
+//! 1. [`format::parse`] reads STL, OBJ or PLY into a [`mesh::Mesh`].
 //! 2. [`recognize::recognize`] looks for features (plates, holes, fillets, …) in the mesh.
 //! 3. [`import::import`] turns what was recognised into a [`design::Design`], a SolidCraft
 //!    document with a parametric feature history, and a [`report::LossReport`] of what could not
@@ -21,11 +21,14 @@
 pub mod check;
 pub(crate) mod combined;
 pub mod design;
+pub mod format;
 pub mod i18n;
 pub mod import;
 pub mod mesh;
+pub mod obj;
 pub mod patterns;
 pub mod plate;
+pub mod ply;
 pub mod recognize;
 pub mod report;
 pub(crate) mod stack;
@@ -33,5 +36,6 @@ pub mod stl;
 pub mod synth;
 pub mod version;
 
+pub use format::{Format, MeshError, MeshReader};
 pub use i18n::Locale;
 pub use import::{ImportOptions, ImportResult, Units, convert_units, import, import_mesh};

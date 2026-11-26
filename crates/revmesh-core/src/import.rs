@@ -1,13 +1,13 @@
-//! The whole import: STL bytes in, design and loss report out.
+//! The whole import: mesh file bytes in, design and loss report out.
 
 use serde::Deserialize;
 
 use crate::design::{Design, DesignBuilder, FeatureKind, MeshData};
+use crate::format::{self, MeshError};
 use crate::i18n::Locale;
 use crate::mesh::Mesh;
 use crate::recognize::{Recognition, recognize};
 use crate::report::{LossItem, LossReport, Severity};
-use crate::stl::{self, StlError};
 
 /// Volume changes from smoothing facets below this fraction are not worth a line in the report.
 const SMOOTHING_NOTE: f64 = 1e-4;
@@ -15,7 +15,7 @@ const SMOOTHING_NOTE: f64 = 1e-4;
 /// Millimetres per inch, for a file the user says is in inches.
 pub const INCH_TO_MM: f64 = 25.4;
 
-/// The units the STL file is in. STL is unitless; millimetres are assumed.
+/// The units the mesh file is in. Mesh files are unitless; millimetres are assumed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Units {
@@ -67,9 +67,10 @@ pub struct ImportResult {
     pub report: LossReport,
 }
 
-/// Imports the STL file `file_name` whose content is `bytes`.
-pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<ImportResult, StlError> {
-    let mut mesh = stl::parse(bytes)?;
+/// Imports the mesh file `file_name` (STL, OBJ or PLY, see [`crate::format`]) whose content is
+/// `bytes`.
+pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<ImportResult, MeshError> {
+    let mut mesh = format::parse(bytes, file_name)?;
     convert_units(&mut mesh, options.units)?;
     Ok(import_mesh(&mesh, file_name, options))
 }
@@ -79,22 +80,22 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
 /// the f32 range the design is written in. Call this before [`import_mesh`], which expects
 /// millimetres; it never copies the mesh, so even a 32 MiB mesh-mode import holds it only once
 /// besides the design's own copy.
-pub fn convert_units(mesh: &mut Mesh, units: Units) -> Result<(), StlError> {
+pub fn convert_units(mesh: &mut Mesh, units: Units) -> Result<(), MeshError> {
     if units == Units::Inch {
         mesh.scale_in_place(INCH_TO_MM);
         for (i, triangle) in mesh.triangles.iter().enumerate() {
             if triangle.iter().flatten().any(|v| !v.is_finite()) {
-                return Err(StlError::NonFinite { triangle: i + 1 });
+                return Err(MeshError::NonFinite { triangle: i + 1 });
             }
             if triangle.iter().flatten().any(|v| v.abs() > f64::from(f32::MAX)) {
-                return Err(StlError::OutOfRange { triangle: i + 1 });
+                return Err(MeshError::OutOfRange { triangle: i + 1 });
             }
         }
     }
     Ok(())
 }
 
-/// Imports a mesh already read from the STL file `file_name` (see [`stl::StlReader`]). The mesh is
+/// Imports a mesh already read from the mesh file `file_name` (see [`format::MeshReader`]). The mesh is
 /// borrowed and must already be in millimetres ([`convert_units`] applies the file's units in
 /// place first): it is cloned only when it is kept as a mesh body, so a recognised import holds
 /// no second mesh (the plugin's sandbox fallback can still rebuild one from the same borrow).
@@ -272,6 +273,7 @@ pub fn body_name(file_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stl;
 
     const TETRA: &[u8] = include_bytes!("../tests/data/tetra.stl");
 
@@ -376,11 +378,11 @@ mod tests {
         // 1e38 parses fine (below f32::MAX), but 25.4e38 does not survive the f32 write.
         let mesh = Mesh { triangles: vec![[[0.0, 0.0, 0.0], [1.0e38, 0.0, 0.0], [0.0, 1.0, 0.0]]] };
         assert!(matches!(convert_units(&mut mesh.clone(), Units::Mm), Ok(())));
-        assert_eq!(convert_units(&mut mesh.clone(), Units::Inch), Err(StlError::OutOfRange { triangle: 1 }));
+        assert_eq!(convert_units(&mut mesh.clone(), Units::Inch), Err(MeshError::OutOfRange { triangle: 1 }));
         let bytes = stl::write_binary(&mesh);
         let err = import(&bytes, "big.stl", &ImportOptions { units: Units::Inch, ..ImportOptions::default() })
             .expect_err("1e38 inches overflow the f32 range");
-        assert!(matches!(err, StlError::OutOfRange { triangle: 1 }), "{err}");
+        assert!(matches!(err, MeshError::OutOfRange { triangle: 1 }), "{err}");
     }
 
     #[test]
@@ -789,7 +791,56 @@ mod tests {
 
     #[test]
     fn broken_files_are_errors() {
-        assert_eq!(import(b"solid e\nendsolid e\n", "e.stl", &ImportOptions::default()), Err(StlError::Empty));
+        assert_eq!(import(b"solid e\nendsolid e\n", "e.stl", &ImportOptions::default()), Err(MeshError::Stl(crate::stl::StlError::Empty)));
+    }
+
+    /// Roadmap 7.2: OBJ and PLY files import through `import` by their name, exactly as STL does.
+    #[test]
+    fn obj_and_ply_files_import_like_stl() {
+        let bytes = include_bytes!("../../../plugin/revmesh/tests/block-60x40x6.stl");
+        let mesh = stl::parse(bytes).expect("parses");
+        let stl_result = import(bytes, "block.stl", &ImportOptions::default()).expect("imports");
+        for (writer, name) in [
+            (crate::obj::write as fn(&Mesh) -> Vec<u8>, "block.obj"),
+            (crate::ply::write_ascii as fn(&Mesh) -> Vec<u8>, "block.ply"),
+            (crate::ply::write_binary as fn(&Mesh) -> Vec<u8>, "block.ply"),
+        ] {
+            let file = writer(&mesh);
+            let result = import(&file, name, &ImportOptions::default()).expect("imports");
+            assert_eq!(result.design.to_json(), stl_result.design.to_json(), "{name}");
+            assert_eq!(result.report.summary, stl_result.report.summary, "{name}");
+        }
+    }
+
+    /// Keeps the OBJ/PLY fixtures of SolidCraft's plugin test and their expectations in step
+    /// (roadmap 7.2): every format case imports the block exactly as the STL case does.
+    #[test]
+    fn plugin_test_obj_ply_fixtures() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugin/revmesh/tests/");
+        for file in ["block-60x40x6.obj", "block-60x40x6.ply", "block-60x40x6-bin.ply"] {
+            let case: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(format!("{dir}{file}.json")).expect("case file")).expect("valid case");
+            let bytes = std::fs::read(format!("{dir}{file}")).expect("fixture");
+            let result = import(&bytes, file, &ImportOptions::default()).expect("imports");
+            let expect = &case["expect"];
+            assert_eq!(result.design.features.len() as u64, expect["reply"]["features"].as_u64().expect("count"), "{file}");
+            assert_eq!(result.report.summary, expect["reply"]["loss_report"]["summary"].as_str().expect("summary"), "{file}");
+            assert_eq!(result.report.items[0].subject, file.split('.').next().expect("a stem"), "{file}");
+            let volume = expect["model"]["total"]["volume_mm3"].as_f64().expect("volume");
+            let mesh = crate::format::parse(&bytes, file).expect("parses");
+            assert!((mesh.volume() - volume).abs() < 1e-6 * volume, "{file}");
+        }
+        // The error cases: the message fragment each case expects is the localised reason.
+        for file in ["obj-bad.obj", "ply-bad.ply"] {
+            let stem = file.split('.').next().expect("a stem");
+            let case: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(format!("{dir}{stem}.json")).expect("case file")).expect("valid case");
+            let bytes = std::fs::read(format!("{dir}{file}")).expect("fixture");
+            let err = import(&bytes, file, &ImportOptions::default()).expect_err("an error");
+            let message = err.message(crate::Locale::En);
+            let expected = case["expect"]["message"].as_str().expect("message");
+            assert!(message.contains(expected), "{file}: {message} vs {expected}");
+        }
     }
 
     #[test]

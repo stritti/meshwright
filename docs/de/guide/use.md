@@ -5,9 +5,10 @@
    `.stl` weiterhin den eingebauten Netz-Import, daher erreicht man revmesh über das Plugins-Menü.
 2. Der Dialog bietet **Importieren als**: `auto` (Features erkennen und das Teil parametrisch neu
    aufbauen — Facetten werden zu idealen Flächen, der Importbericht nennt die Abweichung; das Netz
-   bleibt nur dort, wo nichts erkannt wird; STL bis 16 MiB; die Standardeinstellung) oder `mesh` (das
-   Netz exakt so übernehmen, wie es ist; STL bis 32 MiB).
-3. Seine Schaltfläche wählt die STL-Datei. Sie öffnet sich als neue, ungespeicherte Konstruktion.
+   bleibt nur dort, wo nichts erkannt wird; Datei bis 16 MiB; die Standardeinstellung) oder `mesh` (das
+   Netz exakt so übernehmen, wie es ist; Datei bis 32 MiB).
+3. Seine Schaltfläche wählt die Netzdatei (`.stl`, `.obj` oder `.ply`). Sie öffnet sich als neue,
+   ungespeicherte Konstruktion.
 4. Danach folgt der **Importbericht**: eine Zusammenfassung, eine Zeile pro Art der Änderung und
    alles im Detail unter *Details*. **Plugins › Last import report…** zeigt ihn später erneut an.
 
@@ -32,8 +33,9 @@ Welche Teile erkannt werden und welche Parameter sie bekommen, steht unter
 
 ## Grenzen
 
-STL-Eingabe: bis 16 MiB im Modus `auto`, 32 MiB im Modus `mesh` (`AUTO_MAX_BYTES` /
+Netz-Eingabe (STL, OBJ, PLY): bis 16 MiB im Modus `auto`, 32 MiB im Modus `mesh` (`AUTO_MAX_BYTES` /
 `MESH_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`). Laufzeit: 128 MiB Speicher, eine Deadline
 von 120 s und 10¹¹ Fuel, wie in `plugin/revmesh/plugin.json` angefordert. Die Datei wird in
-1-MiB-Chunks gestreamt, daher erreicht eine 16-MiB-STL etwa 90 MiB Spitzenwert im Speicher.
+1-MiB-Chunks gestreamt, daher erreicht eine 16-MiB-Datei etwa 90 MiB Spitzenwert im Speicher
+(binäres STL; OBJ und PLY halten gemeinsame Vertices, dehnen sich also weniger aus).
 Gemessene Werte und die Begründung dahinter: [Architektur](/de/architecture#limits-in-solidcraft).

@@ -76,21 +76,23 @@ Differences that are expected, and why:
 
 ## Fixtures
 
-STL fixtures are generated, never edited by hand: `crates/revmesh-core/examples/plate_stl.rs`
+Mesh fixtures (STL, OBJ, PLY) are generated, never edited by hand: `crates/revmesh-core/examples/plate_stl.rs`
 writes them from a spec (`synth` tessellates the way CAD exporters do), and prints the volume
 SolidCraft should measure after rebuilding. Each fixture in `plugin/revmesh/tests` has a
-`.json` case that `cargo xtask plugin-test` runs in SolidCraft.
+`.json` case that `cargo xtask plugin-test` runs in SolidCraft. The OBJ/PLY fixtures are the
+STL block written in each format (`block-obj`/`block-ply`/`block-ply-bin`).
 
 The intentionally broken fixtures (`broken.stl`, `empty.stl`, `nan.stl`, `truncated.stl`,
-`ascii-bad.stl`) come from the same example's raw modes, listed in its header. Their `.json`
+`ascii-bad.stl`, `obj-bad.obj`, `ply-bad.ply`) come from the same example's raw modes, listed in
+its header. Their `.json`
 cases expect an error — `{"error": "invalid_input", "message": "…"}` with a fragment of the
 localised reason, as `broken.json` shows.
 
 Real STL files from Printables, under CC0 or CC BY and used unchanged, are in
 `plugin/revmesh/tests/printables/` (authors and licences in its README);
 `crates/revmesh-core/tests/printables.rs` checks them against the authors' published sources
-where there are any, and the `printables-*.json` cases import each in SolidCraft. For any STL,
-`cargo run -q -p revmesh-core --example params -- part.stl` ends with the feature count and the
+where there are any, and the `printables-*.json` cases import each in SolidCraft. For any mesh
+file, `cargo run -q -p revmesh-core --example params -- part.obj` ends with the feature count and the
 volume a plugin test case expects.
 
 The example parts in `examples/` (shown in the docs' [examples](/guide/examples) gallery) are

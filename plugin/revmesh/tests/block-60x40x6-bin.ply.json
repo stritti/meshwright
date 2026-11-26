@@ -1,0 +1,28 @@
+{
+  "entry": "stl",
+  "file": "block-60x40x6-bin.ply",
+  "expect": {
+    "reply": {
+      "bodies": 1,
+      "features": 3,
+      "loss_report": {
+        "summary": "A 60 x 40 x 6 mm plate",
+        "items": [
+          {
+            "code": "revmesh.deviation",
+            "severity": "info",
+            "subject": "block-60x40x6-bin",
+            "title": "Surface deviation per face",
+            "message": "The mesh's faces lie at most this far from the recognised faces: bottom face: 0 mm, side 1: 0 mm, side 2: 0 mm, side 3: 0 mm, side 4: 0 mm, top face: 0 mm."
+          }
+        ]
+      }
+    },
+    "model": {
+      "body_count": 1,
+      "total": {
+        "volume_mm3": 14400
+      }
+    }
+  }
+}
