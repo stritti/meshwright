@@ -198,6 +198,8 @@ enum Phase {
 #[derive(Debug)]
 pub struct PlyReader {
     phase: Phase,
+    /// The file's total size, to refuse a record that could never fit in it.
+    size: u64,
     /// The bytes after the last consumed line or record.
     pending: Vec<u8>,
     /// 1-based header line being read.
@@ -220,7 +222,6 @@ impl PlyReader {
     /// A reader for a file of `size` bytes that starts with `head`; the head must carry the
     /// `ply` magic, or the first line is refused.
     pub fn new(head: &[u8], size: u64) -> Result<Self, MeshError> {
-        let _ = size;
         let magic = head.starts_with(b"ply\n") || head.starts_with(b"ply\r\n") || head == b"ply";
         if !magic {
             let word = String::from_utf8_lossy(head).split_whitespace().next().unwrap_or_default().to_owned();
@@ -228,6 +229,7 @@ impl PlyReader {
         }
         Ok(Self {
             phase: Phase::Header,
+            size,
             pending: Vec::new(),
             line: 0,
             record: 0,
@@ -287,7 +289,8 @@ impl PlyReader {
                         *consumed = buf.len();
                         break;
                     }
-                    let Some(used) = binary_needed(&self.elements[self.body_pos].props, rest) else { break };
+                    let needed = binary_needed(&self.elements[self.body_pos].props, rest, self.size, self.record + 1)?;
+                    let Some(used) = needed else { break };
                     let record = &rest[..used];
                     *consumed += used;
                     self.binary_record(record)?;
@@ -569,7 +572,10 @@ impl PlyReader {
                             push_reserved(&mut indices, idx)?;
                         }
                     } else {
-                        *off += n * item.size();
+                        // Checked: a crafted count must not wrap the offset (usize is 32 bit on
+                        // wasm32), or the record would end early and the slices below panic.
+                        let bytes = n.checked_mul(item.size()).and_then(|b| off.checked_add(b)).ok_or(err(PlyReason::BadNumber))?;
+                        *off = bytes;
                     }
                 }
             }
@@ -623,34 +629,41 @@ fn list_position(props: &[Prop]) -> Option<usize> {
         .or_else(|| props.iter().position(|p| matches!(p, Prop::List { .. })))
 }
 
-/// How many bytes of `buf` the next binary record needs, or `None` when `buf` holds no complete
-/// record yet.
-fn binary_needed(props: &[Prop], buf: &[u8]) -> Option<usize> {
+/// How many bytes of `buf` the next binary record needs, or `Ok(None)` when `buf` holds no
+/// complete record yet. A list count whose bytes cannot even fit in the file — or whose product
+/// would wrap `usize` on wasm32 — is a bad number, not a truncated file.
+fn binary_needed(props: &[Prop], buf: &[u8], file_size: u64, record: usize) -> Result<Option<usize>, MeshError> {
+    let err = || MeshError::PlyBody { record, reason: PlyReason::BadNumber };
     let mut off = 0usize;
     for prop in props {
         match prop {
             Prop::Scalar { ty, .. } => {
                 off += ty.size();
                 if buf.len() < off {
-                    return None;
+                    return Ok(None);
                 }
             }
             Prop::List { count, item, .. } => {
                 if buf.len() < off + count.size() {
-                    return None;
+                    return Ok(None);
                 }
-                let n = count.read_int(&buf[off..off + count.size()])?;
+                let n = count.read_int(&buf[off..off + count.size()]).ok_or_else(err)?;
+                let Ok(n) = usize::try_from(n) else { return Err(err()) };
                 off += count.size();
-                if let Ok(n) = usize::try_from(n) {
-                    off += n * item.size();
-                    if buf.len() < off {
-                        return None;
-                    }
+                // Checked: on wasm32 `usize` is 32 bit, so a crafted count times the item size
+                // can wrap and make the record look complete.
+                let end = n.checked_mul(item.size()).and_then(|b| off.checked_add(b)).ok_or_else(err)?;
+                if u64::try_from(end).unwrap_or(u64::MAX) > file_size {
+                    return Err(err());
+                }
+                off = end;
+                if buf.len() < off {
+                    return Ok(None);
                 }
             }
         }
     }
-    Some(off)
+    Ok(Some(off))
 }
 
 /// Writes a mesh as ASCII PLY (shared vertices once, faces as `3 a b c` lines, 0-based).
@@ -881,6 +894,22 @@ mod tests {
             binary.extend_from_slice(&t.to_le_bytes());
         }
         assert_eq!(read(&binary).expect("reads").triangles.len(), 1);
+    }
+
+    #[test]
+    fn a_crafted_list_count_cannot_wrap_the_record_size() {
+        // `property list uint int vertex_indices` with count 0xFFFF_FFFF: the count times the
+        // item size must be checked, not wrapped — on wasm32 `usize` is 32 bit, so
+        // 0x4000_0000 * 4 wraps to 0, the record looks complete, and the slices past it panic
+        // (trap). The count also exceeds the whole file, so it is refused as a bad number on
+        // every target.
+        let mut binary = b"ply\nformat binary_little_endian 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uint int vertex_indices\nend_header\n".to_vec();
+        for c in [0.0f32, 0.0, 0.0] {
+            binary.extend_from_slice(&c.to_le_bytes());
+        }
+        binary.extend_from_slice(&u32::MAX.to_le_bytes());
+        let err = read(&binary).expect_err("an error");
+        assert_eq!(err, MeshError::PlyBody { record: 2, reason: PlyReason::BadNumber });
     }
 
     #[test]
