@@ -1,0 +1,18 @@
+{
+  "commands": [
+    {"command": "plugin.install", "params": {
+      "path": "../../target/dist/revmesh-<version>.zip",
+      "approval": "<approval hash from check-package.json / plugin.check>",
+      "approve": {}
+    }},
+    {"command": "file.import", "params": {
+      "path": "../corner-plate.stl",
+      "format": "revmesh.stl",
+      "options": {"mode": "auto", "units": "mm"}
+    }},
+    {"command": "file.export", "params": {
+      "path": "../../target/cli-example/rebuilt-corner-plate.stl",
+      "format": "stl"
+    }}
+  ]
+}

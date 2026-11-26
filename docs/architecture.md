@@ -120,3 +120,10 @@ memory budget above.
    `max(4 * 0.1% of the diagonal, 0.1 mm)`, volume error at most 1%).
 4. By hand: open a golden design (`cargo run -p revmesh-core --example plate_design`) in
    SolidCraft, change parameters and watch it rebuild.
+5. `scripts/example-cli.sh` (CI job `example-cli`): installs the `cargo xtask dist` zip in a
+   scratch plugins dir and imports an example STL through `solidcraft-cli`'s `file.import`
+   (entry `revmesh.stl`), then checks the import's loss report is a parametric rebuild (no
+   `revmesh.unrecognized`/`revmesh.selfcheck` fallback) and the rebuilt STL's volume against the
+   source within 1 %.
+   The scripts it runs are in
+   [examples/cli/](https://github.com/stritti/revmesh/tree/main/examples/cli).

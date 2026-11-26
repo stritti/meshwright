@@ -25,3 +25,10 @@ cargo test -p revmesh-core --test examples   # each imports as the gallery descr
 
 More parts, one feature each (counterbores, slots, bosses, pockets, …), are the plugin's test
 files in [`plugin/revmesh/tests/`](../plugin/revmesh/tests/).
+
+## Headless, from a script
+
+[`cli/`](https://github.com/stritti/revmesh/tree/main/examples/cli) shows how to import without
+the app: install the `cargo xtask dist` zip, then `file.import` with the importer entry
+`revmesh.stl` through `solidcraft-cli`, and export the rebuilt design as STL. One command, also
+run by CI (job `example-cli`): `scripts/example-cli.sh`.
