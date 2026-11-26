@@ -32,6 +32,7 @@ cargo xtask dist        # target/dist/revmesh-<version>.zip
    last for that run only (`--keep-plugin-approvals` shares the desktop app's). The rebuilt part
    is written to `target/cli-example/rebuilt-corner-plate.stl`.
 
-The one-command version — check, install, import, export, and compare the rebuilt STL's volume
-with the source within 1 % — is [`scripts/example-cli.sh`](../../scripts/example-cli.sh); CI
-runs it as the `example-cli` job.
+The one-command version — check, install, import, export, assert the import's loss report is a
+parametric rebuild (no mesh fallback), and compare the rebuilt STL's volume with the source
+within 1 % — is [`scripts/example-cli.sh`](../../scripts/example-cli.sh); CI runs it as the
+`example-cli` job.

@@ -122,6 +122,8 @@ memory budget above.
    SolidCraft, change parameters and watch it rebuild.
 5. `scripts/example-cli.sh` (CI job `example-cli`): installs the `cargo xtask dist` zip in a
    scratch plugins dir and imports an example STL through `solidcraft-cli`'s `file.import`
-   (entry `revmesh.stl`), then checks the rebuilt STL's volume against the source within 1 %.
+   (entry `revmesh.stl`), then checks the import's loss report is a parametric rebuild (no
+   `revmesh.unrecognized`/`revmesh.selfcheck` fallback) and the rebuilt STL's volume against the
+   source within 1 %.
    The scripts it runs are in
    [examples/cli/](https://github.com/stritti/revmesh/tree/main/examples/cli).
