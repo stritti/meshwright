@@ -92,8 +92,12 @@
       `MIN_HOLE_SEGMENTS` (8) corners are read as a polygonal cut-out first, so a hexagon stays
       a cut-out there, and a D-shape's flat side and an omitted facet's long step are still
       one long step) robust circle fits on rim loops
-   3. analytic torus detection for the rounds at hole rims and boss feet (today measured band by
-      band in `plate/bosses.rs::round_foot`)
+   3. (done: a torus about the known axis is a circle in the (radial, axial) profile plane, so
+      `plate/geometry.rs::fit_torus` fits it as one — least-squares circle through the round's
+      band corners, refused when they lie on no circle — in `rounded_rim` for hole rims
+      (`plate/prism.rs`, with tangency to the bore's wall and to the face checked) and in
+      `round_foot` for boss feet (`plate/bosses.rs`), replacing the per-corner averaging) analytic
+      torus detection for the rounds at hole rims and boss feet
    4. per-corner radii in outlines (`plate/outline.rs` already fits one circle per rounded corner
       with `CircleSums`; today all corners must share one radius)
    5. hole rows at any angle (a pattern's direction is not an expression in SolidCraft — write

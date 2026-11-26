@@ -195,10 +195,11 @@ fn top_covers(b: &FoundBoss, top: &[[P2; 3]], tol: f64) -> bool {
 /// The round at a boss's foot, if it has one, and the cylinder's radius above it, for the boss
 /// standing on `foot` with its top at `top`, `upper` the facets above the plate's top face at
 /// `top_z`. The cylinder's radius is that of the circle fitted to the top's rim (its facets'
-/// boundary loop, without corners an exporter added along its facets); a footprint wider than that has a round, whose radius comes from its own
-/// corners: one `a` out from the cylinder and `h` up lies on a quarter circle of radius
-/// `a + h + sqrt(2ah)`. (The footprint itself may be smaller than the round's: its first, nearly
-/// flat facets may lie within the tolerance of the top face.)
+/// boundary loop, without corners an exporter added along its facets); a footprint wider than that has a round, fitted as a torus about the
+/// axis (6.3) — a circle in the (radial, height) profile plane through the band's corners.
+/// (The footprint itself may be
+/// smaller than the round's: its first, nearly flat facets may lie within the tolerance of the
+/// top face.)
 fn round_foot(upper: &[&crate::mesh::Triangle], foot: &Footprint, top: f64, top_z: f64, tol: f64) -> (f64, f64) {
     let Footprint::Round { centre, r } = *foot else { return (0.0, 0.0) };
     let flat = |p: &Vec3| [p[0], p[1]];
@@ -216,15 +217,24 @@ fn round_foot(upper: &[&crate::mesh::Triangle], foot: &Footprint, top: f64, top_
     if r - rim <= tol {
         return (0.0, r);
     }
-    let samples: Vec<f64> = upper
+    let profile: Vec<P2> = upper
         .iter()
         .flat_map(|t| t.iter())
         .filter(|p| on(p) && p[2] > top_z + tol && p[2] < top - tol)
-        .map(|p| (super::geometry::distance(flat(p), centre) - rim, p[2] - top_z))
-        .filter(|(a, _)| *a > tol)
-        .map(|(a, h)| a + h + (2.0 * a * h).sqrt())
+        .map(|p| [super::geometry::distance(flat(p), centre) - rim, p[2] - top_z])
+        .filter(|[a, _]| *a > tol)
         .collect();
-    let f = if samples.is_empty() { r - rim } else { samples.iter().sum::<f64>() / samples.len() as f64 };
+    // A foot round is tangent to the cylinder (a = 0) and to the plate's top face (h = 0), so the
+    // fitted centre must be (f, f) within the tolerance (the fit runs on the on-circle corners, so
+    // a real round lands there to within f32 rounding); a non-tangent fit is no foot round, and
+    // the per-corner formula below decides as before 6.3.
+    let f = match super::geometry::fit_torus(&profile, tol) {
+        Some((c, f)) if (c[0] - f).abs() <= tol && (c[1] - f).abs() <= tol => f,
+        None if profile.is_empty() => r - rim,
+        // Fewer than three corners, or no circle through them: each corner alone gives the
+        // radius, `a` out from the cylinder and `h` up on the quarter circle.
+        _ => profile.iter().map(|[a, h]| a + h + (2.0 * a * h).sqrt()).sum::<f64>() / profile.len() as f64,
+    };
     (f, rim)
 }
 

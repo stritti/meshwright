@@ -615,40 +615,55 @@ fn rounded_rim(s: &Stepped, mine: &[Vec3], tol: f64) -> Option<(f64, f64)> {
     let r = |p: &Vec3| distance([p[0], p[1]], s.centre);
     let between: Vec<&Vec3> =
         mine.iter().filter(|p| depth(p) > tol && depth(p) < s.head_r - s.bore_r + tol && r(p) > s.bore_r + tol).collect();
-    // The round's radius from its corners: one `a` out from the bore and `d` down from the face
-    // lies on the quarter circle of radius `a + d + sqrt(2ad)`.
-    let samples: Vec<f64> = between.iter().map(|p| (r(p) - s.bore_r, depth(p))).map(|(a, d)| a + d + (2.0 * a * d).sqrt()).collect();
-    if samples.is_empty() {
+    if between.is_empty() {
         return None;
     }
-    let f = samples.iter().sum::<f64>() / samples.len() as f64;
-    // The mouth as measured agrees with it: as wide, or narrower by no more than the round's
-    // first facets can lie within the tolerance of the face (rising by `tol` at most, they reach
-    // `sqrt(2 f tol)` in from the mouth).
-    let head_r = s.bore_r + f;
+    // The round as a torus about the bore's axis (6.3): a circle in the (radial, depth) profile
+    // plane fitted to the corners between the faces — its centre is the mouth's radius and the
+    // round's depth, its radius the round's.
+    let profile: Vec<P2> = between.iter().map(|p| [r(p), depth(p)]).collect();
+    let ([head_r, round_d], f) = if let Some(fit) = super::geometry::fit_torus(&profile, tol) {
+        fit
+    } else {
+        // Fewer than three corners, or no circle through them: each corner alone gives the
+        // radius, `a` out from the bore and `d` down from the face on the quarter circle.
+        let f = between.iter().map(|p| (r(p) - s.bore_r, depth(p))).map(|(a, d)| a + d + (2.0 * a * d).sqrt()).sum::<f64>()
+            / between.len() as f64;
+        ([s.bore_r + f, f], f)
+    };
+    // The mouth as measured agrees with the fitted circle: as wide, or narrower by no more than
+    // the round's first facets can lie within the tolerance of the face (rising by `tol` at
+    // most, they reach `sqrt(2 f tol)` in from the mouth).
     let narrower = head_r - s.head_r;
     if narrower < -tol || narrower > (2.0 * f * tol).sqrt() + tol {
         return None;
     }
-    let off = |p: &Vec3| ((r(p) - head_r).hypot(depth(p) - f) - f).abs();
+    let off = |p: &Vec3| ((r(p) - head_r).hypot(depth(p) - round_d) - f).abs();
     // The steps along the quarter circle between its own corners (those on it), from the face
     // (at -90° about its centre) to the bore (at 180°).
-    let along = |p: &Vec3| (depth(p) - f).atan2(r(p) - head_r).rem_euclid(2.0 * std::f64::consts::PI);
+    let along = |p: &Vec3| (depth(p) - round_d).atan2(r(p) - head_r).rem_euclid(2.0 * std::f64::consts::PI);
     let mut angles: Vec<f64> = between.iter().filter(|p| off(p) <= tol).map(|p| along(p)).collect();
     angles.extend([1.5 * std::f64::consts::PI, std::f64::consts::PI]);
     angles.sort_by(f64::total_cmp);
     let step = angles.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
-    if between.is_empty() || step > super::MAX_HOLE_STEP + 1e-9 {
+    if step > super::MAX_HOLE_STEP + 1e-9 {
         return None;
     }
     let round_the_axis =
         (super::geometry::sagitta(&s.mouth, s.head_r) / s.head_r).max(super::geometry::sagitta(&s.bore, s.bore_r) / s.bore_r);
     let slack = f * (1.0 - (step / 2.0).cos()) + head_r * round_the_axis;
+    // A round is tangent to the bore's wall (its centre one radius out from the bore) and to the
+    // face (one radius deep, within the round's own facets); a cone's profile fits a circle with
+    // its centre elsewhere.
+    let bore_sag = super::geometry::sagitta(&s.bore, s.bore_r);
+    if (head_r - f - s.bore_r).abs() > bore_sag + tol || (round_d - f).abs() > slack + tol {
+        return None;
+    }
     // It meets the bore where the bore's corners nearest the face are, at its own depth (a
     // flatter cone meets it higher up, though its corners may fit a round as wide): the
     // shallowest of them lies as deep as the round is at its radius.
-    let bore_in = s.bore_r - super::geometry::sagitta(&s.bore, s.bore_r) - tol;
-    let round_at = |p: &Vec3| f - (f * f - (head_r - r(p)).powi(2)).max(0.0).sqrt();
+    let bore_in = s.bore_r - bore_sag - tol;
+    let round_at = |p: &Vec3| round_d - (f * f - (head_r - r(p)).powi(2)).max(0.0).sqrt();
     let meets =
         mine.iter().filter(|p| depth(p) > tol && r(p) >= bore_in && r(p) <= s.bore_r + tol).min_by(|a, b| depth(a).total_cmp(&depth(b)));
     if meets.is_none_or(|p| (depth(p) - round_at(p)).abs() > slack + tol) {
