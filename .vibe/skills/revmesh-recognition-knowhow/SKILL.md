@@ -135,7 +135,7 @@ and per-face deviation in the import report — roadmap 5.4.
 - Pure recognition math never crosses the plugin boundary; anything that does (design JSON fields,
   host calls, report JSON) must pass the plugin-interface conformance check in the `solidcraft-*`
   skills against SolidCraft's `docs/plugins.md` — [at the pinned tag
-  `v0.49.1`](https://github.com/tangency-labs/solidcraft/blob/v0.49.1/docs/plugins.md) and [at
+  `v0.50.0`](https://github.com/tangency-labs/solidcraft/blob/v0.50.0/docs/plugins.md) and [at
   `main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md): compatible with
   the host, and using every part of the interface that applies.
 - Deterministic: fixed seeds, no threads, no network, no system randomness in the sandbox.

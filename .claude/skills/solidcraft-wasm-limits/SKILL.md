@@ -16,7 +16,7 @@ inside SolidCraft") is the source of truth; the manifest declares what the plugi
 This skill touches SolidCraft's plugin boundary, so before committing any change here, check it
 against the host's own documentation: `docs/plugins.md` in
 [tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft) at the pinned release
-[tag `v0.49.1`](https://github.com/tangency-labs/solidcraft/blob/v0.49.1/docs/plugins.md)
+[tag `v0.50.0`](https://github.com/tangency-labs/solidcraft/blob/v0.50.0/docs/plugins.md)
 (`SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml`, matching the vendored
 `crates/revmesh-plugin/wit/plugin.wit`) and at
 [`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md) for what is
@@ -85,7 +85,7 @@ For this skill:
 4. **Write coordinates as f32** in large designs; keep recognition tolerances explicit
    (1 µm or 1e-5 of the part's size, whichever is larger).
 5. **Budget the expansion**: binary STL is 50 bytes/triangle on disk, 72 bytes once expanded —
-   plus face/wall indexes in recognition. Reference measurement (SolidCraft 0.49, 128 MiB):
+   plus face/wall indexes in recognition. Reference measurement (SolidCraft 0.50, 128 MiB):
    a 1.5 M-triangle STL (75 MB) imports as a mesh in ~8 s; 2 M triangles exceed the memory.
 6. **Be deterministic**: no threads, network, subprocesses or system randomness exist in the
    sandbox — seed randomized algorithms (e.g. RANSAC) with a fixed value.

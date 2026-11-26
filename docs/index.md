@@ -34,7 +34,7 @@ features:
 ---
 
 ::: warning Status: early
-The pipeline works end to end — STL in, editable design out, tested in SolidCraft 0.49. Parts
+The pipeline works end to end — STL in, editable design out, tested in SolidCraft 0.50. Parts
 that are not recognised yet stay a mesh body, with the reason in the import report. What exactly
 is recognised is listed under [What auto recognises](/guide/recognition); what is planned is on
 the [roadmap](/guide/roadmap).

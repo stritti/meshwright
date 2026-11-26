@@ -16,7 +16,7 @@ natively; the plugin crate is `#![cfg(target_arch = "wasm32")]` and empty elsewh
 This skill touches SolidCraft's plugin boundary, so before committing any change here, check it
 against the host's own documentation: `docs/plugins.md` in
 [tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft) at the pinned release
-[tag `v0.49.1`](https://github.com/tangency-labs/solidcraft/blob/v0.49.1/docs/plugins.md)
+[tag `v0.50.0`](https://github.com/tangency-labs/solidcraft/blob/v0.50.0/docs/plugins.md)
 (`SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml`, matching the vendored
 `crates/revmesh-plugin/wit/plugin.wit`) and at
 [`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md) for what is

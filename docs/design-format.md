@@ -1,13 +1,13 @@
 # The SolidCraft design format, as revmesh writes it
 
 SolidCraft's document format is internal and has no published schema. This page records what
-revmesh relies on, learnt from designs SolidCraft saved as JSON (verified against 0.49.1) and
+revmesh relies on, learnt from designs SolidCraft saved as JSON (verified against 0.50.0) and
 from hand-written files opened in it. Re-check it with every SolidCraft release.
 
 ## Version
 
-`"format": "solidcraft/63"`. SolidCraft 0.49.1 upgrades older versions when it opens a file (it
-saves `solidcraft/68`), so writing one fixed version is safe as long as SolidCraft still reads it.
+`"format": "solidcraft/63"`. SolidCraft 0.50.0 upgrades older versions when it opens a file (it
+saves `solidcraft/69`), so writing one fixed version is safe as long as SolidCraft still reads it.
 
 ## Top level
 
@@ -66,7 +66,7 @@ side driven by `outline_<a>_<i>_len` (`<a>` the axis letter) and an `Angle` on i
 slanted side driven by `outline_<a>_<i>_angle`, so a combined part re-dimensions side by side
 and re-angles in SolidCraft too. The first extrusion makes the body (`operation: "new_body"`), every further one has
 `operation: "intersect"` with no `body_names` and no targets: SolidCraft intersects the existing
-body, coincident faces included, as `solidcraft-cli 0.49.1` builds it. A `move` then takes the
+body, coincident faces included, as `solidcraft-cli 0.50.0` builds it. A `move` then takes the
 body to where it is, its translation along each outline's axis `extrude_<a>_0`. Changing
 `extrude_x_len` from 60 to 50 on `plugin/revmesh/tests/combined.stl` rebuilds to 32,500 mm³, as
 computed, and `extrude_z_0 = 10` lifts the part by 10 mm.
@@ -112,7 +112,7 @@ Each band's sketch is dimensioned like a plate's outline: a `Length` per driving
 outline driven by `outline_<k>_<i>_len` and an `Angle` on its longest slanted side driven by
 `outline_<k>_<i>_angle` (openings through the band by `cutout_<n>_<i>_len`/`_angle`, numbered
 across the bands).
-SolidCraft fuses bands that meet face to face into one body (`solidcraft-cli 0.49.1`); mesh2cad
+SolidCraft fuses bands that meet face to face into one body (`solidcraft-cli 0.50.0`); mesh2cad
 overlaps them by 0.02 mm for OpenCascade's fuse, which SolidCraft does not need.
 `plugin/revmesh/tests/stack.stl` (a base, an L and a diamond) rebuilds to 34,296 mm³ along Z and,
 turned, along Y; `extrude_z1_len = 15` rebuilds to 46,296 mm³, the bands above lifted by 5 mm.
@@ -165,7 +165,7 @@ the plate's top face and the cylinder's side: `edge_names: ["F<extrude>:top|F<cy
 (SolidCraft names that edge `F1:+z|F2:side` on a box primitive), radius `boss_<n>_fillet`. In
 the mesh the round widens the boss's footprint in the top face by its radius; it must be meshed
 in steps of at most 50° of its quarter circle (in one step it is a 45° chamfer, which looks the
-same). `boss-fillet.stl` (exported by SolidCraft 0.49: a 70 x 40 x 6 plate with an Ø10 x 8 boss
+same). `boss-fillet.stl` (exported by SolidCraft 0.50: a 70 x 40 x 6 plate with an Ø10 x 8 boss
 rounded at its foot with 2 mm, an Ø8 x 5 boss and an Ø4 hole) imports to 17,633.625 mm³, the
 volume SolidCraft measured for the part it exported (the round adds `2π (f² (r + f/2) −
 π f²/4 (r + f) + f³/3)`); with `boss_1_fillet = 3`, `boss_1_d = 12`, `boss_1_x = 22` and
@@ -180,7 +180,7 @@ the face and its bore: `edge_names: ["F<extrude>:top|F<hole>:bore:side:0"]` on t
 `hole_<n>_bot_rim_r` as mesh2cad names them. In the mesh the mouth is wider than the bore by the
 round's radius and exactly as deep, like a 90° countersink; it is a round when its corners between
 the face and the bore lie on the quarter circle (a round in one step stays the countersink it looks
-like). `hole-rims.stl` (exported by SolidCraft 0.49: a 70 x 40 x 8 plate with an Ø8 hole rounded
+like). `hole-rims.stl` (exported by SolidCraft 0.50: a 70 x 40 x 8 plate with an Ø8 hole rounded
 1.5 mm at its top rim and an Ø6 hole rounded 1 mm at its bottom rim) imports to 21,754.183 mm³,
 the volume SolidCraft measured for the part it exported; with `hole_1_rim_r = 2`, `hole_1_d = 9`,
 `hole_2_bot_rim_r = 1.5`, `hole_2_x = 52` and `base_t = 10` it rebuilt without errors to
@@ -198,7 +198,7 @@ face facing up most, the top: `boss_<n>_chamfer_w` in from the side, `distance2`
 In the mesh such a boss's top is narrower than its footprint; its wall is checked against the
 profile of each kind in turn (a round at the foot, a straight cone, a cylinder and then the
 chamfer), every corner and edge middle on it round the axis. `boss-draft-chamfer.stl` (exported
-by SolidCraft 0.49: a 70 x 40 x 6 plate with an Ø12 x 8 boss drafted by 5°, an Ø10 x 6 boss
+by SolidCraft 0.50: a 70 x 40 x 6 plate with an Ø12 x 8 boss drafted by 5°, an Ø10 x 6 boss
 chamfered by 1 mm at its top and an Ø4 hole) imports to 17,984.519 mm³, the volume SolidCraft
 measured for the part it exported; with `boss_1_draft_deg = 8`, `boss_1_h = 7`,
 `boss_2_chamfer = 1.5`, `boss_2_d = 11` and `base_t = 8` it rebuilt without errors to
@@ -268,7 +268,7 @@ faces it joins. The extrude's caps are `F2:top` (at the far end of a positive ex
 ## Verified
 
 `crates/revmesh-core/tests/data/plate-with-hole.json` (written by `PlateSpec::to_design`)
-opened in SolidCraft 0.49.1 with no errors: volume 16,452.05 mm³ as computed by hand
+opened in SolidCraft 0.50.0 with no errors: volume 16,452.05 mm³ as computed by hand
 (70 × 40 × 6 minus an 8 mm hole minus four 3 mm corner fillets). Setting `base_x = 100`,
 `hole_1_x = 50` and `hole_1_d = 12` rebuilt to 23,275.06 mm³, again as computed, with no
 warnings.
@@ -292,14 +292,14 @@ driving its `Diameter`. The straight sides keep their `Length` constraints — e
 opposite an arc side that is tangent to both its neighbours in a four-sided loop (a semicircular
 side on a rectangle): the tangents make its length the arc's diameter, so it is derived. The
 L-bracket of `plugin/revmesh/tests/l-bracket.stl` imports
-in `solidcraft-cli 0.49.1` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
+in `solidcraft-cli 0.50.0` to 6,118.29 mm³ as computed; setting `outline_fillet_r = 4`,
 `hole_1_d = 8`, `hole_2_x = 50` and `base_z = 8` rebuilt every feature without errors to
 9,461.81 mm³, again as computed.
 
 Since revmesh keeps a part where it is in the file, the sketch and extrusion stay at the
 origin and a `move` feature right after the extrusion takes the body there: for a rectangular
 plate by `[base_cx - base_x / 2, base_cy - base_y / 2, base_z0]`, for an outline by its corner
-and `extrude_0`. Holes and fillet picks are in world coordinates. In `solidcraft-cli 0.49.1`
+and `extrude_0`. Holes and fillet picks are in world coordinates. In `solidcraft-cli 0.50.0`
 `plate-holes.stl` with `base_cx = 50`, `base_x = 90`, `base_z0 = 5`, `fillet_r = 5` and
 `hole_2_x = 70` rebuilt without errors or warnings to 20,978.79 mm³, and the L-bracket (in the
 file at (20, 10)) with `extrude_0 = 4`, `extrude_len = 8` and `outline_fillet_r = 4` to
@@ -308,7 +308,7 @@ file at (20, 10)) with `extrude_0 = 4`, `extrude_len = 8` and `outline_fillet_r 
 A hole pattern is one `hole` feature at the first hole and a `pattern` feature on it. A bolt
 circle's first hole is at `[cx + r * cos(angle), cy + r * sin(angle), top]` as expressions and
 its pattern's origin is `[cx, cy, 0]`. `plate-patterns.stl` (a 2 x 2 grid, a row of three, a
-bolt circle of six round a single bore) imports in `solidcraft-cli 0.49.1` to 55,995.49 mm³ as
+bolt circle of six round a single bore) imports in `solidcraft-cli 0.50.0` to 55,995.49 mm³ as
 computed; with `hole_grid_1_nx = 3`, `hole_grid_1_pitch_x = 50`, `hole_row_1_n = 4`,
 `hole_circle_1_n = 8`, `hole_circle_1_r = 18` and `hole_circle_1_angle = 0` it rebuilt without
 errors or warnings to 55,566.66 mm³ with five more bores, again as computed.
@@ -329,7 +329,7 @@ runs to its flat floor. With `hole_1_d = 7`, `hole_1_depth = 6`, `hole_3_x = 40`
 
 In a polygon outline the fillet comes before the holes: an inside corner's rounding adds
 material, and a hole drilled before it would drill empty space. `l-inside-hole.stl` (5 mm
-corners, a 0.4 mm hole at (16, 16) inside that material) rebuilds in `solidcraft-cli 0.49.1` to
+corners, a 0.4 mm hole at (16, 16) inside that material) rebuilds in `solidcraft-cli 0.50.0` to
 6,267.07 mm³ as computed, with 7 cylindrical faces (six roundings and the hole) and no feature
 errors. The rectangle's history keeps its verified order (holes, then fillet): its corners are
 all outside corners, which only take material away.
