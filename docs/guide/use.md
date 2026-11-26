@@ -5,8 +5,10 @@
    mesh import for `.stl`, so revmesh is reached through the Plugins menu.
 2. The dialog offers **Import as**: `auto` (recognise features and rebuild the part
    parametrically — facets become ideal faces, the import report notes the deviation; the mesh is
-   kept only where nothing is found; STL up to 8 MiB; the default) or `mesh` (keep the mesh
-   exactly as it is; STL up to 32 MiB).
+   kept only where nothing is found; STL up to 16 MiB; the default) or `mesh` (keep the mesh
+   exactly as it is; STL up to 32 MiB), and **Units**: `mm` (the default — STL is unitless and read
+   as millimetres) or `inch`, which is converted to millimetres (× 25.4) and noted in the
+   report.
 3. Its button chooses the STL file. It opens as a new, unsaved design.
 4. The **Import report** follows: a summary, one line per kind of change, and everything in
    detail under *Details*. **Plugins › Last import report…** shows it again later.

@@ -29,7 +29,7 @@ pub enum StlError {
         /// 1-based line number.
         line: usize,
         /// What was wrong.
-        reason: String,
+        reason: SyntaxReason,
     },
     /// A corner coordinate is not a finite number (`nan` or `inf`).
     NonFinite {
@@ -55,14 +55,59 @@ pub enum StlError {
     Empty,
 }
 
+/// Why an ASCII STL line broke the grammar. Localised through the `stl.syntax.reason.*` catalog
+/// keys; [`fmt::Display`] gives the English words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyntaxReason {
+    /// The file ends inside a `solid` or `facet`.
+    EndsInsideSolid,
+    /// A fourth `vertex` in one loop.
+    TooManyVertices,
+    /// A `vertex` without exactly three coordinates.
+    VertexNotThree,
+    /// A coordinate that is not a number.
+    BadCoordinate,
+    /// `endloop` with other than three vertices collected.
+    FacetVertexCount(usize),
+    /// A keyword where it does not belong.
+    UnexpectedKeyword(String),
+}
+
+impl SyntaxReason {
+    /// The reason in `locale`'s words.
+    fn message(&self, locale: Locale) -> String {
+        match self {
+            Self::EndsInsideSolid => locale.text("stl.syntax.reason.ends_inside_solid").to_owned(),
+            Self::TooManyVertices => locale.text("stl.syntax.reason.too_many_vertices").to_owned(),
+            Self::VertexNotThree => locale.text("stl.syntax.reason.vertex_not_three").to_owned(),
+            Self::BadCoordinate => locale.text("stl.syntax.reason.bad_coordinate").to_owned(),
+            Self::FacetVertexCount(n) => locale.format("stl.syntax.reason.facet_vertex_count", &[("n", n)]),
+            Self::UnexpectedKeyword(keyword) => locale.format("stl.syntax.reason.unexpected_keyword", &[("keyword", keyword)]),
+        }
+    }
+}
+
+impl fmt::Display for SyntaxReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EndsInsideSolid => f.write_str("the file ends inside a solid or facet"),
+            Self::TooManyVertices => f.write_str("a facet already has three vertices"),
+            Self::VertexNotThree => f.write_str("a vertex has three coordinates"),
+            Self::BadCoordinate => f.write_str("bad coordinate"),
+            Self::FacetVertexCount(n) => write!(f, "a facet has three vertices, this one has {n}"),
+            Self::UnexpectedKeyword(keyword) => write!(f, "unexpected {keyword}"),
+        }
+    }
+}
+
 impl StlError {
-    /// The error in `locale`'s words. The `reason` of a [`StlError::Syntax`] stays English.
+    /// The error in `locale`'s words, ASCII syntax reasons included.
     #[must_use]
     pub fn message(&self, locale: Locale) -> String {
         match self {
             Self::TooShort => locale.text("stl.too_short").to_owned(),
             Self::Truncated { expected, actual } => locale.format("stl.truncated", &[("expected", expected), ("actual", actual)]),
-            Self::Syntax { line, reason } => locale.format("stl.syntax", &[("line", line), ("reason", reason)]),
+            Self::Syntax { line, reason } => locale.format("stl.syntax", &[("line", line), ("reason", &reason.message(locale))]),
             Self::NonFinite { triangle } => locale.format("stl.non_finite", &[("triangle", triangle)]),
             Self::OutOfRange { triangle } => locale.format("stl.out_of_range", &[("triangle", triangle)]),
             Self::SizeLimit { size, max_bytes } => locale.format("stl.size_limit", &[("size", size), ("max_bytes", max_bytes)]),
@@ -229,7 +274,7 @@ impl StlReader {
                     ascii_line(&text, *line, corners, block, &mut self.triangles)?;
                 }
                 if *block != AsciiBlock::Outside {
-                    return Err(StlError::Syntax { line: *line, reason: "the file ends inside a solid or facet".into() });
+                    return Err(StlError::Syntax { line: *line, reason: SyntaxReason::EndsInsideSolid });
                 }
             }
         }
@@ -313,16 +358,16 @@ fn ascii_line(
         Some("endfacet") if *block == AsciiBlock::EndFacet => *block = AsciiBlock::Solid,
         Some("vertex") if *block == AsciiBlock::Loop => {
             if corners.len() == 3 {
-                return Err(StlError::Syntax { line: line_no, reason: "a facet has three vertices".into() });
+                return Err(StlError::Syntax { line: line_no, reason: SyntaxReason::TooManyVertices });
             }
-            let bad_length = || StlError::Syntax { line: line_no, reason: "a vertex has three coordinates".into() };
+            let bad_length = || StlError::Syntax { line: line_no, reason: SyntaxReason::VertexNotThree };
             let mut point = [0.0; 3];
             for value in &mut point {
                 *value = words
                     .next()
                     .ok_or_else(bad_length)?
                     .parse()
-                    .map_err(|e| StlError::Syntax { line: line_no, reason: format!("bad coordinate: {e}") })?;
+                    .map_err(|_| StlError::Syntax { line: line_no, reason: SyntaxReason::BadCoordinate })?;
             }
             if words.next().is_some() {
                 return Err(bad_length());
@@ -331,17 +376,14 @@ fn ascii_line(
         }
         Some("endloop") if *block == AsciiBlock::Loop => {
             let [a, b, c] = corners[..] else {
-                return Err(StlError::Syntax {
-                    line: line_no,
-                    reason: format!("a facet has three vertices, this one has {}", corners.len()),
-                });
+                return Err(StlError::Syntax { line: line_no, reason: SyntaxReason::FacetVertexCount(corners.len()) });
             };
             push_checked(triangles, [a, b, c])?;
             corners.clear();
             *block = AsciiBlock::EndFacet;
         }
         Some(keyword @ ("solid" | "endsolid" | "facet" | "outer" | "endfacet" | "vertex" | "endloop")) => {
-            return Err(StlError::Syntax { line: line_no, reason: format!("unexpected {keyword}") });
+            return Err(StlError::Syntax { line: line_no, reason: SyntaxReason::UnexpectedKeyword(keyword.to_owned()) });
         }
         _ => {}
     }
@@ -489,7 +531,7 @@ mod tests {
         let cases = [
             (StlError::TooShort, "too short"),
             (StlError::Truncated { expected: 4, actual: 90 }, "announces 4 triangles"),
-            (StlError::Syntax { line: 4, reason: "bad".into() }, "line 4"),
+            (StlError::Syntax { line: 4, reason: SyntaxReason::BadCoordinate }, "line 4"),
             (StlError::NonFinite { triangle: 2 }, "triangle 2"),
             (StlError::OutOfRange { triangle: 3 }, "triangle 3"),
             (StlError::SizeLimit { size: 9, max_bytes: 8 }, "at most 8 bytes"),
@@ -503,7 +545,30 @@ mod tests {
             assert_ne!(german, error.to_string(), "{error} has a German text");
             assert!(!german.contains('{'), "{german} fills every placeholder");
         }
-        assert_eq!(StlError::Syntax { line: 4, reason: "bad".into() }.message(Locale::De), "ASCII-STL, Zeile 4: bad");
+        assert_eq!(
+            StlError::Syntax { line: 4, reason: SyntaxReason::BadCoordinate }.message(Locale::De),
+            "ASCII-STL, Zeile 4: fehlerhafte Koordinate"
+        );
+    }
+
+    #[test]
+    fn ascii_syntax_reasons_are_localised() {
+        for reason in [
+            SyntaxReason::EndsInsideSolid,
+            SyntaxReason::TooManyVertices,
+            SyntaxReason::VertexNotThree,
+            SyntaxReason::BadCoordinate,
+            SyntaxReason::FacetVertexCount(2),
+            SyntaxReason::UnexpectedKeyword("facet".into()),
+        ] {
+            let error = StlError::Syntax { line: 7, reason: reason.clone() };
+            assert_eq!(error.to_string(), error.message(Locale::En), "{reason:?}");
+            let german = error.message(Locale::De);
+            assert_ne!(german, error.to_string(), "{reason:?} has a German text");
+            assert!(!german.contains('{'), "{german} fills every placeholder");
+        }
+        let error = StlError::Syntax { line: 7, reason: SyntaxReason::FacetVertexCount(2) };
+        assert_eq!(error.message(Locale::De), "ASCII-STL, Zeile 7: ein Facet hat drei Vertices, dieses hat 2");
     }
 
     #[test]
@@ -511,18 +576,18 @@ mod tests {
         let wrap = |body: &str| format!("solid t\nfacet normal 0 0 1\nouter loop\n{body}\nendloop\nendfacet\nendsolid t\n");
         // A fourth vertex in one loop.
         let text = wrap("vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nvertex 1 1 0");
-        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("three vertices")));
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason: SyntaxReason::TooManyVertices, .. })));
         // A coordinate that is not a number.
         let text = wrap("vertex 0 x 0\nvertex 1 0 0\nvertex 0 1 0");
-        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("bad coordinate")));
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason: SyntaxReason::BadCoordinate, .. })));
         // A fourth coordinate.
         let text = wrap("vertex 0 0 0 0\nvertex 1 0 0\nvertex 0 1 0");
-        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("three coordinates")));
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason: SyntaxReason::VertexNotThree, .. })));
         // A loop closed with two vertices.
         let text = wrap("vertex 0 0 0\nvertex 1 0 0");
-        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("this one has 2")));
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason: SyntaxReason::FacetVertexCount(2), .. })));
         // A keyword where it does not belong.
         let text = "solid t\nfacet normal 0 0 1\nouter loop\nfacet normal 0 0 1\nendloop\nendfacet\nendsolid t\n";
-        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason, .. }) if reason.contains("unexpected facet")));
+        assert!(matches!(parse(text.as_bytes()), Err(StlError::Syntax { reason: SyntaxReason::UnexpectedKeyword(k), .. }) if k == "facet"));
     }
 }

@@ -81,10 +81,14 @@ of up to 10 minutes, a 64 MiB component and a 256 MiB design. `plugin.json` asks
 2 minutes, the most a plugin gets without the user approving more at install.
 
 Memory decides how large a file can be. The plugin therefore holds nothing twice: the STL is
-parsed chunk by chunk as it is read (`stl::StlReader`), the mesh moves into the design without a
-copy, and the design is serialised straight into 1 MiB writes to SolidCraft, with coordinates in
-single precision. Measured with SolidCraft 0.49: a 1.5 million triangle STL (75 MB) imports as a
-mesh in about 8 s; 2 million triangles exceed 128 MiB (before streaming, 600,000 already did).
+parsed chunk by chunk as it is read (`stl::StlReader`), `import_mesh` takes the mesh by reference
+(it clones only in the mesh and unrecognized fallback paths), and the design is serialised
+straight into 1 MiB writes to SolidCraft, with coordinates in single precision. Auto mode
+therefore accepts STL up to 16 MiB — measured peak ≈ 90 MiB at about 250 bytes per triangle,
+inside the 128 MiB the manifest asks for (32 MiB would need index-based face storage); mesh mode
+accepts up to 32 MiB. Measured with SolidCraft 0.49: a 1.5 million triangle STL (75 MB) imports
+as a mesh in about 8 s; 2 million triangles exceed 128 MiB (before streaming, 600,000 already
+did).
 
 ## Self-check in the app's sandbox
 

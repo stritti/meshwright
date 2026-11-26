@@ -119,10 +119,19 @@
    3. double-precision coordinates in mesh bodies beyond the single-precision range (the design
       is written with `f32` coordinates today, `design/mod.rs`) — parts far from the origin lose
       precision in the mesh fallback
-   4. a higher `auto` input ceiling (8 MiB today vs 32 MiB in mesh mode, `revmesh-plugin`) by
-      slimming the face and wall indexes recognition builds
-   5. localised ASCII-STL syntax reasons (they stay English today, `stl.rs`) and an optional
-      `units` import option (STL is unitless and assumed to be mm)
+   4. (done: `auto` accepts 16 MiB vs 32 MiB in mesh mode — `import_mesh` takes the mesh by
+      reference and clones only in the mesh/unrecognized fallback paths, and `Faces.chords` is
+      slimmed from (a, b, middle, length) to (a, b, mid_z, length); measured peak ≈ 90 MiB at
+      16 MiB, inside the 128 MiB budget (`AUTO_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`);
+      32 MiB would need index-based face storage) a higher `auto` input ceiling (8 MiB today vs
+      32 MiB in mesh mode, `revmesh-plugin`) by slimming the face and wall indexes recognition
+      builds
+   5. (done: ASCII-STL syntax errors carry a `SyntaxReason` (`stl.rs`) rendered in the import
+      language via `stl.syntax.reason.*` in the locale catalogs; the dialog's `units` option
+      (`plugin.json`) reads inch files as inches and scales them to millimetres once in
+      `import_mesh`, noted in the report as `revmesh.units`) localised ASCII-STL syntax reasons
+      (they stay English today, `stl.rs`) and an optional `units` import option (STL is unitless
+      and assumed to be mm)
 
 Contributions are very welcome: bug reports, STL files that import badly, recognisers, docs.
 Start with [CONTRIBUTING.md](https://github.com/stritti/revmesh/blob/main/CONTRIBUTING.md).

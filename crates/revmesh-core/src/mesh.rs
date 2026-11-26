@@ -59,6 +59,12 @@ impl Mesh {
         let Some([origin, ..]) = self.triangles.first() else { return 0.0 };
         self.triangles.iter().map(|[a, b, c]| dot(sub(*a, *origin), cross(sub(*b, *origin), sub(*c, *origin)))).sum::<f64>() / 6.0
     }
+
+    /// The mesh with every coordinate multiplied by `factor` (an inch STL read as millimetres).
+    #[must_use]
+    pub fn scaled(&self, factor: f64) -> Mesh {
+        Mesh { triangles: self.triangles.iter().map(|t| t.map(|p| p.map(|v| v * factor))).collect() }
+    }
 }
 
 /// `a - b`.

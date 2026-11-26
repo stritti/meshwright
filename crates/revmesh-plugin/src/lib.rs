@@ -46,9 +46,11 @@ use revmesh_core::{ImportOptions, Locale, import_mesh, version};
 const CHUNK: usize = 1 << 20;
 
 // Binary STL expands from 50 to 72 bytes per triangle. Mesh mode also needs the
-// read/write buffers, while auto recognition builds face and wall indexes and can
-// temporarily hold a second mesh. Keep a lower input ceiling for that mode.
-const AUTO_MAX_BYTES: u64 = 8 << 20;
+// read/write buffers, while auto recognition builds face and wall indexes on top of the mesh
+// (measured: about 250 bytes per triangle in all, so 16 MiB of STL peaks at roughly 90 MiB —
+// inside the 128 MiB the manifest asks for; 32 MiB would not fit without index-based face
+// storage). Keep a lower input ceiling for that mode.
+const AUTO_MAX_BYTES: u64 = 16 << 20;
 const MESH_MAX_BYTES: u64 = 32 << 20;
 
 struct Importer;
@@ -69,18 +71,17 @@ impl Guest for Importer {
         let mesh = read_mesh(&file, max_bytes, locale)?;
         control::progress(0.5, locale.text("progress.recognising"));
         // The recognised design is checked in the app's sandbox before it is written (roadmap
-        // 7.1); when the app cannot rebuild it the import falls back to the mesh body, so in
-        // auto mode the mesh is kept aside until the check is done.
-        let fallback = (options.mode == Mode::Auto).then(|| mesh.clone());
-        let mut result = import_mesh(mesh, &file.name, &options);
-        if let Some(mesh) = fallback.filter(|_| !import::design_has_mesh_body(&result.design)) {
+        // 7.1); when the app cannot rebuild it the import falls back to the mesh body, which
+        // import_mesh rebuilds from this same borrow — no second mesh is held.
+        let mut result = import_mesh(&mesh, &file.name, &options);
+        if options.mode == Mode::Auto && !import::design_has_mesh_body(&result.design) {
             control::progress(0.55, locale.text("progress.checking"));
             let mut staged = Vec::new();
             let check = result.design.write_json(&mut staged).ok().map_or(SelfCheck::Unavailable, |()| self_check(&staged));
             if let SelfCheck::Failed(reason) = &check {
                 log::log(log::Level::Warn, &format!("the recognised design failed the app's rebuild check: {reason}"));
             }
-            result = import::apply_self_check(result, mesh, &file.name, &options, update, &check);
+            result = import::apply_self_check(result, &mesh, &file.name, &options, update, &check);
         } else if let Some(notice) = update {
             result.report.push(notice);
         }
