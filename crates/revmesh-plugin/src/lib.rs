@@ -11,6 +11,12 @@
 //! Build it for `wasm32-unknown-unknown` (SolidCraft links no WASI) and wrap the module as a
 //! component; `cargo xtask dist` does both and packages the plugin.
 //!
+//! In auto mode the recognised design is also checked in the app's own sandbox before it is
+//! written: the manifest requests the `evaluate@0.2` capability, the serialised design is staged
+//! and `document.inspect` rebuilds it there, and a timeline feature that fails falls back to the
+//! mesh body with the reason in the loss report (roadmap 7.1; the policy itself lives in
+//! `revmesh_core::import::apply_self_check`).
+//!
 //! Every import also checks whether a newer release than this build is out and notes it in the
 //! loss report. The sandbox has no network, so the newest release cannot be asked for at import
 //! time: `cargo xtask dist` bakes it into the component as `REVMESH_LATEST_VERSION` (see
@@ -29,9 +35,9 @@
 wit_bindgen::generate!({ path: "wit", world: "importer-plugin" });
 
 use craft::plugin::types::{FieldFailure, PluginError};
-use craft::plugin::{control, design, log, source};
+use craft::plugin::{control, design, evaluate, log, source};
 use exports::craft::plugin::importer::Guest;
-use revmesh_core::import::Mode;
+use revmesh_core::import::{self, Mode, SelfCheck};
 use revmesh_core::mesh::Mesh;
 use revmesh_core::stl::StlReader;
 use revmesh_core::{ImportOptions, Locale, import_mesh, version};
@@ -62,8 +68,20 @@ impl Guest for Importer {
         };
         let mesh = read_mesh(&file, max_bytes, locale)?;
         control::progress(0.5, locale.text("progress.recognising"));
+        // The recognised design is checked in the app's sandbox before it is written (roadmap
+        // 7.1); when the app cannot rebuild it the import falls back to the mesh body, so in
+        // auto mode the mesh is kept aside until the check is done.
+        let fallback = (options.mode == Mode::Auto).then(|| mesh.clone());
         let mut result = import_mesh(mesh, &file.name, &options);
-        if let Some(notice) = update {
+        if let Some(mesh) = fallback.filter(|_| !import::design_has_mesh_body(&result.design)) {
+            control::progress(0.55, locale.text("progress.checking"));
+            let mut staged = Vec::new();
+            let check = result.design.write_json(&mut staged).ok().map_or(SelfCheck::Unavailable, |()| self_check(&staged));
+            if let SelfCheck::Failed(reason) = &check {
+                log::log(log::Level::Warn, &format!("the recognised design failed the app's rebuild check: {reason}"));
+            }
+            result = import::apply_self_check(result, mesh, &file.name, &options, update, &check);
+        } else if let Some(notice) = update {
             result.report.push(notice);
         }
         control::progress(0.6, locale.text("progress.writing"));
@@ -106,6 +124,35 @@ fn read_mesh(file: &source::FileInfo, max_bytes: u64, locale: Locale) -> Result<
         None => StlReader::new(&[], 0).map_err(|e| invalid("file", e.message(locale)))?,
     };
     reader.finish().map_err(|e| invalid("file", e.message(locale)))
+}
+
+/// Stages the serialised design in the app's private sandbox (capability `evaluate@0.2`) in 1 MiB
+/// pieces, runs `document.inspect` on it — which opens the design and evaluates its history — and
+/// discards the session. What the reply says becomes the [`SelfCheck`]. A call error (a design the
+/// app cannot open, a reply over 1 MiB) is an error for that call only, so the design is then
+/// reported as unchecked rather than failed.
+fn self_check(design_json: &[u8]) -> SelfCheck {
+    let mut staged = true;
+    for chunk in design_json.chunks(CHUNK) {
+        if let Err(error) = evaluate::stage(chunk) {
+            log::log(log::Level::Warn, &format!("the sandbox self-check is unavailable: {error:?}"));
+            staged = false;
+            break;
+        }
+    }
+    if !staged {
+        evaluate::reset();
+        return SelfCheck::Unavailable;
+    }
+    let outcome = evaluate::run("document.inspect", "{}");
+    evaluate::reset();
+    match outcome {
+        Ok(reply) => SelfCheck::from_inspect_reply(&reply),
+        Err(error) => {
+            log::log(log::Level::Warn, &format!("the sandbox self-check could not run: {error:?}"));
+            SelfCheck::Unavailable
+        }
+    }
 }
 
 /// Buffers the serialised design and hands it to `design::write` 1 MiB at a time. A host error

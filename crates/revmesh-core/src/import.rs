@@ -131,8 +131,86 @@ fn mesh_import(mesh: Mesh, file_name: &str, body: &str, locale: Locale) -> Impor
     ImportResult { design: b.build(), report }
 }
 
+/// What the app's sandbox self-check said about a recognised design (roadmap 7.1): the plugin
+/// stages the serialised design with `evaluate.stage` and runs `document.inspect` on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelfCheck {
+    /// The app opened the design and every timeline feature evaluated.
+    Passed,
+    /// The app could not rebuild it; why.
+    Failed(String),
+    /// The check could not run (the capability is unavailable, or the call errored — an error for
+    /// that call only); the design is written unchecked.
+    Unavailable,
+}
+
+impl SelfCheck {
+    /// What a `document.inspect` reply says: a failed command is a top-level `error`, and a
+    /// timeline feature that failed to evaluate carries its own `error` (SolidCraft's control
+    /// protocol serialises it as `null` when the feature is fine). Anything else means the design
+    /// rebuilt.
+    #[must_use]
+    pub fn from_inspect_reply(reply: &str) -> SelfCheck {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(reply) else {
+            return SelfCheck::Failed(reply.to_owned());
+        };
+        if let Some(error) = v.get("error").and_then(serde_json::Value::as_str) {
+            return SelfCheck::Failed(error.to_owned());
+        }
+        if let Some(timeline) = v.get("timeline").and_then(serde_json::Value::as_array) {
+            for feature in timeline {
+                if let Some(error) = feature.get("error").and_then(serde_json::Value::as_str).filter(|e| !e.is_empty()) {
+                    let name = feature.get("name").and_then(serde_json::Value::as_str).unwrap_or("?");
+                    return SelfCheck::Failed(format!("feature `{name}`: {error}"));
+                }
+            }
+        }
+        SelfCheck::Passed
+    }
+}
+
+/// Whether the design is just a mesh body, with no recognised features to check.
+#[must_use]
+pub fn design_has_mesh_body(design: &Design) -> bool {
+    design.features.iter().any(|f| matches!(f.kind, FeatureKind::MeshImport { .. }))
+}
+
+/// Chooses the import's result after the app's sandbox self-check (roadmap 7.1): a recognised
+/// design that failed the check falls back to the mesh body, with the reason in the loss report.
+/// The update `notice` is kept in the report either way.
+#[must_use]
+pub fn apply_self_check(
+    result: ImportResult,
+    mesh: Mesh,
+    file_name: &str,
+    options: &ImportOptions,
+    notice: Option<LossItem>,
+    check: &SelfCheck,
+) -> ImportResult {
+    let mut out = match check {
+        SelfCheck::Failed(reason) => {
+            let options = ImportOptions { mode: Mode::Mesh, ..options.clone() };
+            let mut fallback = import_mesh(mesh, file_name, &options);
+            fallback.report.push(LossItem {
+                severity: Severity::Degraded,
+                title: options.locale.text("report.selfcheck.title").into(),
+                subject: body_name(file_name),
+                message: options.locale.format("report.selfcheck.message", &[("reason", reason)]),
+                code: "revmesh.selfcheck",
+            });
+            fallback
+        }
+        SelfCheck::Passed | SelfCheck::Unavailable => result,
+    };
+    if let Some(notice) = notice {
+        out.report.push(notice);
+    }
+    out
+}
+
 /// The body name SolidCraft would give: the file name without its extension.
-fn body_name(file_name: &str) -> String {
+#[must_use]
+pub fn body_name(file_name: &str) -> String {
     let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
     if stem.is_empty() { "Mesh".into() } else { stem.into() }
 }
@@ -149,6 +227,63 @@ mod tests {
         assert_eq!(ImportOptions::from_json("{}").expect("ok"), ImportOptions::default());
         assert_eq!(ImportOptions::from_json(r#"{"mode":"mesh"}"#).expect("ok").mode, Mode::Mesh);
         assert!(ImportOptions::from_json(r#"{"colour":1}"#).is_err());
+    }
+
+    #[test]
+    fn inspect_replies_say_whether_the_design_rebuilt() {
+        assert_eq!(SelfCheck::from_inspect_reply(r#"{"timeline": []}"#), SelfCheck::Passed);
+        assert_eq!(SelfCheck::from_inspect_reply(r#"{"error": "cannot open"}"#), SelfCheck::Failed("cannot open".into()));
+        let reply = r#"{"timeline": [{"id": 1, "name": "Hole1", "type": "Hole", "error": null}, {"id": 2, "name": "Extrude1", "type": "Extrude", "error": "over-constrained sketch"}]}"#;
+        assert_eq!(SelfCheck::from_inspect_reply(reply), SelfCheck::Failed("feature `Extrude1`: over-constrained sketch".into()));
+        assert_eq!(SelfCheck::from_inspect_reply("not json"), SelfCheck::Failed("not json".into()));
+    }
+
+    #[test]
+    fn a_failed_self_check_falls_back_to_the_mesh_and_keeps_the_update_notice() {
+        use crate::recognize::{HoleSpec, PlateSpec};
+        let spec = PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 5.0,
+            holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 10.0, head: None, blind: None }],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: None,
+            edge_fillet_r: None,
+        };
+        let options = ImportOptions::default();
+        let result = import_mesh(crate::synth::plate(&spec, 24, [0.0; 3]), "bracket.stl", &options);
+        assert!(!design_has_mesh_body(&result.design));
+        let notice = LossItem {
+            severity: Severity::Info,
+            title: "update".into(),
+            subject: "bracket".into(),
+            message: "a newer revmesh is out".into(),
+            code: "revmesh.update_available",
+        };
+        let out = apply_self_check(
+            result,
+            crate::synth::plate(&spec, 24, [0.0; 3]),
+            "bracket.stl",
+            &options,
+            Some(notice.clone()),
+            &SelfCheck::Failed("feature `Hole1`: boom".into()),
+        );
+        assert!(design_has_mesh_body(&out.design));
+        assert!(out.report.items.iter().any(|i| i.code == "revmesh.selfcheck" && i.message.contains("feature `Hole1`: boom")));
+        assert!(out.report.items.contains(&notice));
+        // A passed or skipped check keeps the recognised design, and the notice.
+        for check in [SelfCheck::Passed, SelfCheck::Unavailable] {
+            let result = import_mesh(crate::synth::plate(&spec, 24, [0.0; 3]), "bracket.stl", &options);
+            let out =
+                apply_self_check(result, crate::synth::plate(&spec, 24, [0.0; 3]), "bracket.stl", &options, Some(notice.clone()), &check);
+            assert!(!design_has_mesh_body(&out.design));
+            assert!(!out.report.items.iter().any(|i| i.code == "revmesh.selfcheck"));
+            assert!(out.report.items.contains(&notice));
+        }
     }
 
     #[test]

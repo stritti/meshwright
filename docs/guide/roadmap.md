@@ -102,10 +102,14 @@
       faces close into loops, walls meet their face at 90°
    plus what is still open in 3.10 and 3.12: bosses on side faces, roofs and bevels on stacks
 7. **Import and conversion**:
-   1. an in-sandbox self-check: request the `evaluate@0.2` capability, stage the produced design
+   1. (done: the manifest requests `evaluate@0.2`; in auto mode the serialised design is staged
+      and rebuilt in the app's private sandbox (`document.inspect`) before it is written, and a
+      design the app cannot open falls back to the mesh body with the reason in the loss report,
+      code `revmesh.selfcheck`; mesh-mode imports are not checked — `self_check` in
+      `crates/revmesh-plugin/src/lib.rs`, closing item 4 at import time) an in-sandbox self-check:
+      request the `evaluate@0.2` capability, stage the produced design
       and rebuild it, and on feature errors fall back to the mesh body with the reason in the
-      report (closes item 4 at import time — today the rebuild check runs only in
-      `cargo xtask check`, and the plugin requests only `formats@0.2`)
+      report
    2. OBJ and PLY input next to STL, with the same chunked streaming and size limits as
       `StlReader` (`plugin.json` accepts only `stl` today)
    3. double-precision coordinates in mesh bodies beyond the single-precision range (the design

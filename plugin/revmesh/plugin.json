@@ -7,7 +7,8 @@
     "github": "stritti/revmesh"
   },
   "capabilities": [
-    "formats@0.2"
+    "formats@0.2",
+    "evaluate@0.2"
   ],
   "runtime": {
     "module": "revmesh.wasm",
