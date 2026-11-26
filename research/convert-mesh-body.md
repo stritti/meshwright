@@ -42,9 +42,13 @@ command schemas via `solidcraft-cli 0.50.0 exec engine.describe`, and
   `model.faces`, `timeline.roll_to`) — it runs on the open design via `commands.run`.
 - Rebuild `revmesh_core::mesh::Mesh` from `positions` + `triangles` (as f64; apply `frame` when it
   is not identity), then call `import_mesh(&mesh, name, &options)` unchanged. Apply the
-  `AUTO_MAX_BYTES`/`MESH_MAX_BYTES` ceilings to the triangle count instead of file bytes
-  (≈ 250 bytes per triangle in memory, so 16 MiB ≈ 67k triangles at 250 B — recompute from the
-  measured 90 MiB peak at 16 MiB STL).
+  `AUTO_MAX_BYTES`/`MESH_MAX_BYTES` ceilings to the triangle count instead of file bytes. A binary
+  STL is 50 bytes per triangle, so the 16 MiB file ceiling is ≈ 335k triangles; the measured
+  in-memory peak is ≈ 90 MiB at that size (≈ 270 B per triangle, `docs/architecture.md` "Limits
+  inside SolidCraft"), inside the 128 MiB budget — so state the `auto` ceiling directly as
+  **≈ 335k triangles**, matching today's 16 MiB file limit. Note that `model.mesh` returns
+  positions and indices as JSON, whose parse buffer adds to the peak that a file import streams
+  instead — keep a margin below the budget.
 
 ## Finding 3 — writing the result back into the open design
 
@@ -83,5 +87,6 @@ command schemas via `solidcraft-cli 0.50.0 exec engine.describe`, and
 - `model.mesh`'s `frame`: apply it when positions are in the owning component's coordinates.
 - Verify `timeline.add` accepts every feature kind the design writer emits (plate sketch, extrude,
   holes, fillet, patterns) with a plugin-test case.
-- Translate the byte ceilings to triangle counts from the measured memory profile
-  (`docs/architecture.md` "Limits inside SolidCraft").
+- Set the byte→triangle ceilings from the measured memory profile (`docs/architecture.md`
+  "Limits inside SolidCraft"): ≈ 335k triangles ≈ 16 MiB binary STL ≈ 90 MiB peak, plus the
+  `model.mesh` JSON parse buffer on top.
