@@ -62,7 +62,7 @@
   "mesh.allocation": "there is not enough memory to hold the mesh triangles",
   "mesh.empty": "the file holds no triangles",
   "obj.syntax": "OBJ line {line}: {reason}",
-  "obj.syntax.reason.vertex_not_three": "a vertex line has three coordinates",
+  "obj.syntax.reason.vertex_not_three": "a vertex line needs at least three coordinates",
   "obj.syntax.reason.bad_coordinate": "bad coordinate",
   "obj.syntax.reason.bad_face": "a face lists vertex indices",
   "obj.syntax.reason.index_out_of_range": "vertex index {n} is out of range",

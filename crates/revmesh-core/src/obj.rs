@@ -1,12 +1,13 @@
 //! Reading OBJ files (Wavefront OBJ, the text format every CAD tool exports).
 //!
-//! Only what a mesh needs: `v x y z` vertex lines and `f` face lines. Face indices may carry
+//! Only what a mesh needs: `v x y z` vertex lines (extra values after the coordinates, e.g.
+//! colours, are ignored) and `f` face lines. Face indices may carry
 //! texture/normal parts (`f 1/1/1 2/2/2 3/3/3`), may be negative (counting back from the last
 //! vertex), and faces with more than three corners are triangulated as a fan. Every other line
 //! (`#`, `o`, `g`, `s`, `vt`, `vn`, `usemtl`, `mtllib`, …) is skipped.
 //!
 //! [`ObjReader`] reads the file in chunks, as the plugin receives it, so the file never has to be
-//! held in memory next to the mesh made from it. [`write`] writes a mesh as OBJ (used by the
+//! held in memory next to the mesh made from it. [`write()`] writes a mesh as OBJ (used by the
 //! tests and the fixture generator).
 
 use std::fmt;
@@ -22,7 +23,7 @@ const LINE_MAX: usize = 4 << 20;
 /// [`fmt::Display`] gives the English words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObjReason {
-    /// A `v` line without exactly three (or four, with `w`) coordinates.
+    /// A `v` line without at least three coordinates.
     VertexNotThree,
     /// A coordinate that is not a finite number.
     BadCoordinate,
@@ -129,7 +130,7 @@ fn obj_line(text: &str, line: usize, vertices: &mut Vec<Vec3>, triangles: &mut V
         "v" => {
             let coords: Vec<f64> =
                 words.map(str::parse).collect::<Result<_, _>>().map_err(|_| MeshError::Obj { line, reason: ObjReason::BadCoordinate })?;
-            if coords.len() < 3 || coords.len() > 4 || coords[..3].iter().any(|v| !v.is_finite()) {
+            if coords.len() < 3 || coords[..3].iter().any(|v| !v.is_finite()) {
                 return Err(MeshError::Obj { line, reason: ObjReason::VertexNotThree });
             }
             push_reserved(vertices, [coords[0], coords[1], coords[2]])?;
@@ -241,6 +242,17 @@ mod tests {
         let mut r = ObjReader::new(text.as_bytes(), text.len() as u64);
         let err = r.push(text.as_bytes()).expect_err("an error");
         assert_eq!(err, MeshError::Obj { line: 1, reason: ObjReason::VertexNotThree });
+    }
+
+    #[test]
+    fn vertex_lines_may_carry_colours() {
+        // MeshLab, scanners and slicers write `v x y z r g b`; the first three numbers are the
+        // corner, the rest is ignored.
+        let text = "v 0 0 0 1 0 0\nv 10 0 0 0 1 0\nv 10 10 0 0 0 1\nf 1 2 3\n";
+        let mut r = ObjReader::new(text.as_bytes(), text.len() as u64);
+        r.push(text.as_bytes()).expect("push");
+        let mesh = r.finish().expect("finish");
+        assert_eq!(mesh.triangles, vec![[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 0.0]]]);
     }
 
     #[test]

@@ -62,7 +62,7 @@
   "mesh.allocation": "es ist nicht genug Speicher frei, um die Dreiecke des Netzes zu halten",
   "mesh.empty": "die Datei enthält keine Dreiecke",
   "obj.syntax": "OBJ-Zeile {line}: {reason}",
-  "obj.syntax.reason.vertex_not_three": "eine Vertex-Zeile hat drei Koordinaten",
+  "obj.syntax.reason.vertex_not_three": "eine Vertex-Zeile braucht mindestens drei Koordinaten",
   "obj.syntax.reason.bad_coordinate": "fehlerhafte Koordinate",
   "obj.syntax.reason.bad_face": "eine Face listet Vertex-Indizes",
   "obj.syntax.reason.index_out_of_range": "Vertex-Index {n} ist außerhalb des gültigen Bereichs",

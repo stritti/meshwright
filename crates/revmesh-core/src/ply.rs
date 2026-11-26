@@ -1,10 +1,12 @@
 //! Reading PLY files (Polygon File Format), ASCII and binary little-endian.
 //!
 //! Only what a mesh needs: a `vertex` element with `x`, `y` and `z` properties (extra scalar
-//! properties such as colours are read and ignored) and a `face` element whose list property
-//! holds the corners (0-based indices; faces with more than three corners are triangulated as a
-//! fan). `comment` and `obj_info` header lines are skipped; any other element is refused, and so
-//! are the formats other than `ascii 1.0` and `binary_little_endian 1.0`.
+//! properties such as colours are read and ignored) and a `face` element whose `vertex_indices`
+//! list holds the corners (0-based indices; faces with more than three corners are triangulated
+//! as a fan; any other list on the face element, e.g. texture coordinates, is read and ignored,
+//! as is any other property of the face). `comment` and `obj_info` header lines are skipped, and
+//! so are the records of every other element (`edge`, `material`, …); the formats other than
+//! `ascii 1.0` and `binary_little_endian 1.0` are refused.
 //!
 //! [`PlyReader`] reads the file in chunks, as the plugin receives it, so the file never has to be
 //! held in memory next to the mesh made from it. [`write_ascii`] and [`write_binary`] write a mesh
@@ -43,7 +45,7 @@ pub enum PlyReason {
     IndexOutOfRange(usize),
     /// A face with fewer than three corners.
     FaceTooSmall(usize),
-    /// One line longer than [`LINE_MAX`].
+    /// One line longer than 4 MiB.
     LineTooLong,
 }
 
@@ -158,9 +160,11 @@ enum Prop {
     List { count: PlyType, item: PlyType, name: String },
 }
 
-/// An element the header declared; only `vertex` and `face` are accepted.
+/// An element the header declared. `vertex` and `face` are read into the mesh; every other
+/// element's records are consumed and discarded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Element {
+    name: String,
     kind: ElementKind,
     count: u64,
     props: Vec<Prop>,
@@ -170,6 +174,7 @@ struct Element {
 enum ElementKind {
     Vertex,
     Face,
+    Skip,
 }
 
 /// What comes after `end_header`.
@@ -360,12 +365,12 @@ impl PlyReader {
                 let kind = match name {
                     "vertex" => ElementKind::Vertex,
                     "face" => ElementKind::Face,
-                    other => return Err(err(PlyReason::UnexpectedKeyword(other.to_owned()))),
+                    _ => ElementKind::Skip,
                 };
-                if self.elements.iter().any(|e| e.kind == kind) {
+                if self.elements.iter().any(|e| e.name == name) {
                     return Err(err(PlyReason::UnexpectedKeyword(name.to_owned())));
                 }
-                self.elements.push(Element { kind, count, props: Vec::new() });
+                self.elements.push(Element { name: name.to_owned(), kind, count, props: Vec::new() });
                 self.current = Some(self.elements.len() - 1);
             }
             "property" => {
@@ -453,40 +458,53 @@ impl PlyReader {
                 push_reserved(&mut self.vertices, corner)?;
             }
             ElementKind::Face => {
-                let mut indices: Vec<usize> = Vec::new();
-                let mut have_list = false;
-                for prop in &props {
-                    match prop {
-                        Prop::Scalar { .. } => {
+                let indices = self.ascii_face(&props, &mut words, record)?;
+                self.face_from_indices(&indices, record)?;
+            }
+            // Another element's record: consumed, not read.
+            ElementKind::Skip => {}
+        }
+        self.advance();
+        Ok(())
+    }
+
+    /// The face indices of one ASCII face record: the `vertex_indices` list (or the first list
+    /// when none is named that); every other list is consumed without reading it as indices.
+    fn ascii_face(&mut self, props: &[Prop], words: &mut std::str::SplitWhitespace<'_>, record: usize) -> Result<Vec<usize>, MeshError> {
+        let err = |reason| MeshError::PlyBody { record, reason };
+        let list_pos = list_position(props);
+        let mut indices: Vec<usize> = Vec::new();
+        for (i, prop) in props.iter().enumerate() {
+            match prop {
+                Prop::Scalar { .. } => {
+                    if words.next().is_none() {
+                        return Err(err(PlyReason::BadNumber));
+                    }
+                }
+                Prop::List { .. } => {
+                    let Some(word) = words.next() else { return Err(err(PlyReason::BadNumber)) };
+                    let count: i64 = word.parse().map_err(|_| err(PlyReason::BadNumber))?;
+                    let Ok(count) = usize::try_from(count) else { return Err(err(PlyReason::BadNumber)) };
+                    if Some(i) == list_pos {
+                        for _ in 0..count {
+                            let Some(word) = words.next() else { return Err(err(PlyReason::BadNumber)) };
+                            let n: i64 = word.parse().map_err(|_| err(PlyReason::BadNumber))?;
+                            let Some(idx) = checked_index(n, self.vertices.len()) else {
+                                return Err(err(PlyReason::IndexOutOfRange(usize::try_from(n.max(0)).unwrap_or(0))));
+                            };
+                            push_reserved(&mut indices, idx)?;
+                        }
+                    } else {
+                        for _ in 0..count {
                             if words.next().is_none() {
                                 return Err(err(PlyReason::BadNumber));
                             }
                         }
-                        Prop::List { .. } => {
-                            let Some(word) = words.next() else { return Err(err(PlyReason::BadNumber)) };
-                            let count: i64 = word.parse().map_err(|_| err(PlyReason::BadNumber))?;
-                            if count < 0 {
-                                return Err(err(PlyReason::BadNumber));
-                            }
-                            for _ in 0..count {
-                                let Some(word) = words.next() else { return Err(err(PlyReason::BadNumber)) };
-                                let n: i64 = word.parse().map_err(|_| err(PlyReason::BadNumber))?;
-                                let Some(idx) = checked_index(n, self.vertices.len()) else {
-                                    return Err(err(PlyReason::IndexOutOfRange(usize::try_from(n.max(0)).unwrap_or(0))));
-                                };
-                                if !have_list {
-                                    push_reserved(&mut indices, idx)?;
-                                }
-                            }
-                            have_list = true;
-                        }
                     }
                 }
-                self.face_from_indices(&indices, record)?;
             }
         }
-        self.advance();
-        Ok(())
+        Ok(indices)
     }
 
     /// One binary body record of `bytes` (exactly its size, see [`binary_needed`]).
@@ -514,40 +532,49 @@ impl PlyReader {
                 push_reserved(&mut self.vertices, corner)?;
             }
             ElementKind::Face => {
-                let mut indices: Vec<usize> = Vec::new();
-                let mut have_list = false;
-                for prop in &props {
-                    match prop {
-                        Prop::Scalar { ty, .. } => off += ty.size(),
-                        Prop::List { count, item, .. } => {
-                            let Some(n) = count.read_int(&bytes[off..off + count.size()]) else {
-                                return Err(err(PlyReason::BadNumber));
-                            };
-                            if n < 0 {
-                                return Err(err(PlyReason::BadNumber));
-                            }
-                            off += count.size();
-                            for _ in 0..n {
-                                let Some(v) = item.read_int(&bytes[off..off + item.size()]) else {
-                                    return Err(err(PlyReason::BadNumber));
-                                };
-                                off += item.size();
-                                let Some(idx) = checked_index(v, self.vertices.len()) else {
-                                    return Err(err(PlyReason::IndexOutOfRange(usize::try_from(v.max(0)).unwrap_or(0))));
-                                };
-                                if !have_list {
-                                    push_reserved(&mut indices, idx)?;
-                                }
-                            }
-                            have_list = true;
-                        }
-                    }
-                }
+                let indices = self.binary_face(&props, bytes, record, &mut off)?;
                 self.face_from_indices(&indices, record)?;
             }
+            // Another element's record: consumed, not read.
+            ElementKind::Skip => {}
         }
         self.advance();
         Ok(())
+    }
+
+    /// The face indices of one binary face record: the `vertex_indices` list (or the first list
+    /// when none is named that); every other list's bytes are skipped.
+    fn binary_face(&mut self, props: &[Prop], bytes: &[u8], record: usize, off: &mut usize) -> Result<Vec<usize>, MeshError> {
+        let err = |reason| MeshError::PlyBody { record, reason };
+        let list_pos = list_position(props);
+        let mut indices: Vec<usize> = Vec::new();
+        for (i, prop) in props.iter().enumerate() {
+            match prop {
+                Prop::Scalar { ty, .. } => *off += ty.size(),
+                Prop::List { count, item, .. } => {
+                    let Some(n) = count.read_int(&bytes[*off..*off + count.size()]) else {
+                        return Err(err(PlyReason::BadNumber));
+                    };
+                    let Ok(n) = usize::try_from(n) else { return Err(err(PlyReason::BadNumber)) };
+                    *off += count.size();
+                    if Some(i) == list_pos {
+                        for _ in 0..n {
+                            let Some(v) = item.read_int(&bytes[*off..*off + item.size()]) else {
+                                return Err(err(PlyReason::BadNumber));
+                            };
+                            *off += item.size();
+                            let Some(idx) = checked_index(v, self.vertices.len()) else {
+                                return Err(err(PlyReason::IndexOutOfRange(usize::try_from(v.max(0)).unwrap_or(0))));
+                            };
+                            push_reserved(&mut indices, idx)?;
+                        }
+                    } else {
+                        *off += n * item.size();
+                    }
+                }
+            }
+        }
+        Ok(indices)
     }
 
     /// Fan-triangulates a face's corner indices into checked triangles.
@@ -585,6 +612,15 @@ impl PlyReader {
 fn checked_index(n: i64, vertices: usize) -> Option<usize> {
     let idx = usize::try_from(n).ok()?;
     (idx < vertices).then_some(idx)
+}
+
+/// The position of the list property that holds a face's corner indices: the one named
+/// `vertex_indices`, else the first list.
+fn list_position(props: &[Prop]) -> Option<usize> {
+    props
+        .iter()
+        .position(|p| matches!(p, Prop::List { name, .. } if name == "vertex_indices"))
+        .or_else(|| props.iter().position(|p| matches!(p, Prop::List { .. })))
 }
 
 /// How many bytes of `buf` the next binary record needs, or `None` when `buf` holds no complete
@@ -743,7 +779,7 @@ mod tests {
     #[test]
     fn broken_headers_are_refused_with_their_line() {
         let cases: [(&str, usize, PlyReason); 5] = [
-            ("ply\nelement edge 5\nend_header\n", 2, PlyReason::UnexpectedKeyword("edge".to_owned())),
+            ("ply\nelement vertex 0\nelement vertex 1\nend_header\n", 3, PlyReason::UnexpectedKeyword("vertex".to_owned())),
             ("ply\nformat ascii 1.0\nelement vertex x\nend_header\n", 3, PlyReason::BadNumber),
             ("ply\nformat ascii 1.0\nelement face 0\nproperty list uchar int v\nend_header\n", 5, PlyReason::MissingVertex),
             (
@@ -797,6 +833,54 @@ mod tests {
         bytes.truncate(bytes.len() - 5);
         let err = read(&bytes).expect_err("an error");
         assert_eq!(err, MeshError::PlyBody { record: 8, reason: PlyReason::Truncated });
+    }
+
+    #[test]
+    fn other_elements_are_skipped_ascii_and_binary() {
+        // MeshLab and scanners write `element edge 0` (or `material`); Blender writes `edge` for
+        // loose edges. Their records are consumed and discarded, even non-empty ones.
+        let ascii = "ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 4\nproperty list uchar int vertex_indices\nelement edge 0\nproperty int vertex1\nelement material 2\nproperty uchar red\nend_header\n0 0 0\n10 0 0\n0 10 0\n0 0 10\n3 0 2 1\n3 0 1 3\n3 0 3 2\n3 1 2 3\n255\n0\n";
+        assert_eq!(read(ascii.as_bytes()).expect("reads").triangles.len(), 4);
+
+        let mut binary = b"ply\nformat binary_little_endian 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nelement edge 2\nproperty int vertex1\nproperty int vertex2\nend_header\n".to_vec();
+        for v in [[0.0f32, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]] {
+            for c in v {
+                binary.extend_from_slice(&c.to_le_bytes());
+            }
+        }
+        binary.push(3u8);
+        for i in [0i32, 2, 1] {
+            binary.extend_from_slice(&i.to_le_bytes());
+        }
+        for e in [[0i32, 1], [1, 2]] {
+            for i in e {
+                binary.extend_from_slice(&i.to_le_bytes());
+            }
+        }
+        assert_eq!(read(&binary).expect("reads").triangles.len(), 1);
+    }
+
+    #[test]
+    fn face_lists_other_than_vertex_indices_are_ignored() {
+        // Textured meshes carry a second list on the face element, e.g. MeshLab's texcoords.
+        let ascii = "ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 4\nproperty list uchar int vertex_indices\nproperty list uchar float texcoord\nend_header\n0 0 0\n10 0 0\n0 10 0\n0 0 10\n3 0 2 1 3 0.5 0.5 0.5\n3 0 1 3 3 0.1 0.2 0.3\n3 0 3 2 3 0 0 0\n3 1 2 3 3 1 1 1\n";
+        assert_eq!(read(ascii.as_bytes()).expect("reads").triangles.len(), 4);
+
+        let mut binary = b"ply\nformat binary_little_endian 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nproperty list uchar float texcoord\nend_header\n".to_vec();
+        for v in [[0.0f32, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]] {
+            for c in v {
+                binary.extend_from_slice(&c.to_le_bytes());
+            }
+        }
+        binary.push(3u8);
+        for i in [0i32, 2, 1] {
+            binary.extend_from_slice(&i.to_le_bytes());
+        }
+        binary.push(3u8);
+        for t in [0.5f32, 0.5, 0.5] {
+            binary.extend_from_slice(&t.to_le_bytes());
+        }
+        assert_eq!(read(&binary).expect("reads").triangles.len(), 1);
     }
 
     #[test]
