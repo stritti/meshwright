@@ -747,6 +747,21 @@ fn collinear_bad_segments_with_a_gap_stay_closed() {
     }
 }
 
+/// Many disjoint bad segments on one line (a row of T-junctioned boxes along y=0): the sweep
+/// must stay linear in the events, not rescan all of them per segment (codex nit on #101).
+#[test]
+fn many_bad_segments_on_one_line_stay_linear() {
+    let mut mesh = Mesh::new(Vec::new());
+    for i in 0..50 {
+        let part = block_split_top_edge(10.0, 20.0, 5.0, 0, &[0.25, 0.5, 0.75], 0.0);
+        mesh.triangles.extend(part.triangles.iter().map(|t| t.map(|p| [p[0] + 20.0 * f64::from(i), p[1], p[2]])));
+    }
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    if let Recognition::Unrecognized { reason } = recognize(&mesh) {
+        assert!(!reason.contains("not a closed surface"), "refused as not closed: {reason}");
+    }
+}
+
 /// Sub-grid float noise (±1e-7 in x) on the fan vertices of a T-junctioned top left edge must
 /// not flip the edge's canonical direction and with it the line key: the sign is fixed on the
 /// largest-magnitude component now (codex finding on #101).

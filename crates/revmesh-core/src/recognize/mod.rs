@@ -233,18 +233,29 @@ fn sweep_line(line: &Line, bucketed: &[([i64; 6], u32)], directed: &[(u32, u32)]
     }
     events.sort_by(|a, b| a.0.total_cmp(&b.0));
     // Each bad segment on its own: every stretch inside it must be covered exactly once each
-    // way. A gap between two segments has no edge at all, so it is not checked.
+    // way. A gap between two segments has no edge at all, so it is not checked. Both `events`
+    // and `segments` are sorted, so one two-pointer sweep over the events covers all segments:
+    // the event index only moves forward, O(events + segments) in all.
+    let (mut cf, mut cb) = (0i32, 0i32);
+    let mut ei = 0usize;
     for &(s_lo, s_hi) in &line.segments {
-        let (mut cf, mut cb) = (0i32, 0i32);
+        // Events before the segment: their stretches lie in earlier segments or gaps, already
+        // checked or not to be checked — only their counts carry over.
+        while ei < events.len() && events[ei].0 < s_lo {
+            cf += i32::from(events[ei].1);
+            cb += i32::from(events[ei].2);
+            ei += 1;
+        }
         let mut prev = s_lo;
-        for &(pos, df, db) in &events {
-            let (a, b) = (prev.max(s_lo), pos.min(s_hi));
-            if a < b && (cf != 1 || cb != 1) {
+        while ei < events.len() && events[ei].0 <= s_hi {
+            let pos = events[ei].0;
+            if pos > prev && (cf != 1 || cb != 1) {
                 return Err("the mesh is not a closed surface: an edge belongs to more or fewer than two faces".into());
             }
-            cf += i32::from(df);
-            cb += i32::from(db);
+            cf += i32::from(events[ei].1);
+            cb += i32::from(events[ei].2);
             prev = pos;
+            ei += 1;
         }
         if prev < s_hi && (cf != 1 || cb != 1) {
             return Err("the mesh is not a closed surface: an edge belongs to more or fewer than two faces".into());
