@@ -86,7 +86,11 @@ parsed chunk by chunk as it is read (`stl::StlReader`), `import_mesh` takes the 
 straight into 1 MiB writes to SolidCraft, with coordinates in single precision. Auto mode
 therefore accepts STL up to 16 MiB — measured peak ≈ 90 MiB at about 250 bytes per triangle,
 inside the 128 MiB the manifest asks for (32 MiB would need index-based face storage); mesh mode
-accepts up to 32 MiB. Measured with SolidCraft 0.49: a 1.5 million triangle STL (75 MB) imports
+accepts up to 32 MiB. A rotated X/Y recognition attempt would hold a second mesh copy plus the
+face/wall indexes on top of the original (measured up to ~420 bytes per triangle peak on a
+densely banded mesh — 133 MiB at 333k triangles), so `recognize` only tries Z above 200,000
+triangles and a larger part lying along X or Y falls back to a mesh body instead of trapping the
+component. Measured with SolidCraft 0.49: a 1.5 million triangle STL (75 MB) imports
 as a mesh in about 8 s; 2 million triangles exceed 128 MiB (before streaming, 600,000 already
 did).
 

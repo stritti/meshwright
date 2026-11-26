@@ -49,7 +49,9 @@ const CHUNK: usize = 1 << 20;
 // read/write buffers, while auto recognition builds face and wall indexes on top of the mesh
 // (measured: about 250 bytes per triangle in all, so 16 MiB of STL peaks at roughly 90 MiB —
 // inside the 128 MiB the manifest asks for; 32 MiB would not fit without index-based face
-// storage). Keep a lower input ceiling for that mode.
+// storage). Rotated X/Y recognition attempts would hold a second mesh copy on top and can
+// exceed the budget on densely banded meshes, so `recognize` skips them above
+// `MAX_ROTATED_TRIANGLES` and only tries Z then. Keep a lower input ceiling for mesh mode.
 const AUTO_MAX_BYTES: u64 = 16 << 20;
 const MESH_MAX_BYTES: u64 = 32 << 20;
 
