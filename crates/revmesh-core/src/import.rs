@@ -132,7 +132,8 @@ fn mesh_import(mesh: Mesh, file_name: &str, body: &str, locale: Locale) -> Impor
 }
 
 /// The body name SolidCraft would give: the file name without its extension.
-fn body_name(file_name: &str) -> String {
+#[must_use]
+pub fn body_name(file_name: &str) -> String {
     let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
     if stem.is_empty() { "Mesh".into() } else { stem.into() }
 }

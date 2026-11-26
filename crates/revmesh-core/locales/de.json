@@ -6,6 +6,7 @@
   "progress.reading": "STL wird gelesen",
   "progress.recognising": "Features werden erkannt",
   "progress.writing": "Konstruktion wird geschrieben",
+  "progress.checking": "Konstruktion wird in der App-Sandbox gepr\u00fcft",
   "progress.done": "Fertig",
 
   "report.mesh.summary": "Ein Netz aus {triangles} Dreiecken",
@@ -15,6 +16,8 @@
   "report.deviation.message": "Die Flächen des Netzes liegen höchstens so weit von den erkannten Flächen entfernt: {faces}.",
   "report.unrecognized.title": "Als Netz behalten",
   "report.unrecognized.message": "Es wurden keine parametrischen Features erkannt: {reason}.",
+  "report.selfcheck.title": "Das erkannte Design hat die Neuaufbau-Pr\u00fcfung nicht bestanden",
+  "report.selfcheck.message": "SolidCraft konnte es nicht \u00f6ffnen oder neu aufbauen: {reason}. Die Datei wird stattdessen als Mesh-Body \u00fcbernommen.",
   "report.update.title": "Eine neuere Version von revmesh ist verfügbar",
   "report.update.message": "Dieser Import lief mit revmesh {current}, aber {latest} ist erschienen. Installieren Sie sie über https://github.com/stritti/revmesh/releases",
 
