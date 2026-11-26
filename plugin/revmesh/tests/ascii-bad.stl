@@ -1,0 +1,7 @@
+solid t
+facet normal 0 0 1
+outer loop
+vertex 0 x 0
+endloop
+endfacet
+endsolid t

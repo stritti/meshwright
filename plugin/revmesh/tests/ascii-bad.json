@@ -1,0 +1,5 @@
+{
+  "entry": "stl",
+  "file": "ascii-bad.stl",
+  "expect": {"error": "invalid_input", "message": "ASCII STL, line 4: bad coordinate"}
+}

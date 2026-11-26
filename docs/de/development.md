@@ -80,6 +80,11 @@ schreibt sie aus einem Spec (`synth` tesselliert so, wie CAD-Exporteure es tun) 
 das SolidCraft nach dem Neuaufbau messen soll. Jede Fixture in `plugin/revmesh/tests` hat eine
 `.json`-Case, die `cargo xtask plugin-test` in SolidCraft ausführt.
 
+Die absichtlich kaputten Fixtures (`broken.stl`, `empty.stl`, `nan.stl`, `truncated.stl`,
+`ascii-bad.stl`) kommen aus den Raw-Modi desselben Beispiels (in dessen Header aufgelistet). Ihre
+`.json`-Cases erwarten einen Fehler — `{"error": "invalid_input", "message": "…"}` mit einem
+Ausschnitt des lokalisierten Grundes, wie `broken.json` zeigt.
+
 Echte STL-Dateien von Printables, unter CC0 oder CC BY und unverändert verwendet, liegen in
 `plugin/revmesh/tests/printables/` (Autoren und Lizenzen in dessen README);
 `crates/revmesh-core/tests/printables.rs` prüft sie gegen die veröffentlichten Quellen der Autoren, wo es
