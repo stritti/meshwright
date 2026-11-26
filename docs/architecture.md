@@ -90,9 +90,13 @@ mesh in about 8 s; 2 million triangles exceed 128 MiB (before streaming, 600,000
 
 In auto mode the serialised design is staged in SolidCraft's private sandbox (capability
 `evaluate@0.2`) and rebuilt there (`document.inspect`) before it is written to the design file.
-A design the app cannot open — a feature error — falls back to the mesh body, with the reason in
-the loss report (code `revmesh.selfcheck`). Mesh-mode imports are not checked: the design is the
-mesh, and holding its JSON twice would break the memory budget above.
+A command failure or a timeline feature with an `error` in the `document.inspect` reply falls
+back to the mesh body, with the reason in the loss report (code `revmesh.selfcheck`); a call error
+(a design the app cannot open, a reply over 1 MiB) is an error for that call only, so the design
+is written unchecked. The reply parsing and the fallback policy live in `revmesh_core::import`
+(`SelfCheck`, `apply_self_check`), tested natively; the plugin only stages and runs. Mesh-mode
+imports are not checked: the design is the mesh, and holding its JSON twice would break the
+memory budget above.
 
 ## Testing levels
 
