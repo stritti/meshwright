@@ -144,5 +144,11 @@
       (they stay English today, `stl.rs`) and an optional `units` import option (STL is unitless
       and assumed to be mm)
 
+Converting a mesh body that is already in the open design (not just an STL file) is tracked in
+[issue #70](https://github.com/stritti/revmesh/issues/70); the spike's findings — second package
+with the `command-plugin` world, read the body via `model.mesh`, write back via `timeline.add` /
+`timeline.delete`, selection via `x-solidcraft-selection` — are in
+[research/convert-mesh-body.md](https://github.com/stritti/revmesh/blob/main/research/convert-mesh-body.md).
+
 Contributions are very welcome: bug reports, STL files that import badly, recognisers, docs.
 Start with [CONTRIBUTING.md](https://github.com/stritti/revmesh/blob/main/CONTRIBUTING.md).

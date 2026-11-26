@@ -139,5 +139,12 @@
    5. lokalisierte ASCII-STL-Syntaxgründe (sie bleiben heute Englisch, `stl.rs`) und eine optionale
       `units`-Importoption (STL ist einheitenlos und wird als mm angenommen)
 
+Ein Mesh-Body, der bereits in der offenen Konstruktion liegt, direkt konvertieren (nicht nur eine
+STL-Datei) ist in [Issue #70](https://github.com/stritti/revmesh/issues/70) getrackt; die
+Ergebnisse des Spikes — zweites Paket mit der `command-plugin`-World, Body über `model.mesh` lesen,
+über `timeline.add`/`timeline.delete` zurückschreiben, Auswahl über `x-solidcraft-selection` —
+stehen in
+[research/convert-mesh-body.md](https://github.com/stritti/revmesh/blob/main/research/convert-mesh-body.md).
+
 Beiträge sind sehr willkommen: Bug-Reports, STL-Dateien, die schlecht importieren, Erkenner, Doku.
 Fang an mit [CONTRIBUTING.md](https://github.com/stritti/revmesh/blob/main/CONTRIBUTING.md).
