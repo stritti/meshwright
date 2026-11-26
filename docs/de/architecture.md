@@ -37,7 +37,7 @@ crates/
     src/import.rs      die ganze Pipeline und die Importoptionen
     tests/data/        Fixtures und Golden Designs
   revmesh-plugin/   die Komponente: craft:plugin@0.2.0, Welt importer-plugin
-    wit/plugin.wit     vendored aus SolidCraft v0.49.1
+    wit/plugin.wit     vendored aus SolidCraft v0.50.0
 plugin/revmesh/     das Paket: plugin.json, icons/ (das SVG, das SolidCraft im Plugins-Menü zeigt), die gebaute .wasm, SolidCraft-Testfälle
 xtask/                 Component-Wrapping, Packaging, Plugin-Tests
 ```
@@ -84,7 +84,7 @@ bittet um 128 MiB und 2 Minuten, das meiste, was ein Plugin ohne Genehmigung des
 Der Speicher entscheidet, wie groß eine Datei sein darf. Das Plugin hält daher nichts doppelt: Die STL
 wird chunkweise geparst, während sie gelesen wird (`stl::StlReader`), das Netz wandert ohne Kopie in die
 Konstruktion, und die Konstruktion wird direkt in 1-MiB-Schreibvorgänge an SolidCraft serialisiert, mit
-Koordinaten in einfacher Genauigkeit. Gemessen mit SolidCraft 0.49: eine STL mit 1,5 Millionen Dreiecken
+Koordinaten in einfacher Genauigkeit. Gemessen mit SolidCraft 0.50: eine STL mit 1,5 Millionen Dreiecken
 (75 MB) importiert als Netz in etwa 8 s; 2 Millionen Dreiecke überschreiten 128 MiB (vor dem Streaming
 schon 600.000).
 

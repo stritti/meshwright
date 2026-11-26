@@ -7,7 +7,7 @@ use crate::synth;
 
 use super::{circle, found, reason};
 
-/// A 70 x 40 x 6 plate exported from SolidCraft 0.49 with an Ø10 x 5 and an Ø8 x 3 boss on
+/// A 70 x 40 x 6 plate exported from SolidCraft 0.50 with an Ø10 x 5 and an Ø8 x 3 boss on
 /// its top face and an Ø5 hole.
 #[test]
 fn recognises_bosses() {
@@ -118,7 +118,7 @@ fn split_boss_footprints() {
     assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }]);
 }
 
-/// A 70 x 40 x 6 plate exported from SolidCraft 0.49 with an Ø10 x 8 boss whose foot is rounded
+/// A 70 x 40 x 6 plate exported from SolidCraft 0.50 with an Ø10 x 8 boss whose foot is rounded
 /// with 2 mm, an Ø8 x 5 boss and an Ø4 hole.
 #[test]
 fn recognises_rounded_boss_feet() {
@@ -352,7 +352,7 @@ fn split_round_facets() {
     assert_eq!(found(&mesh).0.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }]);
 }
 
-/// A 70 x 40 x 6 plate exported from SolidCraft 0.49 with an Ø12 x 8 boss drafted by 5°, an
+/// A 70 x 40 x 6 plate exported from SolidCraft 0.50 with an Ø12 x 8 boss drafted by 5°, an
 /// Ø10 x 6 boss whose top edge is chamfered by 1 mm, and an Ø4 hole.
 #[test]
 fn recognises_drafted_and_chamfered_bosses() {

@@ -78,7 +78,7 @@
    1. an arbitrary prism axis: detect the two dominant parallel planes with fixed-seed RANSAC
       (Schnabel et al. 2007) and rotate the mesh so their normal is +Z, instead of trying only
       X, Y and Z (`recognize/axis.rs`) — today a part rotated in the file stays a mesh.
-      Recognition-side only for now: SolidCraft 0.49.1's design format has origin-plane sketches
+      Recognition-side only for now: SolidCraft 0.50.0's design format has origin-plane sketches
       and translate-only moves, so a slanted prism cannot be written parametrically at the
       pinned version (needs construction planes or a newer pin)
    2. (done: a fixed-seed RANSAC circle in `plate/geometry.rs::ransac_circle` augmenting the

@@ -22,7 +22,7 @@ is the **loss report** JSON, which SolidCraft shows as the *Import report* (agai
 This skill touches SolidCraft's plugin boundary, so before committing any change here, check it
 against the host's own documentation: `docs/plugins.md` in
 [tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft) at the pinned release
-[tag `v0.49.1`](https://github.com/tangency-labs/solidcraft/blob/v0.49.1/docs/plugins.md)
+[tag `v0.50.0`](https://github.com/tangency-labs/solidcraft/blob/v0.50.0/docs/plugins.md)
 (`SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml`, matching the vendored
 `crates/revmesh-plugin/wit/plugin.wit`) and at
 [`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md) for what is
@@ -116,7 +116,7 @@ impl Guest for Importer {
 ## 3. Write a valid SolidCraft design
 
 The document format is internal; `docs/design-format.md` records the subset revmesh writes
-(verified against 0.49.1, re-check every SolidCraft release): `"format": "solidcraft/63"`,
+(verified against 0.50.0, re-check every SolidCraft release): `"format": "solidcraft/63"`,
 `params` (`expr`, `unit`, `model: false` for user parameters), `features` (`sketch`, `extrude`,
 `hole` simple/counterbore/countersink, `fillet`, `box`, `cylinder`, `move`, `pattern`
 rectangular/circular, `mesh_import`), `next_id`, `reserved_body_names`.
