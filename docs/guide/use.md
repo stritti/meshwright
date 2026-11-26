@@ -31,3 +31,11 @@ and the parameters each one gets.
 
 Which parts are recognised, and which parameters they get, is on
 [What auto recognises](/guide/recognition).
+
+## Limits
+
+STL input: up to 16 MiB in `auto` mode, 32 MiB in `mesh` mode (`AUTO_MAX_BYTES` / `MESH_MAX_BYTES`
+in `crates/revmesh-plugin/src/lib.rs`). Runtime: 128 MiB memory, a 120 s deadline and 10¹¹ fuel, as
+requested in `plugin/revmesh/plugin.json`. The file is streamed in 1 MiB chunks, so a 16 MiB STL
+peaks at ≈ 90 MiB in memory. Measured numbers and the reasoning behind them:
+[Architecture](/architecture#limits-inside-solidcraft).

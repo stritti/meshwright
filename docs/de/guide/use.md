@@ -5,7 +5,7 @@
    `.stl` weiterhin den eingebauten Netz-Import, daher erreicht man revmesh über das Plugins-Menü.
 2. Der Dialog bietet **Importieren als**: `auto` (Features erkennen und das Teil parametrisch neu
    aufbauen — Facetten werden zu idealen Flächen, der Importbericht nennt die Abweichung; das Netz
-   bleibt nur dort, wo nichts erkannt wird; STL bis 8 MiB; die Standardeinstellung) oder `mesh` (das
+   bleibt nur dort, wo nichts erkannt wird; STL bis 16 MiB; die Standardeinstellung) oder `mesh` (das
    Netz exakt so übernehmen, wie es ist; STL bis 32 MiB).
 3. Seine Schaltfläche wählt die STL-Datei. Sie öffnet sich als neue, ungespeicherte Konstruktion.
 4. Danach folgt der **Importbericht**: eine Zusammenfassung, eine Zeile pro Art der Änderung und
@@ -29,3 +29,11 @@ den Parametern, die jedes einzelne bekommt.
 
 Welche Teile erkannt werden und welche Parameter sie bekommen, steht unter
 [Was auto erkennt](/de/guide/recognition).
+
+## Grenzen
+
+STL-Eingabe: bis 16 MiB im Modus `auto`, 32 MiB im Modus `mesh` (`AUTO_MAX_BYTES` /
+`MESH_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`). Laufzeit: 128 MiB Speicher, eine Deadline
+von 120 s und 10¹¹ Fuel, wie in `plugin/revmesh/plugin.json` angefordert. Die Datei wird in
+1-MiB-Chunks gestreamt, daher erreicht eine 16-MiB-STL etwa 90 MiB Spitzenwert im Speicher.
+Gemessene Werte und die Begründung dahinter: [Architektur](/de/architecture#limits-in-solidcraft).
