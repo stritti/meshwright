@@ -262,4 +262,22 @@ mod tests {
         r.push(text.as_bytes()).expect("push");
         assert_eq!(r.finish().expect_err("an error"), MeshError::Empty);
     }
+
+    #[test]
+    fn the_last_line_needs_no_newline() {
+        let text = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3";
+        let mut r = ObjReader::new(text.as_bytes(), text.len() as u64);
+        r.push(text.as_bytes()).expect("push");
+        assert_eq!(r.finish().expect("finish").triangles.len(), 1);
+    }
+
+    #[test]
+    fn a_line_longer_than_the_limit_is_refused() {
+        // A line without a newline is held until it ends; past `LINE_MAX` bytes it is refused, so
+        // a crafted file cannot grow the pending buffer without bound.
+        let mut r = ObjReader::new(b"v", (LINE_MAX + 2) as u64);
+        r.push(b"v 0 0 0\n").expect("push");
+        let err = r.push(&vec![b'#'; LINE_MAX + 1]).expect_err("too long");
+        assert!(matches!(err, MeshError::Obj { line: 2, .. }), "{err:?}");
+    }
 }

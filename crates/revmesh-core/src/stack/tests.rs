@@ -138,3 +138,44 @@ fn deviations_are_reported_per_band() {
         }
     }
 }
+
+/// Two copies of one prism, one on top of the other: three levels, but every band has the same
+/// section (a 40 x 30 outline with a square through hole), so the bands merge into one.
+#[test]
+fn one_extrusion_split_at_a_level_is_no_stack() {
+    let outline = [[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]];
+    let hole = vec![[15.0, 10.0], [25.0, 10.0], [25.0, 20.0], [15.0, 20.0]];
+    let mut lower = crate::synth::prism(&outline, std::slice::from_ref(&hole), 5.0, [0.0; 3]);
+    let upper = crate::synth::prism(&outline, &[hole], 5.0, [0.0, 0.0, 5.0]);
+    lower.triangles.extend(upper.triangles);
+    let err = recognize_stack(&lower).expect_err("one extrusion");
+    assert!(err.ends_with("it is one extrusion"), "{err}");
+}
+
+/// A stray facet on the top level but outside the diamond lies on no band's wall or step.
+#[test]
+fn a_facet_on_no_band_is_no_stack() {
+    let mut mesh = stack();
+    mesh.triangles.push([[1.0, 1.0, 28.0], [3.0, 1.0, 28.0], [1.0, 3.0, 28.0]]);
+    let err = recognize_stack(&mesh).expect_err("a stray facet");
+    assert!(err.ends_with("a face lies on no band's wall or step"), "{err}");
+}
+
+/// Every facet still lies on a band, but one facet of the diamond's top is missing: the mesh no
+/// longer holds the bands' volume, and the volume gate refuses it.
+#[test]
+fn a_volume_off_by_more_than_the_gate_is_no_stack() {
+    let mut mesh = stack();
+    let top = mesh.triangles.iter().position(|t| t.iter().all(|p| (p[2] - 28.0).abs() < 1e-6)).expect("a top facet");
+    mesh.triangles.remove(top);
+    let err = recognize_stack(&mesh).expect_err("volume off");
+    assert!(err.contains("its bands hold"), "{err}");
+}
+
+/// The facet count is capped before any section is cut.
+#[test]
+fn too_many_facets_is_no_stack() {
+    let facet = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let err = recognize_stack(&Mesh::new(vec![facet; 100_001])).expect_err("too many facets");
+    assert!(err.contains("more than 100000 facets"), "{err}");
+}

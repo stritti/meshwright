@@ -933,4 +933,67 @@ mod tests {
         assert!(err.message(Locale::De).contains("PLY-Datensatz 7"), "{}", err.message(Locale::De));
         assert!(!err.message(Locale::De).contains('{'));
     }
+
+    /// A binary tetrahedron whose vertex coordinates are written as `coords` (one PLY type per
+    /// axis) and whose face list as `list` (count type, index type).
+    fn binary_tetra(coords: [&str; 3], list: [&str; 2]) -> Vec<u8> {
+        let mut bytes = format!(
+            "ply\nformat binary_little_endian 1.0\nelement vertex 4\nproperty {} x\nproperty {} y\nproperty {} z\nelement face 4\nproperty list {} {} vertex_indices\nend_header\n",
+            coords[0], coords[1], coords[2], list[0], list[1]
+        )
+        .into_bytes();
+        let write = |bytes: &mut Vec<u8>, ty: &str, v: u8| match ty {
+            "char" | "uchar" => bytes.push(v),
+            "short" | "ushort" => bytes.extend_from_slice(&u16::from(v).to_le_bytes()),
+            "int" | "uint" => bytes.extend_from_slice(&u32::from(v).to_le_bytes()),
+            "double" => bytes.extend_from_slice(&f64::from(v).to_le_bytes()),
+            _ => panic!("no writer for {ty}"),
+        };
+        for corner in [[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]] {
+            for (ty, v) in coords.iter().zip(corner) {
+                write(&mut bytes, ty, v);
+            }
+        }
+        for face in [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]] {
+            write(&mut bytes, list[0], 3);
+            for i in face {
+                write(&mut bytes, list[1], i);
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn reads_every_binary_integer_and_double_type() {
+        for (coords, list) in [
+            (["double", "short", "char"], ["char", "ushort"]),
+            (["ushort", "uint", "uchar"], ["short", "uint"]),
+            (["int", "double", "ushort"], ["ushort", "char"]),
+        ] {
+            let mesh = read(&binary_tetra(coords, list)).unwrap_or_else(|e| panic!("{coords:?} {list:?}: {e}"));
+            assert_eq!(mesh.triangles.len(), 4, "{coords:?} {list:?}");
+            assert!((mesh.volume().abs() - 1000.0 / 6.0).abs() < 1e-9, "{coords:?} {list:?}: {}", mesh.volume());
+        }
+    }
+
+    #[test]
+    fn the_last_record_needs_no_newline() {
+        let text = format!("{HEADER}{}", TETRA_BODY.trim_end());
+        assert_eq!(read(text.as_bytes()).expect("reads").triangles.len(), 4);
+    }
+
+    #[test]
+    fn lines_longer_than_the_limit_are_refused_in_header_and_body() {
+        // A header or ASCII body line is held until it ends; past `LINE_MAX` bytes it is refused,
+        // so a crafted file cannot grow the pending buffer without bound.
+        let mut header = b"ply\nformat ascii 1.0\ncomment ".to_vec();
+        header.resize(header.len() + LINE_MAX + 1, b'x');
+        let err = read(&header).expect_err("too long");
+        assert_eq!(err, MeshError::PlyHeader { line: 3, reason: PlyReason::LineTooLong });
+
+        let mut body = HEADER.as_bytes().to_vec();
+        body.resize(body.len() + LINE_MAX + 1, b'0');
+        let err = read(&body).expect_err("too long");
+        assert_eq!(err, MeshError::PlyBody { record: 1, reason: PlyReason::LineTooLong });
+    }
 }
