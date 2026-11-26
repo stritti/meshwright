@@ -32,6 +32,17 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
 2. In SolidCraft, open **Preferences › Plugins › Install plugin…** (also *File › Plugins…*) and pick
    the zip.
 
+## Compatibility
+
+| revmesh | SolidCraft |
+|---|---|
+| 0.2.x (current) | 0.49.x — the plugin interface (`crates/revmesh-plugin/wit/plugin.wit`) is vendored unchanged from SolidCraft **v0.49.1**, and CI runs the plugin tests against `solidcraft-cli` 0.49.1 |
+
+SolidCraft's plugin runtime is experimental, so a different SolidCraft version may refuse the
+package or need a different revmesh — keep both up to date. The
+[SolidCraft version workflow](.github/workflows/solidcraft-version.yml) fails PRs that target an
+older SolidCraft than the latest release, so current revmesh always targets the newest one.
+
 ## Use
 
 1. On the **Insert** ribbon tab, the plugin has its own **revmesh** group with the **stl** button
@@ -46,7 +57,7 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
 4. The **Import report** follows: a summary, one line per kind of change, and everything in
    detail under *Details*. **Plugins › Last import report…** shows it again later.
 
-The plugin accepts STL files up to 16 MiB in `auto` mode and 32 MiB in `mesh` mode.
+Input sizes and runtime limits are listed under [Limits](#limits).
 
 A recognised part arrives as a timeline (sketch, extrusion, holes, fillet) with its sizes as
 parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. A
@@ -107,6 +118,22 @@ steps along X or Y, pockets with curved sides, bosses with a draft, a round or a
 rounded rim opening on a step's level, blind holes with a drill
 point or a counterbore, and parts rotated off X, Y and Z. Blind holes, like counterbored and
 countersunk ones, stay single holes, not patterns.
+
+## Limits
+
+| Limit | Value | Set in |
+|---|---|---|
+| STL file size, `auto` | 16 MiB | `AUTO_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs` |
+| STL file size, `mesh` | 32 MiB | `MESH_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs` |
+| Memory | 128 MiB | `runtime.limits.memory_mib` in `plugin/revmesh/plugin.json` |
+| Import deadline | 120 s | `runtime.limits.deadline_ms` in `plugin/revmesh/plugin.json` |
+| Fuel | 10¹¹ | `runtime.limits.fuel` in `plugin/revmesh/plugin.json` |
+
+The file is streamed through the sandbox in 1 MiB chunks, so these limits are about peak memory,
+not file size: a 16 MiB STL peaks at ≈ 90 MiB (about 250 bytes per triangle) inside the 128 MiB
+budget; `auto` at 32 MiB would need index-based face storage. In `auto` mode the rebuilt part must
+match the mesh's volume within 1 %, otherwise the mesh is kept. Measured numbers and the reasoning
+behind them: [docs/architecture.md](docs/architecture.md#limits-inside-solidcraft).
 
 ## How it works
 
