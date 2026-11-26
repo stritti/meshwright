@@ -122,7 +122,7 @@
    3. doppeltgenaue Koordinaten in Mesh-Bodies jenseits des einfachgenauen Bereichs (die Konstruktion
       wird heute mit `f32`-Koordinaten geschrieben, `design/mod.rs`) — Teile weit vom Ursprung verlieren
       im Netz-Fallback an Präzision
-   4. eine höhere `auto`-Eingabegrenze (heute 8 MiB gegen 32 MiB im mesh-Modus, `revmesh-plugin`), indem
+   4. eine höhere `auto`-Eingabegrenze (heute 16 MiB gegen 32 MiB im mesh-Modus, `revmesh-plugin`), indem
       die Indexe, die die Erkennung über Flächen und Wände baut, schlanker werden
    5. lokalisierte ASCII-STL-Syntaxgründe (sie bleiben heute Englisch, `stl.rs`) und eine optionale
       `units`-Importoption (STL ist einheitenlos und wird als mm angenommen)

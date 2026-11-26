@@ -10,7 +10,8 @@ report, an STL file that imports badly, a ported recogniser, a fix in the docs.
 - **Suggest a feature** with the [feature request](../../issues/new?template=feature_request.yml)
   form.
 - **Port a recogniser** from [mesh2cad](https://github.com/emirmrkaljevic/mesh2cad). Please open
-  an issue first, so two people don't port the same thing.
+  an issue first, so two people don't port the same thing. What is already ported, and where we
+  deliberately differ: [research/mesh2cad-parity.md](research/mesh2cad-parity.md).
 - **Improve the docs.** Small fixes can go straight into a pull request. The site at
   <https://stritti.github.io/revmesh/> is built from `docs/` with VitePress: `cd docs && npm ci && npm run dev`
   previews it.
