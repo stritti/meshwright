@@ -114,3 +114,8 @@ Konstruktion ist das Netz, und das doppelte Halten ihres JSON würde das Speiche
    Volumenfehler höchstens 1%).
 4. Von Hand: eine Golden-Konstruktion (`cargo run -p revmesh-core --example plate_design`) in SolidCraft
    öffnen, Parameter ändern und zusehen, wie sie neu aufgebaut wird.
+5. `scripts/example-cli.sh` (CI-Job `example-cli`): installiert das `cargo xtask dist`-Zip in einem
+   Scratch-Plugins-Verzeichnis und importiert eine Beispiel-STL über `file.import` der
+   `solidcraft-cli` (Eintrag `revmesh.stl`), dann wird das Volumen der neu exportierten STL gegen die
+   Quelle innerhalb von 1 % geprüft. Die Skripte liegen in
+   [examples/cli/](https://github.com/stritti/revmesh/tree/main/examples/cli).

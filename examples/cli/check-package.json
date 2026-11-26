@@ -1,0 +1,5 @@
+{
+  "commands": [
+    {"command": "plugin.check", "params": {"path": "../../target/dist/revmesh-<version>.zip"}}
+  ]
+}

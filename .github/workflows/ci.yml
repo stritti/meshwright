@@ -123,6 +123,23 @@ jobs:
       - run: cargo xtask plugin-test
       - run: cargo xtask check
 
+  example-cli:
+    name: Headless CLI example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - name: Download solidcraft-cli ${{ env.SOLIDCRAFT_VERSION }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$SOLIDCRAFT_VERSION" -R tangency-labs/solidcraft \
+            -p "solidcraft-$SOLIDCRAFT_VERSION-linux-x86_64.tar.gz" -O "$RUNNER_TEMP/solidcraft.tar.gz"
+          tar xzf "$RUNNER_TEMP/solidcraft.tar.gz" -C "$RUNNER_TEMP"
+          echo "SOLIDCRAFT_CLI=$RUNNER_TEMP/solidcraft-$SOLIDCRAFT_VERSION-linux-x86_64/bin/solidcraft-cli" >> "$GITHUB_ENV"
+      - run: cargo xtask dist
+      - run: scripts/example-cli.sh
+
   coverage:
     name: "coverage (gate: >= 80% lines, whole workspace)"
     runs-on: ubuntu-latest
@@ -149,7 +166,7 @@ jobs:
   ci-ok:
     name: CI ok
     if: always()
-    needs: [fmt, clippy, test, msrv, docs, deny, component, plugin-test, coverage]
+    needs: [fmt, clippy, test, msrv, docs, deny, component, plugin-test, example-cli, coverage]
     runs-on: ubuntu-latest
     steps:
       - name: A gate failed
