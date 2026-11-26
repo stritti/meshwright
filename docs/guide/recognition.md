@@ -35,6 +35,10 @@ corner is simply one more straight side, so it comes over exactly.
 The rebuilt part must match the mesh's volume within 1%, otherwise the mesh is kept. The import
 report notes how much the volume changed because round facets became true circles.
 
+Before that, topology gates refuse a mesh outright: every edge must belong to two faces (the
+recognised faces close into loops; an exporter's T-junctions count), and a side wall must meet
+its face at 90°. A mesh that fails either is kept as a mesh, with the reason in the report.
+
 ## Not recognised yet
 
 These are kept as a mesh, with the reason in the report:

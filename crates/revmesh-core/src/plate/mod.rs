@@ -146,7 +146,7 @@ const WALL_CELL_MIN_TOL: f64 = 4.0;
 const WALL_SAMPLE_HALVES: f64 = 0.5;
 
 /// The grid that welds boundary corners, in tolerances.
-const WELD_GRID_TOL: f64 = 16.0;
+pub(crate) const WELD_GRID_TOL: f64 = 16.0;
 
 /// A wall edge's middle may lie this many facets' sagittas inside its circle (a two-facet chord).
 const CHORD_FACET_SPAN: f64 = 4.0;

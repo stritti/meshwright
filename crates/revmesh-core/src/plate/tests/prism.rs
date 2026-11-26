@@ -643,3 +643,133 @@ fn deviation_of_a_clockwise_chord_stays_with_its_own_wall() {
     let want_corner = 16.0 * (1.0 - (PI / 8.0).cos());
     assert!((corner.1 - want_corner).abs() < 0.05, "the corner keeps its chord's sagitta {want_corner}: {corner:?}");
 }
+
+/// A closed box, as `check.rs`'s tests build one.
+fn block(x: f64, y: f64, z: f64) -> Mesh {
+    let p = |i: f64, j: f64, k: f64| [i * x, j * y, k * z];
+    let quad = |a, b, c, d| [[a, b, c], [a, c, d]];
+    let faces = [
+        quad(p(0., 0., 0.), p(0., 1., 0.), p(1., 1., 0.), p(1., 0., 0.)),
+        quad(p(0., 0., 1.), p(1., 0., 1.), p(1., 1., 1.), p(0., 1., 1.)),
+        quad(p(0., 0., 0.), p(1., 0., 0.), p(1., 0., 1.), p(0., 0., 1.)),
+        quad(p(0., 1., 0.), p(0., 1., 1.), p(1., 1., 1.), p(1., 1., 0.)),
+        quad(p(0., 0., 0.), p(0., 0., 1.), p(0., 1., 1.), p(0., 1., 0.)),
+        quad(p(1., 0., 0.), p(1., 1., 0.), p(1., 1., 1.), p(1., 0., 1.)),
+    ];
+    Mesh::new(faces.into_iter().flatten().collect())
+}
+
+/// Topology gate (roadmap 6.6): a gap leaves an edge with only one facet, refused before any
+/// axis is tried.
+#[test]
+fn an_open_edge_is_refused_as_not_closed() {
+    let mut mesh = block(30.0, 20.0, 5.0);
+    mesh.triangles.remove(0);
+    let why = reason(&mesh);
+    assert!(why.contains("not a closed surface"), "{why}");
+}
+
+/// A fin on a shared edge makes it non-manifold (three facets): refused the same way.
+#[test]
+fn a_non_manifold_edge_is_refused() {
+    let mut mesh = block(30.0, 20.0, 5.0);
+    mesh.triangles.push([[0.0, 0.0, 0.0], [0.0, 0.0, 5.0], [-1.0, -1.0, 2.5]]);
+    let why = reason(&mesh);
+    assert!(why.contains("not a closed surface"), "{why}");
+}
+
+/// Two boxes touching only along one edge make it non-manifold (four facets on it): refused,
+/// not recognised as a stack of two.
+#[test]
+fn two_boxes_touching_on_an_edge_are_refused() {
+    let mut mesh = block(10.0, 10.0, 5.0);
+    let second = block(10.0, 10.0, 5.0);
+    mesh.triangles.extend(second.triangles.iter().map(|t| t.map(|p| [p[0] + 10.0, p[1] + 10.0, p[2]])));
+    let why = reason(&mesh);
+    assert!(why.contains("not a closed surface"), "{why}");
+}
+
+/// An exporter's T-junction (a corner lying on another facet's edge) is still watertight: the
+/// segment is covered by the sub-edges' lengths, so the box is recognised.
+#[test]
+fn a_t_junction_is_still_a_closed_surface() {
+    let mut mesh = block(30.0, 20.0, 5.0);
+    let wall = [[0.0, 0.0, 0.0], [0.0, 0.0, 5.0], [0.0, 20.0, 5.0]];
+    let i = mesh.triangles.iter().position(|t| *t == wall).expect("the wall facet");
+    let m = [0.0, 10.0, 2.5]; // the middle of the facet's diagonal edge
+    mesh.triangles[i] = [[0.0, 0.0, 0.0], [0.0, 0.0, 5.0], m];
+    mesh.triangles.push([[0.0, 0.0, 5.0], [0.0, 20.0, 5.0], m]);
+    let (plate, _) = found(&mesh);
+    assert_eq!((plate.x, plate.y, plate.z), (30.0, 20.0, 5.0));
+}
+
+/// A box `x`×`y`×`z` whose top edge number `edge` (0: front y=0, 1: right, 2: back, 3: left,
+/// counter-clockwise) is split at `fractions` into sub-edges on the top face only — the wall
+/// under the edge keeps the whole edge, an exporter's T-junction. Each sub-point is jittered by
+/// `jitter` perpendicular to the edge in the top plane (float noise below the weld grid).
+fn block_split_top_edge(x: f64, y: f64, z: f64, edge: usize, fractions: &[f64], jitter: f64) -> Mesh {
+    let q = [[0.0, 0.0], [x, 0.0], [x, y], [0.0, y]];
+    let (a, b) = (q[edge], q[(edge + 1) % 4]);
+    let (c, d) = (q[(edge + 2) % 4], q[(edge + 3) % 4]);
+    let at = |p: [f64; 2]| [p[0], p[1], z];
+    let dir = [b[0] - a[0], b[1] - a[1]];
+    let len = (dir[0] * dir[0] + dir[1] * dir[1]).sqrt();
+    let perp = [-dir[1] / len, dir[0] / len];
+    let mut mesh = block(x, y, z);
+    let top = [[0.0, 0.0, z], [x, 0.0, z], [x, y, z], [0.0, y, z]];
+    mesh.triangles.retain(|t| *t != [top[0], top[1], top[2]] && *t != [top[0], top[2], top[3]]);
+    let (ta, tb, tc, td) = (at(a), at(b), at(c), at(d));
+    let mut pts = vec![ta];
+    for (k, f) in fractions.iter().enumerate() {
+        let j = if k % 2 == 0 { jitter } else { -jitter };
+        pts.push([a[0] + f * dir[0] + j * perp[0], a[1] + f * dir[1] + j * perp[1], z]);
+    }
+    pts.push(tb);
+    for w in pts.windows(2) {
+        mesh.triangles.push([td, w[0], w[1]]);
+    }
+    mesh.triangles.push([td, tb, tc]);
+    mesh
+}
+
+/// Two disjoint boxes whose front top edges (y=0, z=5) are T-junctioned: on that line the bad
+/// segments are [0,10] and [20,30] with a gap between them (no edge at all in (10,20)). The gap
+/// must not make the sweep refuse the part — coverage is checked per segment, not across the
+/// merged span (codex finding on #101).
+#[test]
+fn collinear_bad_segments_with_a_gap_stay_closed() {
+    let mut mesh = block_split_top_edge(10.0, 20.0, 5.0, 0, &[0.25, 0.5, 0.75], 0.0);
+    let second = block_split_top_edge(10.0, 20.0, 5.0, 0, &[0.25, 0.5, 0.75], 0.0);
+    mesh.triangles.extend(second.triangles.iter().map(|t| t.map(|p| [p[0] + 20.0, p[1], p[2]])));
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    if let Recognition::Unrecognized { reason } = recognize(&mesh) {
+        assert!(!reason.contains("not a closed surface"), "refused as not closed: {reason}");
+    }
+}
+
+/// Sub-grid float noise (±1e-7 in x) on the fan vertices of a T-junctioned top left edge must
+/// not flip the edge's canonical direction and with it the line key: the sign is fixed on the
+/// largest-magnitude component now (codex finding on #101).
+#[test]
+fn sub_grid_noise_cannot_flip_a_line_key() {
+    let mesh = block_split_top_edge(10.0, 10.0, 5.0, 3, &[0.25, 0.5, 0.75], 1e-7);
+    assert!(mesh.volume() > 0.0, "mesh wound inside out");
+    let (plate, _) = found(&mesh);
+    assert_eq!((plate.x, plate.y, plate.z), (10.0, 10.0, 5.0));
+}
+
+/// A bottom corner moved a hair inward keeps the faces' areas within 0.01 %, but the wall
+/// facets at the corner lean: they no longer meet the face at 90° (roadmap 6.6).
+#[test]
+fn a_sheared_wall_is_refused_as_not_vertical() {
+    let mut mesh = synth::plate(&spec(&[], None), 24, [0.0; 3]);
+    for t in &mut mesh.triangles {
+        for p in t {
+            if *p == [0.0, 0.0, 0.0] {
+                *p = [0.003, 0.0, 0.0];
+            }
+        }
+    }
+    let why = reason(&mesh);
+    assert!(why.contains("not vertical"), "{why}");
+}

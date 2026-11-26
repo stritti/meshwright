@@ -36,6 +36,11 @@ Das neu aufgebaute Teil muss dem Netz volumenmäßig innerhalb von 1 % entsprech
 Netz. Der Importbericht vermerkt, um wie viel sich das Volumen geändert hat, weil runde Facetten zu
 echten Kreisen wurden.
 
+Davor lehnen Topologie-Gates ein Netz rundweg ab: Jede Kante muss zu zwei Flächen gehören (die
+erkannten Flächen schließen zu Schleifen; T-Junctions eines Exporters zählen), und eine Seitenwand
+muss ihre Fläche rechtwinklig treffen. Ein Netz, das beides nicht erfüllt, bleibt ein Netz, mit dem
+Grund im Bericht.
+
 ## Noch nicht erkannt {#not-recognised-yet}
 
 Diese bleiben ein Netz, mit dem Grund im Bericht:
