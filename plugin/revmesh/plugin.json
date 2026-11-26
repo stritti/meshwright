@@ -32,7 +32,7 @@
                 "mesh"
               ],
               "default": "auto",
-              "description": "auto: recognise features and keep the mesh where none are found; mesh: keep the mesh as it is"
+              "description": "auto: recognise features and rebuild the part parametrically (facets become ideal faces; the report notes the deviation); the mesh is kept only where nothing is found. STL up to 8 MiB. mesh: keep the mesh exactly as it is. STL up to 32 MiB"
             }
           }
         }

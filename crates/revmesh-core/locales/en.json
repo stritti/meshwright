@@ -1,7 +1,7 @@
 {
   "manifest.description": "Opens STL meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history.",
   "manifest.stl.mode.title": "Import as",
-  "manifest.stl.mode.description": "auto: recognise features and keep the mesh where none are found; mesh: keep the mesh as it is",
+  "manifest.stl.mode.description": "auto: recognise features and rebuild the part parametrically (facets become ideal faces; the report notes the deviation); the mesh is kept only where nothing is found. STL up to 8 MiB. mesh: keep the mesh exactly as it is. STL up to 32 MiB",
 
   "progress.reading": "Reading STL",
   "progress.recognising": "Recognising features",
