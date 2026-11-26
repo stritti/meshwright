@@ -11,6 +11,11 @@ export default defineConfig({
   // package.json and node_modules live here too; only Markdown pages are content.
   srcExclude: ['**/node_modules/**'],
   head: [['link', { rel: 'icon', href: '/revmesh/logo.svg', type: 'image/svg+xml' }]],
+  // Shallow-merged into every locale's themeConfig; the local search index is
+  // only built when the top-level themeConfig selects the local provider.
+  themeConfig: {
+    search: { provider: 'local' },
+  },
   locales: {
     root: {
       label: 'English',
@@ -52,7 +57,6 @@ export default defineConfig({
           pattern: `${repo}/edit/main/docs/:path`,
           text: 'Edit this page on GitHub',
         },
-        search: { provider: 'local' },
         footer: {
           message: 'Released under the MIT License. Not affiliated with SolidCraft.',
         },
@@ -108,7 +112,6 @@ export default defineConfig({
           pattern: `${repo}/edit/main/docs/:path`,
           text: 'Diese Seite auf GitHub bearbeiten',
         },
-        search: { provider: 'local' },
         footer: {
           message: 'Veröffentlicht unter der MIT-Lizenz. Nicht mit SolidCraft verbunden.',
         },
