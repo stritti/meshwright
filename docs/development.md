@@ -62,7 +62,8 @@ prints a Markdown table per file: every parameter name either tool writes, mesh2
 0.001. Below each table are mesh2cad's verdict (the script and its deviation from the mesh, or
 why it refused) and revmesh's import summary. A pull request that adds or changes a
 recogniser includes this table for its test files. The map of mesh2cad's modules to ours, and the
-deliberate deviations, is in [research/mesh2cad-parity.md](../research/mesh2cad-parity.md).
+deliberate deviations, is in
+[research/mesh2cad-parity.md](https://github.com/stritti/revmesh/blob/main/research/mesh2cad-parity.md).
 
 Differences that are expected, and why:
 
