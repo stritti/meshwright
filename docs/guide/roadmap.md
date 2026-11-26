@@ -128,8 +128,8 @@
       builds
    5. (done: ASCII-STL syntax errors carry a `SyntaxReason` (`stl.rs`) rendered in the import
       language via `stl.syntax.reason.*` in the locale catalogs; the dialog's `units` option
-      (`plugin.json`) reads inch files as inches and scales them to millimetres once in
-      `import_mesh`, noted in the report as `revmesh.units`) localised ASCII-STL syntax reasons
+      (`plugin.json`) reads inch files as inches and scales them to millimetres in place
+      (`convert_units`, range-checked afterwards), noted in the report as `revmesh.units`) localised ASCII-STL syntax reasons
       (they stay English today, `stl.rs`) and an optional `units` import option (STL is unitless
       and assumed to be mm)
 

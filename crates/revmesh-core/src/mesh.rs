@@ -60,10 +60,15 @@ impl Mesh {
         self.triangles.iter().map(|[a, b, c]| dot(sub(*a, *origin), cross(sub(*b, *origin), sub(*c, *origin)))).sum::<f64>() / 6.0
     }
 
-    /// The mesh with every coordinate multiplied by `factor` (an inch STL read as millimetres).
-    #[must_use]
-    pub fn scaled(&self, factor: f64) -> Mesh {
-        Mesh { triangles: self.triangles.iter().map(|t| t.map(|p| p.map(|v| v * factor))).collect() }
+    /// Multiplies every coordinate by `factor` in place (an inch STL read as millimetres).
+    pub fn scale_in_place(&mut self, factor: f64) {
+        for triangle in &mut self.triangles {
+            for point in triangle {
+                for value in point {
+                    *value *= factor;
+                }
+            }
+        }
     }
 }
 

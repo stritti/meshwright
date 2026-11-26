@@ -69,24 +69,37 @@ pub struct ImportResult {
 
 /// Imports the STL file `file_name` whose content is `bytes`.
 pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<ImportResult, StlError> {
-    Ok(import_mesh(&stl::parse(bytes)?, file_name, options))
+    let mut mesh = stl::parse(bytes)?;
+    convert_units(&mut mesh, options.units)?;
+    Ok(import_mesh(&mesh, file_name, options))
+}
+
+/// Applies a file's `units` to the mesh read from it: an inch file is scaled to millimetres in
+/// place, and the coordinates are range-checked afterwards, because scaling can push one past
+/// the f32 range the design is written in. Call this before [`import_mesh`], which expects
+/// millimetres; it never copies the mesh, so even a 32 MiB mesh-mode import holds it only once
+/// besides the design's own copy.
+pub fn convert_units(mesh: &mut Mesh, units: Units) -> Result<(), StlError> {
+    if units == Units::Inch {
+        mesh.scale_in_place(INCH_TO_MM);
+        for (i, triangle) in mesh.triangles.iter().enumerate() {
+            if triangle.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(StlError::NonFinite { triangle: i + 1 });
+            }
+            if triangle.iter().flatten().any(|v| v.abs() > f64::from(f32::MAX)) {
+                return Err(StlError::OutOfRange { triangle: i + 1 });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Imports a mesh already read from the STL file `file_name` (see [`stl::StlReader`]). The mesh is
-/// borrowed: it moves into the design only when it is kept as a mesh body, and only then is it
-/// copied, so a recognised import holds no second mesh (the plugin's sandbox fallback can still
-/// rebuild one from the same borrow).
+/// borrowed and must already be in millimetres ([`convert_units`] applies the file's units in
+/// place first): it is cloned only when it is kept as a mesh body, so a recognised import holds
+/// no second mesh (the plugin's sandbox fallback can still rebuild one from the same borrow).
 #[must_use]
 pub fn import_mesh(mesh: &Mesh, file_name: &str, options: &ImportOptions) -> ImportResult {
-    // A file in inches is read as millimetres: scale once, here, so recognition and the design
-    // see mm. The mesh is copied only in that case.
-    let scaled;
-    let mesh = if options.units == Units::Inch {
-        scaled = mesh.scaled(INCH_TO_MM);
-        &scaled
-    } else {
-        mesh
-    };
     let mut result = import_mesh_mm(mesh, file_name, options);
     if options.units == Units::Inch {
         result.report.push(LossItem {
@@ -346,7 +359,9 @@ mod tests {
             edge_fillet_r: None,
         };
         let mesh_mm = crate::synth::plate(&spec, 24, [0.0; 3]);
-        let mesh_in = mesh_mm.scaled(1.0 / INCH_TO_MM);
+        let mut mesh_in = mesh_mm.clone();
+        mesh_in.scale_in_place(1.0 / INCH_TO_MM);
+        convert_units(&mut mesh_in, Units::Inch).expect("in range");
         let options = ImportOptions { units: Units::Inch, ..ImportOptions::default() };
         let result = import_mesh(&mesh_in, "bracket.stl", &options);
         let mm = import_mesh(&mesh_mm, "bracket.stl", &ImportOptions::default());
@@ -354,6 +369,18 @@ mod tests {
         assert_eq!(result.design.to_json(), mm.design.to_json());
         assert!(result.report.items.iter().any(|i| i.code == "revmesh.units"));
         assert!(!mm.report.items.iter().any(|i| i.code == "revmesh.units"));
+    }
+
+    #[test]
+    fn inch_conversion_range_checks_the_scaled_coordinates() {
+        // 1e38 parses fine (below f32::MAX), but 25.4e38 does not survive the f32 write.
+        let mesh = Mesh { triangles: vec![[[0.0, 0.0, 0.0], [1.0e38, 0.0, 0.0], [0.0, 1.0, 0.0]]] };
+        assert!(matches!(convert_units(&mut mesh.clone(), Units::Mm), Ok(())));
+        assert_eq!(convert_units(&mut mesh.clone(), Units::Inch), Err(StlError::OutOfRange { triangle: 1 }));
+        let bytes = stl::write_binary(&mesh);
+        let err = import(&bytes, "big.stl", &ImportOptions { units: Units::Inch, ..ImportOptions::default() })
+            .expect_err("1e38 inches overflow the f32 range");
+        assert!(matches!(err, StlError::OutOfRange { triangle: 1 }), "{err}");
     }
 
     #[test]

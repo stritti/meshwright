@@ -68,7 +68,9 @@ impl Guest for Importer {
             Mode::Auto => AUTO_MAX_BYTES,
             Mode::Mesh => MESH_MAX_BYTES,
         };
-        let mesh = read_mesh(&file, max_bytes, locale)?;
+        let mut mesh = read_mesh(&file, max_bytes, locale)?;
+        // An inch file is scaled to millimetres in place, so the mesh is held only once.
+        import::convert_units(&mut mesh, options.units).map_err(|e| invalid("file", e.message(locale)))?;
         control::progress(0.5, locale.text("progress.recognising"));
         // The recognised design is checked in the app's sandbox before it is written (roadmap
         // 7.1); when the app cannot rebuild it the import falls back to the mesh body, which
