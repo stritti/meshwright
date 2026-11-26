@@ -1,0 +1,5 @@
+{
+  "entry": "stl",
+  "file": "truncated.stl",
+  "expect": {"error": "invalid_input", "message": "announces 4 triangles, but the file has only 274 bytes"}
+}

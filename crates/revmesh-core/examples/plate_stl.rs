@@ -28,10 +28,30 @@
 //! cargo run -p revmesh-core --example plate_stl -- stadium > plugin/revmesh/tests/stadium.stl
 //! cargo run -p revmesh-core --example plate_stl -- cutout-arc > plugin/revmesh/tests/cutout-arc.stl
 //! ```
+//!
+//! The intentionally broken fixtures for the error cases are written raw by the same example
+//! (never edited by hand):
+//!
+//! - `broken`: `plugin/revmesh/tests/broken.stl`, 28 bytes of plain text;
+//! - `empty`: `plugin/revmesh/tests/empty.stl`, an ASCII STL with no facet;
+//! - `nan`: `plugin/revmesh/tests/nan.stl`, the ASCII tetrahedron of `tests/data/tetra.stl` with
+//!   `nan` in three corners;
+//! - `truncated`: `plugin/revmesh/tests/truncated.stl`, a binary STL whose header announces four
+//!   triangles but which ends ten bytes early;
+//! - `ascii-bad`: `plugin/revmesh/tests/ascii-bad.stl`, an ASCII STL whose fourth line is a
+//!   `vertex` with a coordinate that is not a number.
+//!
+//! ```sh
+//! cargo run -p revmesh-core --example plate_stl -- broken > plugin/revmesh/tests/broken.stl
+//! cargo run -p revmesh-core --example plate_stl -- empty > plugin/revmesh/tests/empty.stl
+//! cargo run -p revmesh-core --example plate_stl -- nan > plugin/revmesh/tests/nan.stl
+//! cargo run -p revmesh-core --example plate_stl -- truncated > plugin/revmesh/tests/truncated.stl
+//! cargo run -p revmesh-core --example plate_stl -- ascii-bad > plugin/revmesh/tests/ascii-bad.stl
+//! ```
 
 use std::io::Write as _;
 
-use revmesh_core::mesh::snap_mm;
+use revmesh_core::mesh::{Mesh, snap_mm};
 use revmesh_core::recognize::{ArcSide, Axis, CutoutSpec, HoleSpec, PlateSpec, ProfileSpec};
 use revmesh_core::{stl, synth};
 
@@ -203,8 +223,40 @@ fn x_plate() -> (revmesh_core::mesh::Mesh, String, f64) {
     (mesh, profile.describe(), profile.volume())
 }
 
+/// Intentionally broken STL fixtures for the plugin tests' error cases, written raw — the only
+/// way to change them is here, never by hand.
+fn broken(which: Option<&str>) -> Option<Vec<u8>> {
+    const TETRA: &str = include_str!("../tests/data/tetra.stl");
+    match which? {
+        "broken" => Some(b"hello, I am not an STL file\n".to_vec()),
+        "empty" => Some(b"solid empty\nendsolid empty\n".to_vec()),
+        "nan" => Some(TETRA.replace("vertex 0 10 0", "vertex 0 nan 0").into_bytes()),
+        "truncated" => {
+            let tetra = Mesh {
+                triangles: vec![
+                    [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]],
+                    [[0.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                    [[0.0, 0.0, 0.0], [0.0, 0.0, 10.0], [10.0, 0.0, 0.0]],
+                    [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                ],
+            };
+            let mut bytes = stl::write_binary(&tetra);
+            bytes.truncate(bytes.len() - 10);
+            Some(bytes)
+        }
+        "ascii-bad" => Some(
+            b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 x 0\nendloop\nendfacet\nendsolid t\n".to_vec(),
+        ),
+        _ => None,
+    }
+}
+
 fn main() -> std::io::Result<()> {
     let which = std::env::args().nth(1);
+    if let Some(bytes) = broken(which.as_deref()) {
+        std::io::stdout().write_all(&bytes)?;
+        return Ok(());
+    }
     let (mesh, describe, volume) = if which.as_deref() == Some("x-plate") {
         x_plate()
     } else if which.as_deref() == Some("rounded-box") {
