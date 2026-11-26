@@ -1,7 +1,7 @@
 //! Recognising the prism itself: the pipeline over the faces' loops — outline, cut-outs,
 //! prism and wall checks, and the recognition from the outline's corners.
 
-use super::faces::{Faces, split_faces};
+use super::faces::{Faces, FacetClass, facet_info, split_faces};
 use super::geometry::{boundary_loops, distance, segment_distance, signed_area};
 use super::holes::{
     BlindHole, Cutouts, FittedHole, FittedSlot, Stepped, axis_rectangle, cutout_shape, polygon_cutout, round_hole, slot_shape,
@@ -45,7 +45,7 @@ pub(super) fn recognize_prism(mesh: &Mesh, allow_steps: bool) -> Result<Recognit
     let mut cutouts = pair_cutouts(&faces, &face_loops, size[2], tol)?;
     add_steps(&mut cutouts, &steps, size[2], tol)?;
     check_prism(&faces, mesh_volume, size[2], &cutouts.stepped, &cutouts.blinds, rim.as_ref())?;
-    check_walls(&faces, &corners, radius, &side_arcs, &cutouts, scale, tol, rim.as_ref())?;
+    check_walls(mesh, bounds.min, bounds.max[2], &faces, &corners, radius, &side_arcs, &cutouts, scale, tol, rim.as_ref())?;
     let offset = bounds.min.map(snap_mm);
     recognition(&corners, radius, side_arcs, cutouts, size, offset, mesh_volume, rim.as_ref())
 }
@@ -1042,6 +1042,9 @@ pub(crate) fn walls_deviations(
 /// has the same areas and volume as a straight one).
 #[allow(clippy::too_many_arguments)] // the outline, its arc sides and cut-outs, one check
 pub(super) fn check_walls(
+    mesh: &Mesh,
+    min: Vec3,
+    top_z: f64,
     faces: &Faces,
     corners: &[P2],
     radius: Option<f64>,
@@ -1107,6 +1110,40 @@ pub(super) fn check_walls(
         || !faces.chords.iter().all(follows)
     {
         return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
+    }
+    // Topology gate (roadmap 6.6, ComplexGen's perpendicularity): a wall meets its face at 90°,
+    // so the facet's plan is a straight line — within the tolerance, plus the sagitta a chord
+    // on the part's round walls may bow (a tessellated cylinder's facets lean by up to that,
+    // as independently meshed rims do). A sheared or twisted straight wall has a plan with
+    // real area and is refused here even when its chords pass.
+    let min_round_r = cutouts
+        .circles
+        .iter()
+        .map(|(_, _, r)| *r)
+        .chain(cutouts.slot_arcs.iter().map(|(_, _, r, _, _)| *r))
+        .chain(arc_sides.iter().flatten().map(|a| a.r))
+        .chain(radius)
+        .chain(rim.map(|r| r.r))
+        .fold(f64::INFINITY, f64::min);
+    for t in &mesh.triangles {
+        let info = facet_info(t, min[2], top_z, tol);
+        if info.class() != FacetClass::Wall || info.sliver {
+            continue;
+        }
+        if rim.is_some_and(|rim| t.iter().all(|p| rim.holds(sub(*p, min), tol, 0.0))) {
+            continue;
+        }
+        if t.iter().all(|p| in_step(sub(*p, min))) {
+            continue;
+        }
+        let plan = |p: Vec3| [p[0] - min[0], p[1] - min[1]];
+        let [a, b, c] = t.map(plan);
+        let plan_area2 = ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs();
+        let plan_long = [distance(a, b), distance(b, c), distance(c, a)].into_iter().fold(0.0, f64::max);
+        let sag = if min_round_r.is_finite() { CHORD_FACET_SPAN * plan_long * plan_long / (8.0 * min_round_r) } else { 0.0 };
+        if plan_long > 0.0 && 2.0 * plan_area2 / plan_long > tol + sag {
+            return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
+        }
     }
     Ok(())
 }

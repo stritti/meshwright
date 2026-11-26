@@ -33,7 +33,8 @@ pub use spec::{
 };
 pub use stack::{Band, StackSpec};
 
-use crate::mesh::{Mesh, Vec3};
+use crate::mesh::{Mesh, Vec3, cross, dot, length, sub};
+use crate::plate::{WELD_GRID_TOL, tolerance};
 
 /// The per-face surface deviation report for a recognised part (roadmap 5.4): a plate's or a
 /// profile's walls measured in the Z frame (another axis's profile is rotated into it), a
@@ -173,6 +174,100 @@ pub enum Recognition {
 /// imported as a mesh body instead.
 const MAX_ROTATED_TRIANGLES: usize = 200_000;
 
+/// Topology gate (roadmap 6.6, `ComplexGen`'s closed face loops): every edge of the mesh must be
+/// covered by exactly two facets, one in each direction, so the recognised faces close into
+/// loops. Corners are welded on a grid well below the tolerance, as `boundary_loops` does in
+/// 2D; an exporter's T-junction (a corner lying on another facet's edge) still counts, because
+/// the segment is then covered by the sub-edges' lengths. Sort-based, so the gate adds no
+/// per-triangle index beyond three `u64`/`u32`-pair vectors, freed before recognition builds
+/// its own indexes.
+#[allow(clippy::many_single_char_names)] // points a, b, p, the cell indices c, as in the geometry
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss, clippy::cast_lossless)] // the packed keys below are bounded: < 2^21 per axis, < 2^31 point ids
+fn closed_loops(mesh: &Mesh, tol: f64) -> Result<(), String> {
+    let Some(bounds) = mesh.bounds() else { return Ok(()) };
+    let grid = tol / WELD_GRID_TOL;
+    // Each axis' cell index fits in 21 bits: the part is at most 1e5 tolerances wide and the
+    // weld grid is 16 tolerances fine, so at most ~1.6e6 cells per axis.
+    let key = |p: Vec3| -> u64 {
+        let c = |k: usize| (((p[k] - bounds.min[k]) / grid).round() as i64) as u64 & 0x1F_FFFF;
+        c(0) << 42 | c(1) << 21 | c(2)
+    };
+    let mut points: Vec<u64> = mesh.triangles.iter().flatten().map(|p| key(*p)).collect();
+    points.sort_unstable();
+    points.dedup();
+    let id = |p: Vec3| points.partition_point(|&x| x < key(p)) as u32;
+    let mut directed: Vec<(u32, u32)> = Vec::with_capacity(mesh.triangles.len() * 3);
+    for t in &mesh.triangles {
+        let ids = t.map(id);
+        if ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0] {
+            continue; // a degenerate facet welds its corners together; it carries no edge
+        }
+        directed.extend([(ids[0], ids[1]), (ids[1], ids[2]), (ids[2], ids[0])]);
+    }
+    // Per unordered edge: how many facets run each way (bit 0: lo->hi, bit 1: hi->lo).
+    let mut by_edge: Vec<u64> = directed
+        .iter()
+        .map(|&(a, b)| if a < b { (u64::from(a) << 33) | (u64::from(b) << 1) } else { (u64::from(b) << 33) | (u64::from(a) << 1) | 1 })
+        .collect();
+    by_edge.sort_unstable();
+    // Welded points' coordinates, built only when an edge is not the usual one-each-way.
+    let mut coords: Option<Vec<Vec3>> = None;
+    let mut i = 0;
+    while i < by_edge.len() {
+        let edge = by_edge[i] & !1;
+        let (mut f, mut r) = (0u64, 0u64);
+        while i < by_edge.len() && by_edge[i] & !1 == edge {
+            if by_edge[i] & 1 == 0 {
+                f += 1;
+            } else {
+                r += 1;
+            }
+            i += 1;
+        }
+        if f == 1 && r == 1 {
+            continue; // the usual case: one facet each way
+        }
+        let coords = coords.get_or_insert_with(|| {
+            let mut v: Vec<(u64, Vec3)> = mesh.triangles.iter().flatten().map(|&p| (key(p), p)).collect();
+            v.sort_unstable_by_key(|(k, _)| *k);
+            v.dedup_by_key(|(k, _)| *k);
+            v.into_iter().map(|(_, p)| p).collect()
+        });
+        let (lo, hi) = ((edge >> 33) as usize, (edge >> 1 & 0x7FFF_FFFF) as usize);
+        let (pa, pb) = (coords[lo], coords[hi]);
+        let ab = sub(pb, pa);
+        let len = length(ab);
+        if len <= grid {
+            continue; // welded into a point: nothing to cover
+        }
+        let u = [ab[0] / len, ab[1] / len, ab[2] / len];
+        // The total length of the collinear edges running each way over the segment.
+        let covered = |forward: bool| -> f64 {
+            let mut sum = 0.0;
+            for &(a, b) in &directed {
+                let (p, q) = (coords[a as usize], coords[b as usize]);
+                let along = dot(sub(q, p), ab);
+                if (along > 0.0) != forward {
+                    continue;
+                }
+                let off_line = |p: Vec3| length(cross(sub(p, pa), ab)) / len;
+                if off_line(p) > grid || off_line(q) > grid {
+                    continue;
+                }
+                let (tp, tq) = (dot(sub(p, pa), u), dot(sub(q, pa), u));
+                let (x, y) = if tp <= tq { (tp, tq) } else { (tq, tp) };
+                sum += y.clamp(0.0, len) - x.clamp(0.0, len);
+            }
+            sum
+        };
+        let tol_len = 2.0 * grid + len * 1e-9;
+        if (covered(true) - covered(false)).abs() > tol_len {
+            return Err("the mesh is not a closed surface: an edge belongs to more or fewer than two faces".into());
+        }
+    }
+    Ok(())
+}
+
 /// Looks for a part the recognisers know in `mesh`: a prism along Z, then along X, then along Y
 /// (each but the first on the mesh rotated, see [`Axis`]), then an intersection of extrusions.
 #[must_use]
@@ -181,6 +276,14 @@ pub fn recognize(mesh: &Mesh) -> Recognition {
 }
 
 fn recognize_with(mesh: &Mesh, max_rotated_triangles: usize) -> Recognition {
+    // Topology gate (roadmap 6.6, ComplexGen's closed face loops): every edge must belong to
+    // exactly two facets, in opposite directions, so the recognised faces close into loops.
+    // Refused before any axis is tried; a twisted or non-manifold fake never reaches the
+    // volume gate.
+    let scale = mesh.bounds().map_or(0.0, |b| b.size().into_iter().fold(0.0, f64::max));
+    if let Err(why) = closed_loops(mesh, tolerance(scale)) {
+        return Recognition::Unrecognized { reason: why };
+    }
     let mut reason = String::new();
     for axis in Axis::ALL {
         if axis != Axis::Z && mesh.triangles.len() > max_rotated_triangles {

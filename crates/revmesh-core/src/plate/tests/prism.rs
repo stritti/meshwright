@@ -643,3 +643,67 @@ fn deviation_of_a_clockwise_chord_stays_with_its_own_wall() {
     let want_corner = 16.0 * (1.0 - (PI / 8.0).cos());
     assert!((corner.1 - want_corner).abs() < 0.05, "the corner keeps its chord's sagitta {want_corner}: {corner:?}");
 }
+
+/// A closed box, as `check.rs`'s tests build one.
+fn block(x: f64, y: f64, z: f64) -> Mesh {
+    let p = |i: f64, j: f64, k: f64| [i * x, j * y, k * z];
+    let quad = |a, b, c, d| [[a, b, c], [a, c, d]];
+    let faces = [
+        quad(p(0., 0., 0.), p(0., 1., 0.), p(1., 1., 0.), p(1., 0., 0.)),
+        quad(p(0., 0., 1.), p(1., 0., 1.), p(1., 1., 1.), p(0., 1., 1.)),
+        quad(p(0., 0., 0.), p(1., 0., 0.), p(1., 0., 1.), p(0., 0., 1.)),
+        quad(p(0., 1., 0.), p(0., 1., 1.), p(1., 1., 1.), p(1., 1., 0.)),
+        quad(p(0., 0., 0.), p(0., 0., 1.), p(0., 1., 1.), p(0., 1., 0.)),
+        quad(p(1., 0., 0.), p(1., 1., 0.), p(1., 1., 1.), p(1., 0., 1.)),
+    ];
+    Mesh::new(faces.into_iter().flatten().collect())
+}
+
+/// Topology gate (roadmap 6.6): a gap leaves an edge with only one facet, refused before any
+/// axis is tried.
+#[test]
+fn an_open_edge_is_refused_as_not_closed() {
+    let mut mesh = block(30.0, 20.0, 5.0);
+    mesh.triangles.remove(0);
+    let why = reason(&mesh);
+    assert!(why.contains("not a closed surface"), "{why}");
+}
+
+/// A fin on a shared edge makes it non-manifold (three facets): refused the same way.
+#[test]
+fn a_non_manifold_edge_is_refused() {
+    let mut mesh = block(30.0, 20.0, 5.0);
+    mesh.triangles.push([[0.0, 0.0, 0.0], [0.0, 0.0, 5.0], [-1.0, -1.0, 2.5]]);
+    let why = reason(&mesh);
+    assert!(why.contains("not a closed surface"), "{why}");
+}
+
+/// An exporter's T-junction (a corner lying on another facet's edge) is still watertight: the
+/// segment is covered by the sub-edges' lengths, so the box is recognised.
+#[test]
+fn a_t_junction_is_still_a_closed_surface() {
+    let mut mesh = block(30.0, 20.0, 5.0);
+    let wall = [[0.0, 0.0, 0.0], [0.0, 0.0, 5.0], [0.0, 20.0, 5.0]];
+    let i = mesh.triangles.iter().position(|t| *t == wall).expect("the wall facet");
+    let m = [0.0, 10.0, 2.5]; // the middle of the facet's diagonal edge
+    mesh.triangles[i] = [[0.0, 0.0, 0.0], [0.0, 0.0, 5.0], m];
+    mesh.triangles.push([[0.0, 0.0, 5.0], [0.0, 20.0, 5.0], m]);
+    let (plate, _) = found(&mesh);
+    assert_eq!((plate.x, plate.y, plate.z), (30.0, 20.0, 5.0));
+}
+
+/// A bottom corner moved a hair inward keeps the faces' areas within 0.01 %, but the wall
+/// facets at the corner lean: they no longer meet the face at 90° (roadmap 6.6).
+#[test]
+fn a_sheared_wall_is_refused_as_not_vertical() {
+    let mut mesh = synth::plate(&spec(&[], None), 24, [0.0; 3]);
+    for t in &mut mesh.triangles {
+        for p in t {
+            if *p == [0.0, 0.0, 0.0] {
+                *p = [0.003, 0.0, 0.0];
+            }
+        }
+    }
+    let why = reason(&mesh);
+    assert!(why.contains("not vertical"), "{why}");
+}

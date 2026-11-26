@@ -102,8 +102,14 @@
       with `CircleSums`; today all corners must share one radius)
    5. hole rows at any angle (a pattern's direction is not an expression in SolidCraft — write
       them as single holes or on a rotated sketch)
-   6. ComplexGen-style topology gates alongside exact-or-nothing and the volume check: recognised
-      faces close into loops, walls meet their face at 90°
+   6. (done: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` refuses, before any axis
+      is tried, a mesh whose edges are not covered by two facets in opposite directions —
+      corners welded on a sub-tolerance grid, an exporter's T-junctions counted by their sub-edges'
+      length — so the recognised faces close into loops; and `check_walls` in `plate/prism.rs`
+      refuses a wall facet whose plan is not a straight line within the tolerance plus the round
+      walls' sagitta, so walls meet their face at 90°) ComplexGen-style topology gates
+      alongside exact-or-nothing and the volume check: recognised faces close into loops, walls
+      meet their face at 90°
    plus what is still open in 3.10 and 3.12: bosses on side faces, roofs and bevels on stacks
 7. **Import and conversion**:
    1. (done: the manifest requests `evaluate@0.2`; in auto mode the serialised design is staged

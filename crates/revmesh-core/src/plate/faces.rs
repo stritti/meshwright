@@ -23,6 +23,64 @@ pub(super) struct Faces {
     pub(super) chords: Vec<(P2, P2, f64, f64)>,
 }
 
+/// What a facet is in the split between the two face levels: on the top face, on the bottom
+/// face, a cap between them (facing up or down) or a wall. Shared by [`split_faces`] and the
+/// wall-angle gate (`check_wall_angles` in `prism.rs`), so both see the same facet.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FacetClass {
+    Top,
+    Bottom,
+    Cap,
+    Wall,
+    /// A facet on a face level but facing the wrong way.
+    Inward,
+}
+
+/// A facet measured against the face levels `min_z`..`top_z`.
+pub(super) struct FacetInfo {
+    /// Twice the facet's area (the normal's length).
+    pub(super) len: f64,
+    /// Whether the facet is a sliver flatter than the tolerance: its corners still join its
+    /// neighbours as they should, but they can come out turned over once rounded to single
+    /// precision, so only its direction is not trusted.
+    pub(super) sliver: bool,
+    /// The unit normal's vertical share.
+    pub(super) nz: f64,
+    /// How many corners lie on the top face.
+    pub(super) on_top: usize,
+    /// How many corners lie on the bottom face.
+    pub(super) on_bottom: usize,
+}
+
+/// Measures `t` against the face levels `min_z`..`top_z` within `tol`.
+pub(super) fn facet_info(t: &[Vec3; 3], min_z: f64, top_z: f64, tol: f64) -> FacetInfo {
+    let [a, b, c] = *t;
+    let normal = cross(sub(b, a), sub(c, a));
+    let len = length(normal);
+    let longest = [length(sub(b, a)), length(sub(c, b)), length(sub(a, c))].into_iter().fold(0.0, f64::max);
+    let sliver = len == 0.0 || len / longest <= tol;
+    let nz = if len == 0.0 { 0.0 } else { normal[2] / len };
+    let on_top = t.iter().filter(|p| (p[2] - top_z).abs() <= tol).count();
+    let on_bottom = t.iter().filter(|p| (p[2] - min_z).abs() <= tol).count();
+    FacetInfo { len, sliver, nz, on_top, on_bottom }
+}
+
+impl FacetInfo {
+    /// What [`split_faces`] sorts the facet into.
+    pub(super) fn class(&self) -> FacetClass {
+        if self.on_top + self.on_bottom < 3 {
+            if !self.sliver && self.nz.abs() > CAP_NORMAL_MIN { FacetClass::Cap } else { FacetClass::Wall }
+        } else {
+            match self.on_top {
+                3 if self.nz > 0.0 || self.sliver => FacetClass::Top,
+                0 if self.nz < 0.0 || self.sliver => FacetClass::Bottom,
+                0 | 3 => FacetClass::Inward,
+                _ => FacetClass::Wall,
+            }
+        }
+    }
+}
+
 /// Sorts the triangles into the top face (returned in 2D, relative to `min`), the bottom face
 /// (only its area is needed) and vertical walls, and refuses anything else. Also returns every
 /// corner between the top and the bottom (in 2D, relative to `min`).
@@ -56,22 +114,14 @@ pub(super) fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Resul
     };
     for triangle in &mesh.triangles {
         let [a, b, c] = *triangle;
-        let normal = cross(sub(b, a), sub(c, a));
-        let len = length(normal);
-        // A sliver flatter than the tolerance can come out turned over once its corners are
-        // rounded to single precision; its corners still join its neighbours as they should, so
-        // only its direction is not trusted.
-        let longest = [length(sub(b, a)), length(sub(c, b)), length(sub(a, c))].into_iter().fold(0.0, f64::max);
-        let sliver = len == 0.0 || len / longest <= tol;
-        let nz = if len == 0.0 { 0.0 } else { normal[2] / len };
-        let on_top = triangle.iter().filter(|p| (p[2] - top_z).abs() <= tol).count();
-        let on_bottom = triangle.iter().filter(|p| (p[2] - min[2]).abs() <= tol).count();
-        if on_top + on_bottom < 3 {
+        let info = facet_info(triangle, min[2], top_z, tol);
+        let class = info.class();
+        if info.on_top + info.on_bottom < 3 {
             between.extend(triangle.iter().filter(|p| (p[2] - top_z).abs() > tol && (p[2] - min[2]).abs() > tol).map(&relative));
             // A face between the top and the bottom that faces up or down is no wall (a wall
             // band's facets lean a little, never this much): the caller allows it only on a
             // counterbore's floor or a countersink's cone.
-            if !sliver && nz.abs() > CAP_NORMAL_MIN {
+            if class == FacetClass::Cap {
                 caps.push(triangle.map(|p| relative(&p)));
                 continue;
             }
@@ -81,23 +131,24 @@ pub(super) fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Resul
             wall_edges(triangle);
             continue;
         }
-        if len == 0.0 {
+        if info.len == 0.0 {
             continue;
         }
-        match on_top {
-            3 if nz > 0.0 || sliver => top.push(triangle.map(|p| [p[0] - min[0], p[1] - min[1]])),
+        match class {
+            FacetClass::Top => top.push(triangle.map(|p| [p[0] - min[0], p[1] - min[1]])),
             // Seen from above, the bottom face's facets turn the other way.
-            0 if nz < 0.0 || sliver => {
+            FacetClass::Bottom => {
                 bottom.push([[a[0] - min[0], a[1] - min[1]], [c[0] - min[0], c[1] - min[1]], [b[0] - min[0], b[1] - min[1]]]);
             }
-            0 | 3 => return Err("some faces point inwards".into()),
+            FacetClass::Inward => return Err("some faces point inwards".into()),
             // A wall from the top to the bottom: its top corners lie on the top face's boundary,
             // its bottom corners must lie under it (the caller checks; a sheared or drafted wall's
             // do not).
-            _ => {
+            FacetClass::Wall => {
                 rim.extend(triangle.iter().filter(|p| (p[2] - min[2]).abs() <= tol).map(|p| [p[0] - min[0], p[1] - min[1]]));
                 wall_edges(triangle);
             }
+            FacetClass::Cap => unreachable!("a cap has fewer than three corners on the face levels"),
         }
     }
     // A corner or an edge is shared by several facets; it needs checking once.

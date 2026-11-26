@@ -105,8 +105,14 @@
       Ecke mit `CircleSums` an; heute müssen alle Ecken einen Radius teilen)
    5. Bohrungsreihen in beliebigem Winkel (die Richtung eines Musters ist in SolidCraft kein Ausdruck —
       als einzelne Bohrungen oder auf einer gedrehten Skizze schreiben)
-   6. ComplexGen-artige Topologie-Gates neben exact-or-nothing und der Volumen-Prüfung: erkannte
-      Flächen schließen zu Schleifen, Wände treffen ihre Fläche rechtwinklig
+   6. (done: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` lehnt, bevor eine Achse
+      probiert wird, ein Netz ab, dessen Kanten nicht von zwei Facetten in Gegenrichtung bedeckt
+      sind — Ecken auf einem Sub-Toleranz-Raster verschweißt, T-Junctions eines Exporters über
+      ihre Subkanten-Längen gezählt — erkannte Flächen schließen also zu Schleifen; und `check_walls`
+      in `plate/prism.rs` lehnt eine Wandfacette ab, deren Grundriss nicht innerhalb der Toleranz
+      plus der Pfeilhöhe der runden Wände eine Gerade ist, Wände also ihre Fläche rechtwinklig
+      treffen) ComplexGen-artige Topologie-Gates neben exact-or-nothing und der Volumen-Prüfung:
+      erkannte Flächen schließen zu Schleifen, Wände treffen ihre Fläche rechtwinklig
    plus was in 3.10 und 3.12 noch offen ist: Zapfen an Seitenflächen, Dächer und Fasen auf Stapeln
 7. **Import und Konvertierung**:
    1. (erledigt: das Manifest fordert `evaluate@0.2`; im auto-Modus wird die serialisierte Konstruktion
