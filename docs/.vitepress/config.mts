@@ -51,7 +51,7 @@ export default defineConfig({
     },
     search: { provider: 'local' },
     footer: {
-      message: 'Released under the MIT License. Not affiliated with SolidCraft or mesh2cad.',
+      message: 'Released under the MIT License. Not affiliated with SolidCraft.',
     },
   },
 })
