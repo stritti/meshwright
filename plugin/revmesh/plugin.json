@@ -20,6 +20,12 @@
         "extensions": [
           "stl"
         ],
+        "slots": [
+          {
+            "kind": "ribbon",
+            "name": "Insert"
+          }
+        ],
         "input_schema": {
           "type": "object",
           "x-solidcraft-icon": "icons/stl.svg",
