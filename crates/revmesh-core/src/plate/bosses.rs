@@ -224,12 +224,16 @@ fn round_foot(upper: &[&crate::mesh::Triangle], foot: &Footprint, top: f64, top_
         .map(|p| [super::geometry::distance(flat(p), centre) - rim, p[2] - top_z])
         .filter(|[a, _]| *a > tol)
         .collect();
+    // A foot round is tangent to the cylinder (a = 0) and to the plate's top face (h = 0), so the
+    // fitted centre must be (f, f) within the tolerance (the fit runs on the on-circle corners, so
+    // a real round lands there to within f32 rounding); a non-tangent fit is no foot round, and
+    // the per-corner formula below decides as before 6.3.
     let f = match super::geometry::fit_torus(&profile, tol) {
-        Some((_, f)) => f,
+        Some((c, f)) if (c[0] - f).abs() <= tol && (c[1] - f).abs() <= tol => f,
         None if profile.is_empty() => r - rim,
         // Fewer than three corners, or no circle through them: each corner alone gives the
         // radius, `a` out from the cylinder and `h` up on the quarter circle.
-        None => profile.iter().map(|[a, h]| a + h + (2.0 * a * h).sqrt()).sum::<f64>() / profile.len() as f64,
+        _ => profile.iter().map(|[a, h]| a + h + (2.0 * a * h).sqrt()).sum::<f64>() / profile.len() as f64,
     };
     (f, rim)
 }

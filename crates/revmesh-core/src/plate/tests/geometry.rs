@@ -57,4 +57,14 @@ fn fits_a_torus_profile_exactly() {
     // the caller falls back to the per-corner formula.
     let two = [[10.5, 0.134], [10.5, 0.134], [10.134, 0.5], [10.134, 0.5]];
     assert!(fit_torus(&two, 1e-3).is_none());
+    // On-circle locations clustered in a narrow arc leave the unconstrained fit ill-conditioned:
+    // refused on angular support, so the caller falls back to the per-corner formula.
+    let narrow: Vec<P2> = [40.0_f64, 40.5, 41.0]
+        .iter()
+        .map(|deg| {
+            let a = deg.to_radians();
+            [11.0 - f * a.sin(), f - f * a.cos()]
+        })
+        .collect();
+    assert!(fit_torus(&narrow, 1e-3).is_none());
 }

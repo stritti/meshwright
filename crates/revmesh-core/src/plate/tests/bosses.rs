@@ -409,3 +409,21 @@ fn unevenly_banded_rounded_feet() {
     let (plate, _) = found(&layered_boss(&rings, 48));
     assert_eq!(plate.bosses, [BossSpec { x: 20.0, y: 20.0, d: 10.0, h: 8.0, fillet: Some(2.0), draft_deg: None, chamfer: None }]);
 }
+
+/// A foot round whose interior rings are shifted 0.05 mm inward still fits a circle, but its
+/// centre is off (f, f) — not tangent to the cylinder and the plate's face — so the fitted
+/// radius is refused and the boss stays a mesh (roadmap 6.3).
+#[test]
+fn a_non_tangent_foot_round_is_no_fillet() {
+    let (r, f) = (5.0, 2.0);
+    let mut rings: Vec<(f64, f64)> = [0.0, 15.0_f64, 30.0, 45.0, 60.0, 75.0, 90.0]
+        .iter()
+        .map(|deg| {
+            let a = deg.to_radians();
+            let (rr, h) = (r + f - f * a.sin(), f - f * a.cos());
+            if *deg > 0.0 && *deg < 90.0 { (rr - 0.05, h) } else { (rr, h) }
+        })
+        .collect();
+    rings.push((r, 8.0));
+    assert!(reason(&layered_boss(&rings, 48)).contains("neither a straight round boss"));
+}

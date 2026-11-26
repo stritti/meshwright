@@ -143,7 +143,8 @@ fn circle_from_3(a: P2, b: P2, c: P2) -> Option<(P2, f64)> {
 /// fixed-seed RANSAC circle (`ransac_circle`, as a rim loop's in 6.2) refined by the algebraic
 /// fit on its inliers, and every profile point must then lie on the result within one coarsest
 /// facet's sagitta. Returns centre (major radius, height of the centre circle) and radius (the
-/// round's); `None` when fewer than three distinct locations lie on one circle.
+/// round's); `None` when fewer than three distinct locations lie on one circle or span too
+/// narrow an arc.
 pub(crate) fn fit_torus(profile: &[P2], tol: f64) -> Option<(P2, f64)> {
     let mut distinct: Vec<P2> = Vec::with_capacity(profile.len());
     for p in profile {
@@ -160,9 +161,27 @@ pub(crate) fn fit_torus(profile: &[P2], tol: f64) -> Option<(P2, f64)> {
     }
     let on: Vec<P2> = inliers.iter().map(|&i| distinct[i]).collect();
     let (c, f) = fit_circle(&on)?;
+    // Angular support: locations clustered in a narrow arc leave the unconstrained fit
+    // ill-conditioned (binary-STL f32 rounding then swings the radius), so they must span at
+    // least MIN_TORUS_ARC about the centre; otherwise the caller falls back to the per-corner
+    // formula, which uses the round's known tangency.
+    let mut angles: Vec<f64> = on.iter().map(|p| (p[1] - c[1]).atan2(p[0] - c[0])).collect();
+    angles.sort_by(f64::total_cmp);
+    let mut max_gap = angles.first().map_or(0.0, |a| a + 2.0 * std::f64::consts::PI - angles[angles.len() - 1]);
+    for w in angles.windows(2) {
+        max_gap = max_gap.max(w[1] - w[0]);
+    }
+    if 2.0 * std::f64::consts::PI - max_gap < MIN_TORUS_ARC {
+        return None;
+    }
     let bound = f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + tol;
     (f > tol && profile.iter().all(|p| ((p[0] - c[0]).hypot(p[1] - c[1]) - f).abs() <= bound)).then_some((c, f))
 }
+
+/// Least arc about the fitted centre the on-circle profile locations must span for the torus fit
+/// to be well conditioned (45°): a quarter round's bands spread over up to 90°, a cluster in a
+/// narrow arc does not.
+const MIN_TORUS_ARC: f64 = std::f64::consts::PI / 4.0;
 
 /// A circle fitted by fixed-seed RANSAC (Schnabel, Wahl, Klein 2007): 3-point minimal samples,
 /// inliers within `tol`, the best sample by inlier count and then by residual sum, with the

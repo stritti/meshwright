@@ -628,3 +628,21 @@ fn three_band_rounded_hole_rims() {
     let (plate, _) = super::found(&rim_plate(&profile, 32));
     assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.5, bottom: false }));
 }
+
+/// A rounded rim whose interior bands cluster at 40°–41°, with the coordinates rounded to
+/// binary-STL f32 precision, leaves the unconstrained torus fit ill-conditioned: refused on
+/// angular support, and the per-corner fallback recovers the radius exactly (roadmap 6.3).
+#[test]
+fn clustered_band_rounded_hole_rims() {
+    let f = 1.5;
+    let round = |v: f64| -> f64 { (v as f32).into() };
+    let profile: Vec<(f64, f64)> = [0.0, 40.0_f64, 40.5, 41.0, 90.0]
+        .iter()
+        .map(|deg| {
+            let a = deg.to_radians();
+            (round(10.0 + f - f * a.sin()), round(8.0 - f + f * a.cos()))
+        })
+        .collect();
+    let (plate, _) = super::found(&rim_plate(&profile, 32));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.5, bottom: false }));
+}
