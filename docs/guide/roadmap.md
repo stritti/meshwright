@@ -123,7 +123,7 @@
       reference and clones only in the mesh/unrecognized fallback paths, and `Faces.chords` is
       slimmed from (a, b, middle, length) to (a, b, mid_z, length); measured peak ≈ 90 MiB at
       16 MiB, inside the 128 MiB budget (`AUTO_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`);
-      32 MiB would need index-based face storage) a higher `auto` input ceiling (8 MiB today vs
+      32 MiB would need index-based face storage) a higher `auto` input ceiling (16 MiB today vs
       32 MiB in mesh mode, `revmesh-plugin`) by slimming the face and wall indexes recognition
       builds
    5. (done: ASCII-STL syntax errors carry a `SyntaxReason` (`stl.rs`) rendered in the import
