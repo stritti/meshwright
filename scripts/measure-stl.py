@@ -26,10 +26,16 @@ def read_stl(path: Path) -> list[tuple[tuple[float, float, float], ...]]:
     if len(data) >= 84:
         (count,) = struct.unpack("<I", data[80:84])
         if len(data) == 84 + 50 * count:
-            return [
-                tuple(struct.unpack("<3f", data[84 + 50 * i + 12 + 12 * j : 84 + 50 * i + 24 + 12 * j]) for j in range(3))
-                for i in range(count)
-            ]
+            tris = []
+            for i in range(count):
+                tri = tuple(
+                    struct.unpack("<3f", data[84 + 50 * i + 12 + 12 * j : 84 + 50 * i + 24 + 12 * j]) for j in range(3)
+                )
+                for vertex in tri:
+                    if not all(math.isfinite(c) for c in vertex):
+                        raise ValueError(f"{path}: triangle {i + 1} has a corner that is not a finite number")
+                tris.append(tri)
+            return tris
     # Not a size-matching binary file: try ASCII (some binary files start with "solid" too;
     # the size check above is the decider, as in revmesh's own stl.rs).
     text = data.decode("utf-8", errors="replace")
@@ -87,10 +93,11 @@ def main() -> int:
     ap.add_argument("--gate", type=float, metavar="FRAC", help="with exactly two files: exit 1 when their relative volume error exceeds FRAC")
     args = ap.parse_args()
 
+    # Keyed by full path, not basename: --gate with a/part.stl b/part.stl must not collapse.
     results: dict[str, dict] = {}
     for f in args.files:
         try:
-            results[f.name] = measure(read_stl(f))
+            results[str(f)] = measure(read_stl(f))
         except (ValueError, OSError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
@@ -99,7 +106,10 @@ def main() -> int:
         if len(args.files) != 2:
             print("error: --gate needs exactly two files", file=sys.stderr)
             return 2
-        src, rebuilt = (results[f.name] for f in args.files)
+        src, rebuilt = (results[str(f)] for f in args.files)
+        if not (math.isfinite(src["volume_mm3"]) and math.isfinite(rebuilt["volume_mm3"])) or src["volume_mm3"] <= 0:
+            print("error: source or rebuilt volume is not a finite positive number", file=sys.stderr)
+            return 2
         error = abs(src["volume_mm3"] - rebuilt["volume_mm3"]) / src["volume_mm3"]
         print(f"source {src['volume_mm3']:.6f} mm3, rebuilt {rebuilt['volume_mm3']:.6f} mm3, volume error {error:.6%}")
         if args.json:
