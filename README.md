@@ -40,13 +40,13 @@ runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascad
    revmesh is reached through the Insert tab or the Plugins menu.
 2. The dialog offers **Import as**: `auto` (recognise features and rebuild the part
    parametrically — facets become ideal faces, the import report notes the deviation; the mesh is
-   kept only where nothing is found; STL up to 8 MiB; the default) or `mesh` (keep the mesh
+   kept only where nothing is found; STL up to 16 MiB; the default) or `mesh` (keep the mesh
    exactly as it is; STL up to 32 MiB).
 3. Its button chooses the STL file. It opens as a new, unsaved design.
 4. The **Import report** follows: a summary, one line per kind of change, and everything in
    detail under *Details*. **Plugins › Last import report…** shows it again later.
 
-The plugin accepts STL files up to 8 MiB in `auto` mode and 32 MiB in `mesh` mode.
+The plugin accepts STL files up to 16 MiB in `auto` mode and 32 MiB in `mesh` mode.
 
 A recognised part arrives as a timeline (sketch, extrusion, holes, fillet) with its sizes as
 parameters in the parameter panel: change `base_t` or `hole_1_d` and SolidCraft rebuilds it. A

@@ -950,7 +950,8 @@ pub(crate) fn face_deviations(mesh: &Mesh) -> Vec<(String, f64)> {
                 note_deviation(worst, &walls.labels[k], d);
             }
         };
-        for &(a, b, middle, _) in &faces.chords {
+        for &(a, b, mid_z, _) in &faces.chords {
+            let middle = [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), mid_z];
             note_chord(&mut worst, a, b, [middle[0], middle[1]], middle);
         }
         // The top boundary loops' chords too: `split_faces` skips edges lying wholly on the top
@@ -1085,7 +1086,8 @@ pub(super) fn check_walls(
     // middle within the sagitta of a chord two facets long, or the facet cuts across the bore.
     // (Pockets facing each other share a footprint: the edge must follow one of them.) On the
     // rounded rim the middle may bow inward by its chord's sagitta, as on any round wall.
-    let follows = |&(a, b, middle, len): &(P2, P2, Vec3, f64)| {
+    let follows = |&(a, b, mid_z, len): &(P2, P2, f64, f64)| {
+        let middle = [f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), mid_z];
         let mut steps = cutouts.stepped.iter().filter(|s| s.reaches(a, tol) && s.reaches(b, tol)).peekable();
         let mut blind = cutouts.blinds.iter().filter(|h| h.reaches(a, tol) && h.reaches(b, tol)).peekable();
         if steps.peek().is_some() {

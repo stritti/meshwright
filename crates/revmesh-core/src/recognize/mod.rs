@@ -164,12 +164,28 @@ pub enum Recognition {
     },
 }
 
+/// A rotated X or Y attempt holds a second copy of the mesh plus the face and wall indexes on
+/// top of it while the original is still alive: measured at up to ~420 bytes per triangle peak
+/// on a densely banded mesh (a closed cylinder with 128 circumferential segments and 1,300
+/// axial bands — 333,056 triangles — peaked at 133 MiB, over the 128 MiB the manifest asks
+/// for), which would trap the component before it can fall back to a mesh body. Above this
+/// many triangles only Z is tried (it needs no copy), so a too-large part along X or Y is
+/// imported as a mesh body instead.
+const MAX_ROTATED_TRIANGLES: usize = 200_000;
+
 /// Looks for a part the recognisers know in `mesh`: a prism along Z, then along X, then along Y
 /// (each but the first on the mesh rotated, see [`Axis`]), then an intersection of extrusions.
 #[must_use]
 pub fn recognize(mesh: &Mesh) -> Recognition {
+    recognize_with(mesh, MAX_ROTATED_TRIANGLES)
+}
+
+fn recognize_with(mesh: &Mesh, max_rotated_triangles: usize) -> Recognition {
     let mut reason = String::new();
     for axis in Axis::ALL {
+        if axis != Axis::Z && mesh.triangles.len() > max_rotated_triangles {
+            continue;
+        }
         let rotated;
         let source = if axis == Axis::Z {
             mesh
@@ -220,6 +236,9 @@ pub fn recognize(mesh: &Mesh) -> Recognition {
     // first of Z, X and Y on a tie.
     let mut best: Option<Recognition> = None;
     for axis in Axis::ALL {
+        if axis != Axis::Z && mesh.triangles.len() > max_rotated_triangles {
+            continue;
+        }
         let rotated;
         let source = if axis == Axis::Z {
             mesh

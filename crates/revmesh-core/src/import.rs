@@ -12,12 +12,28 @@ use crate::stl::{self, StlError};
 /// Volume changes from smoothing facets below this fraction are not worth a line in the report.
 const SMOOTHING_NOTE: f64 = 1e-4;
 
+/// Millimetres per inch, for a file the user says is in inches.
+pub const INCH_TO_MM: f64 = 25.4;
+
+/// The units the STL file is in. STL is unitless; millimetres are assumed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Units {
+    /// The default: coordinates are millimetres.
+    #[default]
+    Mm,
+    /// The file is in inches; it is converted to millimetres on import.
+    Inch,
+}
+
 /// What the user chose in the import dialog (the entry's `input_schema` in `plugin.json`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ImportOptions {
     /// What to make of the mesh.
     pub mode: Mode,
+    /// The file's units.
+    pub units: Units,
     /// The language of the loss report. Not a dialog option: the plugin sets the locale it was
     /// built for.
     #[serde(skip)]
@@ -53,17 +69,55 @@ pub struct ImportResult {
 
 /// Imports the STL file `file_name` whose content is `bytes`.
 pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<ImportResult, StlError> {
-    Ok(import_mesh(stl::parse(bytes)?, file_name, options))
+    let mut mesh = stl::parse(bytes)?;
+    convert_units(&mut mesh, options.units)?;
+    Ok(import_mesh(&mesh, file_name, options))
 }
 
-/// Imports a mesh already read from the STL file `file_name` (see [`stl::StlReader`]). The mesh
-/// moves into the design when it is kept as a mesh body, so it is never copied.
+/// Applies a file's `units` to the mesh read from it: an inch file is scaled to millimetres in
+/// place, and the coordinates are range-checked afterwards, because scaling can push one past
+/// the f32 range the design is written in. Call this before [`import_mesh`], which expects
+/// millimetres; it never copies the mesh, so even a 32 MiB mesh-mode import holds it only once
+/// besides the design's own copy.
+pub fn convert_units(mesh: &mut Mesh, units: Units) -> Result<(), StlError> {
+    if units == Units::Inch {
+        mesh.scale_in_place(INCH_TO_MM);
+        for (i, triangle) in mesh.triangles.iter().enumerate() {
+            if triangle.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(StlError::NonFinite { triangle: i + 1 });
+            }
+            if triangle.iter().flatten().any(|v| v.abs() > f64::from(f32::MAX)) {
+                return Err(StlError::OutOfRange { triangle: i + 1 });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Imports a mesh already read from the STL file `file_name` (see [`stl::StlReader`]). The mesh is
+/// borrowed and must already be in millimetres ([`convert_units`] applies the file's units in
+/// place first): it is cloned only when it is kept as a mesh body, so a recognised import holds
+/// no second mesh (the plugin's sandbox fallback can still rebuild one from the same borrow).
 #[must_use]
-pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> ImportResult {
+pub fn import_mesh(mesh: &Mesh, file_name: &str, options: &ImportOptions) -> ImportResult {
+    let mut result = import_mesh_mm(mesh, file_name, options);
+    if options.units == Units::Inch {
+        result.report.push(LossItem {
+            severity: Severity::Info,
+            title: options.locale.text("report.units.title").into(),
+            subject: body_name(file_name),
+            message: options.locale.text("report.units.message").into(),
+            code: "revmesh.units",
+        });
+    }
+    result
+}
+
+fn import_mesh_mm(mesh: &Mesh, file_name: &str, options: &ImportOptions) -> ImportResult {
     let body = body_name(file_name);
     let locale = options.locale;
     if options.mode == Mode::Auto {
-        let found = recognize(&mesh);
+        let found = recognize(mesh);
         let recognised = match &found {
             Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", *offset), plate.describe_in(locale), plate.volume())),
             Recognition::Profile { profile, offset, axis } => {
@@ -91,7 +145,7 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
                 }
                 // The per-face surface deviation between the mesh and the recognised faces,
                 // computed in the sandbox for every recognised kind (roadmap 5.4).
-                let deviations = crate::recognize::deviations(&mesh, &found);
+                let deviations = crate::recognize::deviations(mesh, &found);
                 if !deviations.is_empty() {
                     let faces = deviations
                         .iter()
@@ -109,7 +163,7 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
                 return ImportResult { design, report };
             }
             Err(reason) => {
-                let mut result = mesh_import(mesh, file_name, &body, locale);
+                let mut result = mesh_import(mesh.clone(), file_name, &body, locale);
                 result.report.push(LossItem {
                     severity: Severity::Degraded,
                     title: locale.text("report.unrecognized.title").into(),
@@ -121,7 +175,7 @@ pub fn import_mesh(mesh: Mesh, file_name: &str, options: &ImportOptions) -> Impo
             }
         }
     }
-    mesh_import(mesh, file_name, &body, locale)
+    mesh_import(mesh.clone(), file_name, &body, locale)
 }
 
 fn mesh_import(mesh: Mesh, file_name: &str, body: &str, locale: Locale) -> ImportResult {
@@ -181,7 +235,7 @@ pub fn design_has_mesh_body(design: &Design) -> bool {
 #[must_use]
 pub fn apply_self_check(
     result: ImportResult,
-    mesh: Mesh,
+    mesh: &Mesh,
     file_name: &str,
     options: &ImportOptions,
     notice: Option<LossItem>,
@@ -227,6 +281,8 @@ mod tests {
         assert_eq!(ImportOptions::from_json("{}").expect("ok"), ImportOptions::default());
         assert_eq!(ImportOptions::from_json(r#"{"mode":"mesh"}"#).expect("ok").mode, Mode::Mesh);
         assert!(ImportOptions::from_json(r#"{"colour":1}"#).is_err());
+        assert_eq!(ImportOptions::from_json("").expect("ok").units, Units::Mm);
+        assert_eq!(ImportOptions::from_json(r#"{"units":"inch"}"#).expect("ok").units, Units::Inch);
     }
 
     #[test]
@@ -255,7 +311,7 @@ mod tests {
             edge_fillet_r: None,
         };
         let options = ImportOptions::default();
-        let result = import_mesh(crate::synth::plate(&spec, 24, [0.0; 3]), "bracket.stl", &options);
+        let result = import_mesh(&crate::synth::plate(&spec, 24, [0.0; 3]), "bracket.stl", &options);
         assert!(!design_has_mesh_body(&result.design));
         let notice = LossItem {
             severity: Severity::Info,
@@ -266,7 +322,7 @@ mod tests {
         };
         let out = apply_self_check(
             result,
-            crate::synth::plate(&spec, 24, [0.0; 3]),
+            &crate::synth::plate(&spec, 24, [0.0; 3]),
             "bracket.stl",
             &options,
             Some(notice.clone()),
@@ -277,13 +333,54 @@ mod tests {
         assert!(out.report.items.contains(&notice));
         // A passed or skipped check keeps the recognised design, and the notice.
         for check in [SelfCheck::Passed, SelfCheck::Unavailable] {
-            let result = import_mesh(crate::synth::plate(&spec, 24, [0.0; 3]), "bracket.stl", &options);
+            let result = import_mesh(&crate::synth::plate(&spec, 24, [0.0; 3]), "bracket.stl", &options);
             let out =
-                apply_self_check(result, crate::synth::plate(&spec, 24, [0.0; 3]), "bracket.stl", &options, Some(notice.clone()), &check);
+                apply_self_check(result, &crate::synth::plate(&spec, 24, [0.0; 3]), "bracket.stl", &options, Some(notice.clone()), &check);
             assert!(!design_has_mesh_body(&out.design));
             assert!(!out.report.items.iter().any(|i| i.code == "revmesh.selfcheck"));
             assert!(out.report.items.contains(&notice));
         }
+    }
+
+    #[test]
+    fn inch_files_are_converted_to_millimetres() {
+        use crate::recognize::{HoleSpec, PlateSpec};
+        let spec = PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 5.0,
+            holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 10.0, head: None, blind: None }],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            slots: vec![],
+            outline_fillet_r: None,
+            edge_fillet_r: None,
+        };
+        let mesh_mm = crate::synth::plate(&spec, 24, [0.0; 3]);
+        let mut mesh_in = mesh_mm.clone();
+        mesh_in.scale_in_place(1.0 / INCH_TO_MM);
+        convert_units(&mut mesh_in, Units::Inch).expect("in range");
+        let options = ImportOptions { units: Units::Inch, ..ImportOptions::default() };
+        let result = import_mesh(&mesh_in, "bracket.stl", &options);
+        let mm = import_mesh(&mesh_mm, "bracket.stl", &ImportOptions::default());
+        // The design is the same as the millimetre import's (parameters snap to a micrometre).
+        assert_eq!(result.design.to_json(), mm.design.to_json());
+        assert!(result.report.items.iter().any(|i| i.code == "revmesh.units"));
+        assert!(!mm.report.items.iter().any(|i| i.code == "revmesh.units"));
+    }
+
+    #[test]
+    fn inch_conversion_range_checks_the_scaled_coordinates() {
+        // 1e38 parses fine (below f32::MAX), but 25.4e38 does not survive the f32 write.
+        let mesh = Mesh { triangles: vec![[[0.0, 0.0, 0.0], [1.0e38, 0.0, 0.0], [0.0, 1.0, 0.0]]] };
+        assert!(matches!(convert_units(&mut mesh.clone(), Units::Mm), Ok(())));
+        assert_eq!(convert_units(&mut mesh.clone(), Units::Inch), Err(StlError::OutOfRange { triangle: 1 }));
+        let bytes = stl::write_binary(&mesh);
+        let err = import(&bytes, "big.stl", &ImportOptions { units: Units::Inch, ..ImportOptions::default() })
+            .expect_err("1e38 inches overflow the f32 range");
+        assert!(matches!(err, StlError::OutOfRange { triangle: 1 }), "{err}");
     }
 
     #[test]
@@ -304,7 +401,7 @@ mod tests {
         assert_eq!(result.report.summary, "Ein Netz aus 4 Dreiecken");
         assert_eq!(result.report.items[0].title, "Als Netz behalten");
         assert!(result.report.items[0].message.starts_with("Es wurden keine parametrischen Features erkannt: "));
-        let mesh = ImportOptions { mode: Mode::Mesh, locale: Locale::De };
+        let mesh = ImportOptions { mode: Mode::Mesh, locale: Locale::De, ..ImportOptions::default() };
         assert_eq!(import(TETRA, "tetra.stl", &mesh).expect("imports").report.summary, "Ein Netz aus 4 Dreiecken");
 
         let mut spec = PlateSpec {
@@ -685,7 +782,7 @@ mod tests {
         assert_eq!(String::from_utf8(streamed).expect("utf-8"), result.design.to_json());
 
         let mesh = Mesh::new(vec![[[0.1, 0.0, 0.0], [0.0, 0.2, 0.0], [0.0, 0.0, 0.3]]]);
-        let json = import_mesh(mesh, "t.stl", &ImportOptions { mode: Mode::Mesh, ..ImportOptions::default() }).design.to_json();
+        let json = import_mesh(&mesh, "t.stl", &ImportOptions { mode: Mode::Mesh, ..ImportOptions::default() }).design.to_json();
         assert!(json.contains(r#""positions":[0.1,0.0,0.0,0.0,0.2,0.0,0.0,0.0,0.3]"#), "{json}");
         assert!(json.contains(r#""triangles":[0,1,2]"#), "{json}");
     }

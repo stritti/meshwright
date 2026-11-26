@@ -17,9 +17,10 @@ pub(super) struct Faces {
     pub(super) caps: Vec<[Vec3; 3]>,
     /// The bottom corners of the walls.
     pub(super) rim: Vec<P2>,
-    /// The wall facets' edges that do not run along the top face, seen from above, with each
-    /// edge's middle and its full 3D length.
-    pub(super) chords: Vec<(P2, P2, Vec3, f64)>,
+    /// The wall facets' edges that do not run along the top face, seen from above, as the ends
+    /// `a`, `b`, the middle's height `mid_z` (its plan is the midpoint of `a` and `b`) and the
+    /// edge's full 3D length.
+    pub(super) chords: Vec<(P2, P2, f64, f64)>,
 }
 
 /// Sorts the triangles into the top face (returned in 2D, relative to `min`), the bottom face
@@ -47,9 +48,9 @@ pub(super) fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Resul
             let on_top = |v: Vec3| (v[2] - top_z).abs() <= tol;
             let (a, b) = (flat(&p), flat(&q));
             if !(on_top(p) && on_top(q)) && distance(a, b) > tol {
-                let middle = relative(&[f64::midpoint(p[0], q[0]), f64::midpoint(p[1], q[1]), f64::midpoint(p[2], q[2])]);
+                let mid_z = f64::midpoint(p[2], q[2]) - min[2];
                 let len = length(sub(q, p));
-                chords.push(if a < b { (a, b, middle, len) } else { (b, a, middle, len) });
+                chords.push(if a < b { (a, b, mid_z, len) } else { (b, a, mid_z, len) });
             }
         }
     };
@@ -110,7 +111,7 @@ pub(super) fn split_faces(mesh: &Mesh, min: Vec3, top_z: f64, tol: f64) -> Resul
             .then(p.0[1].total_cmp(&q.0[1]))
             .then(p.1[0].total_cmp(&q.1[0]))
             .then(p.1[1].total_cmp(&q.1[1]))
-            .then(p.2[2].total_cmp(&q.2[2]))
+            .then(p.2.total_cmp(&q.2))
             .then(p.3.total_cmp(&q.3))
     });
     chords.dedup();

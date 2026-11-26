@@ -38,7 +38,17 @@
                 "mesh"
               ],
               "default": "auto",
-              "description": "auto: recognise features and rebuild the part parametrically (facets become ideal faces; the report notes the deviation); the mesh is kept only where nothing is found. STL up to 8 MiB. mesh: keep the mesh exactly as it is. STL up to 32 MiB"
+              "description": "auto: recognise features and rebuild the part parametrically (facets become ideal faces; the report notes the deviation); the mesh is kept only where nothing is found. STL up to 16 MiB. mesh: keep the mesh exactly as it is. STL up to 32 MiB"
+            },
+            "units": {
+              "type": "string",
+              "title": "Units",
+              "enum": [
+                "mm",
+                "inch"
+              ],
+              "default": "mm",
+              "description": "STL is unitless and assumed to be mm; inch: the file is read as inches and converted to millimetres"
             }
           }
         }

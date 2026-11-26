@@ -59,6 +59,17 @@ impl Mesh {
         let Some([origin, ..]) = self.triangles.first() else { return 0.0 };
         self.triangles.iter().map(|[a, b, c]| dot(sub(*a, *origin), cross(sub(*b, *origin), sub(*c, *origin)))).sum::<f64>() / 6.0
     }
+
+    /// Multiplies every coordinate by `factor` in place (an inch STL read as millimetres).
+    pub fn scale_in_place(&mut self, factor: f64) {
+        for triangle in &mut self.triangles {
+            for point in triangle {
+                for value in point {
+                    *value *= factor;
+                }
+            }
+        }
+    }
 }
 
 /// `a - b`.

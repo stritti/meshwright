@@ -34,4 +34,4 @@ pub mod synth;
 pub mod version;
 
 pub use i18n::Locale;
-pub use import::{ImportOptions, ImportResult, import, import_mesh};
+pub use import::{ImportOptions, ImportResult, Units, convert_units, import, import_mesh};

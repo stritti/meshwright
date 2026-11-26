@@ -1,5 +1,5 @@
 use super::spec::{ArcSide, BossSpec, CutoutSpec, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec, SlotSpec};
-use super::{Axis, Recognition, recognize};
+use super::{Axis, Recognition, recognize, recognize_with};
 
 use crate::design::{Design, dimensioned_sides, fmt_number};
 use crate::mesh::Mesh;
@@ -855,6 +855,34 @@ fn x_extruded_plate_becomes_a_yz_profile() {
     assert_eq!(hole["direction"], serde_json::json!([-1.0, 0.0, 0.0]));
     assert_eq!(hole["at"], serde_json::json!(["extrude_0 + extrude_len", "hole_1_y", "hole_1_z"]));
     assert_eq!(hole["position"], serde_json::json!([71.0, 13.0, 12.0]));
+}
+
+/// A mesh above the rotation limit is not rotated for the X/Y attempts: a rotated attempt
+/// holds a second mesh copy plus the face/wall indexes and can exceed the plugin's memory
+/// budget, so an X-extruded plate that Z cannot read falls back instead of being recognised
+/// along X.
+#[test]
+fn oversized_mesh_skips_rotated_attempts() {
+    let spec = PlateSpec {
+        x: 40.0,
+        y: 20.0,
+        z: 60.0,
+        holes: vec![HoleSpec { x: 10.0, y: 5.0, d: 6.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        slots: vec![],
+        outline_fillet_r: None,
+        edge_fillet_r: None,
+    };
+    let mesh = Axis::X.unrotate_mesh(&synth::plate(&spec, 32, [3.0, 7.0, 11.0]));
+    // Within the limit the rotated attempt runs and finds the YZ profile.
+    let Recognition::Profile { axis, .. } = recognize_with(&mesh, usize::MAX) else { panic!("not a profile") };
+    assert_eq!(axis, Axis::X);
+    // Above the limit only Z is tried, so the part is not recognised along X.
+    let found = recognize_with(&mesh, 0);
+    assert!(!matches!(found, Recognition::Profile { axis: Axis::X, .. }), "rotated attempt ran: {found:?}");
 }
 
 /// A profile extruded along Y is sketched on the XZ plane (whose sketch y is -Z), extruded along

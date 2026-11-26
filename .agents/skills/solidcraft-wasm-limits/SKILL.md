@@ -74,9 +74,12 @@ For this skill:
    `CHUNK = 1 << 20`, flush with `design::write`, keep a host error in an `Option` because
    `io::Error` cannot carry a `PluginError`).
 2. **Check size before reading.** Use `source::FileInfo.size` (or `source::size("")`) and refuse
-   early with `limit-exceeded`/`invalid-input`. This repo uses 8 MiB in `auto` mode and 32 MiB in
-   `mesh` mode (`AUTO_MAX_BYTES`/`MESH_MAX_BYTES` in `lib.rs`): recognition builds face/wall
-   indexes and can hold a second mesh, so its ceiling is lower.
+   early with `limit-exceeded`/`invalid-input`. This repo uses 16 MiB in `auto` mode and 32 MiB
+   in `mesh` mode (`AUTO_MAX_BYTES`/`MESH_MAX_BYTES` in `lib.rs`): recognition builds face/wall
+   indexes on top of the mesh (~250 bytes per triangle in all, so 16 MiB peaks at ≈ 90 MiB), so
+   its ceiling is lower. A rotated X/Y attempt would hold a second mesh copy on top (up to
+   ~420 bytes per triangle peak on densely banded meshes), so `recognize` skips rotated
+   attempts above 200k triangles (`MAX_ROTATED_TRIANGLES`) and only tries Z then.
 3. **Progress and cancellation in every loop**: `control::progress(fraction, message)` and
    `if control::cancelled() { return Err(PluginError::Cancelled) }`.
 4. **Write coordinates as f32** in large designs; keep recognition tolerances explicit
