@@ -13,8 +13,9 @@
 //!
 //! In auto mode the recognised design is also checked in the app's own sandbox before it is
 //! written: the manifest requests the `evaluate@0.2` capability, the serialised design is staged
-//! and rebuilt there (`document.inspect`), and a design the app cannot open falls back to the
-//! mesh body with the reason in the loss report (roadmap 7.1).
+//! and `document.inspect` rebuilds it there, and a timeline feature that fails falls back to the
+//! mesh body with the reason in the loss report (roadmap 7.1; the policy itself lives in
+//! `revmesh_core::import::apply_self_check`).
 //!
 //! Every import also checks whether a newer release than this build is out and notes it in the
 //! loss report. The sandbox has no network, so the newest release cannot be asked for at import
@@ -36,10 +37,8 @@ wit_bindgen::generate!({ path: "wit", world: "importer-plugin" });
 use craft::plugin::types::{FieldFailure, PluginError};
 use craft::plugin::{control, design, evaluate, log, source};
 use exports::craft::plugin::importer::Guest;
-use revmesh_core::design::{Design, FeatureKind};
-use revmesh_core::import::{self, Mode};
+use revmesh_core::import::{self, Mode, SelfCheck};
 use revmesh_core::mesh::Mesh;
-use revmesh_core::report::{LossItem, Severity};
 use revmesh_core::stl::StlReader;
 use revmesh_core::{ImportOptions, Locale, import_mesh, version};
 
@@ -74,27 +73,16 @@ impl Guest for Importer {
         // auto mode the mesh is kept aside until the check is done.
         let fallback = (options.mode == Mode::Auto).then(|| mesh.clone());
         let mut result = import_mesh(mesh, &file.name, &options);
-        if let Some(notice) = update {
-            result.report.push(notice);
-        }
-        if let Some(mesh) = fallback.filter(|_| !has_mesh_body(&result.design)) {
+        if let Some(mesh) = fallback.filter(|_| !import::design_has_mesh_body(&result.design)) {
             control::progress(0.55, locale.text("progress.checking"));
             let mut staged = Vec::new();
-            if result.design.write_json(&mut staged).is_ok()
-                && let Some(Err(reason)) = self_check(&staged)
-            {
+            let check = result.design.write_json(&mut staged).ok().map_or(SelfCheck::Unavailable, |()| self_check(&staged));
+            if let SelfCheck::Failed(reason) = &check {
                 log::log(log::Level::Warn, &format!("the recognised design failed the app's rebuild check: {reason}"));
-                options.mode = Mode::Mesh;
-                let mut fallback_result = import_mesh(mesh, &file.name, &options);
-                fallback_result.report.push(LossItem {
-                    severity: Severity::Degraded,
-                    title: locale.text("report.selfcheck.title").into(),
-                    subject: import::body_name(&file.name),
-                    message: locale.format("report.selfcheck.message", &[("reason", &reason)]),
-                    code: "revmesh.selfcheck",
-                });
-                result = fallback_result;
             }
+            result = import::apply_self_check(result, mesh, &file.name, &options, update, &check);
+        } else if let Some(notice) = update {
+            result.report.push(notice);
         }
         control::progress(0.6, locale.text("progress.writing"));
         let mut out = HostWriter { buffer: Vec::with_capacity(CHUNK), error: None };
@@ -138,18 +126,12 @@ fn read_mesh(file: &source::FileInfo, max_bytes: u64, locale: Locale) -> Result<
     reader.finish().map_err(|e| invalid("file", e.message(locale)))
 }
 
-/// Whether the design is just a mesh body, with no recognised features to check.
-fn has_mesh_body(design: &Design) -> bool {
-    design.features.iter().any(|f| matches!(f.kind, FeatureKind::MeshImport { .. }))
-}
-
-/// Checks the serialised design in the app's private sandbox (capability `evaluate@0.2`): stages
-/// it in 1 MiB pieces and runs a read-only command on it, which opens the design and evaluates
-/// its history. `Some(Ok(()))` when the app rebuilt it, `Some(Err(reason))` when it did not — a
-/// failing command returns `{"error": "..."}`, and a design the app cannot open fails the call —
-/// and `None` when the capability is unavailable, so the check is skipped and the design written
-/// as it is.
-fn self_check(design_json: &[u8]) -> Option<Result<(), String>> {
+/// Stages the serialised design in the app's private sandbox (capability `evaluate@0.2`) in 1 MiB
+/// pieces, runs `document.inspect` on it — which opens the design and evaluates its history — and
+/// discards the session. What the reply says becomes the [`SelfCheck`]. A call error (a design the
+/// app cannot open, a reply over 1 MiB) is an error for that call only, so the design is then
+/// reported as unchecked rather than failed.
+fn self_check(design_json: &[u8]) -> SelfCheck {
     let mut staged = true;
     for chunk in design_json.chunks(CHUNK) {
         if let Err(error) = evaluate::stage(chunk) {
@@ -160,15 +142,17 @@ fn self_check(design_json: &[u8]) -> Option<Result<(), String>> {
     }
     if !staged {
         evaluate::reset();
-        return None;
+        return SelfCheck::Unavailable;
     }
     let outcome = evaluate::run("document.inspect", "{}");
     evaluate::reset();
-    Some(match outcome {
-        Ok(json) if json.trim_start().starts_with("{\"error\"") => Err(json),
-        Ok(_) => Ok(()),
-        Err(error) => Err(format!("the app could not open the design: {error:?}")),
-    })
+    match outcome {
+        Ok(reply) => SelfCheck::from_inspect_reply(&reply),
+        Err(error) => {
+            log::log(log::Level::Warn, &format!("the sandbox self-check could not run: {error:?}"));
+            SelfCheck::Unavailable
+        }
+    }
 }
 
 /// Buffers the serialised design and hands it to `design::write` 1 MiB at a time. A host error
