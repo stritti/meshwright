@@ -137,16 +137,29 @@ fn circle_from_3(a: P2, b: P2, c: P2) -> Option<(P2, f64)> {
 }
 
 /// The torus about a known axis, fitted to profile points `(radial, axial)`: about the axis a
-/// torus is a circle in the profile plane, so this is the least-squares circle through them, as
-/// centre (major radius, height of the centre circle) and radius (the round's) — roadmap 6.3,
-/// a round at a hole's rim or a boss's foot. `None` when there are fewer than three points or
-/// they do not lie on one circle: a circle through (nearly) coincident points is garbage, and a
-/// corner an exporter added within a facet lies inside it by up to that facet's sagitta.
+/// torus is a circle in the profile plane — roadmap 6.3, a round at a hole's rim or a boss's
+/// foot. The band's corners lie on it; a corner an exporter added within a facet lies inside it.
+/// So the fit runs on the distinct sample locations (the samples repeat around the axis) as a
+/// fixed-seed RANSAC circle (`ransac_circle`, as a rim loop's in 6.2) refined by the algebraic
+/// fit on its inliers, and every profile point must then lie on the result within one coarsest
+/// facet's sagitta. Returns centre (major radius, height of the centre circle) and radius (the
+/// round's); `None` when fewer than three distinct locations lie on one circle.
 pub(crate) fn fit_torus(profile: &[P2], tol: f64) -> Option<(P2, f64)> {
-    if profile.len() < 3 {
+    let mut distinct: Vec<P2> = Vec::with_capacity(profile.len());
+    for p in profile {
+        if distinct.iter().all(|q| distance(*q, *p) > tol) {
+            distinct.push(*p);
+        }
+    }
+    if distinct.len() < 3 {
         return None;
     }
-    let (c, f) = fit_circle(profile)?;
+    let (_, _, inliers) = ransac_circle(&distinct, tol)?;
+    if inliers.len() < 3 {
+        return None;
+    }
+    let on: Vec<P2> = inliers.iter().map(|&i| distinct[i]).collect();
+    let (c, f) = fit_circle(&on)?;
     let bound = f * (1.0 - (super::MAX_HOLE_STEP / 2.0).cos()) + tol;
     (f > tol && profile.iter().all(|p| ((p[0] - c[0]).hypot(p[1] - c[1]) - f).abs() <= bound)).then_some((c, f))
 }

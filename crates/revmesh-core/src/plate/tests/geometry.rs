@@ -46,4 +46,15 @@ fn fits_a_torus_profile_exactly() {
     assert!(fit_torus(&[[0.5, 0.5], [0.5, 0.5], [0.5, 0.5]], 1e-3).is_none());
     // Collinear points neither.
     assert!(fit_torus(&[[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]], 1e-3).is_none());
+    // A corner an exporter added within a facet lies inside the torus: the fit ignores it and
+    // the result is still exact.
+    let mut noisy = profile.clone();
+    let mid = [f64::midpoint(profile[1][0], profile[2][0]), f64::midpoint(profile[1][1], profile[2][1])];
+    noisy.push(mid);
+    let ([hr, d], r) = fit_torus(&noisy, 1e-3).expect("a torus through the on-circle corners");
+    assert!((hr - 11.0).abs() < 1e-9 && (d - f).abs() < 1e-9 && (r - f).abs() < 1e-9);
+    // Only two distinct interior band locations (a round in three 30° bands): no circle, so
+    // the caller falls back to the per-corner formula.
+    let two = [[10.5, 0.134], [10.5, 0.134], [10.134, 0.5], [10.134, 0.5]];
+    assert!(fit_torus(&two, 1e-3).is_none());
 }

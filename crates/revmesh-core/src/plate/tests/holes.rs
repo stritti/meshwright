@@ -611,3 +611,20 @@ fn two_band_rounded_hole_rims() {
     let (plate, _) = super::found(&rim_plate(&profile, 32));
     assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.0, bottom: false }));
 }
+
+/// A rounded rim in three 30° bands: only two distinct interior locations in the profile
+/// plane, so the torus fit gives up and the per-corner quarter-circle fallback recovers the
+/// radius exactly (roadmap 6.3).
+#[test]
+fn three_band_rounded_hole_rims() {
+    let f = 1.5;
+    let profile: Vec<(f64, f64)> = [0.0, 30.0_f64, 60.0, 90.0]
+        .iter()
+        .map(|deg| {
+            let a = deg.to_radians();
+            (10.0 + f - f * a.sin(), 8.0 - f + f * a.cos())
+        })
+        .collect();
+    let (plate, _) = super::found(&rim_plate(&profile, 32));
+    assert_eq!(plate.holes[0].head, Some(crate::recognize::HoleHead::Round { r: 1.5, bottom: false }));
+}
