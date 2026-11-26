@@ -1,8 +1,9 @@
 # Use
 
-1. On the **Model** ribbon tab, click the label of the **Plugins** group to open the Plugins
-   menu, and choose **revmesh › stl**. SolidCraft's own *File › Open* keeps using its built-in
-   mesh import for `.stl`, so revmesh is reached through the Plugins menu.
+1. On the **Insert** ribbon tab, the plugin has its own **revmesh** group with the **stl** button
+   (the same entry is in the Plugins menu: **Model** tab › **Plugins** group label › **revmesh ›
+   stl**). SolidCraft's own *File › Open* keeps using its built-in mesh import for `.stl`, so
+   revmesh is reached through the Insert tab or the Plugins menu.
 2. The dialog offers **Import as**: `auto` (recognise features and rebuild the part
    parametrically — facets become ideal faces, the import report notes the deviation; the mesh is
    kept only where nothing is found; STL up to 8 MiB; the default) or `mesh` (keep the mesh
