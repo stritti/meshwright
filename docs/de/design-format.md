@@ -45,7 +45,7 @@ zu Features (Skizzen-Bemaßungen) und werden von einem Ausdruck getrieben.
 | `cylinder` | `base` (drei Ausdrücke: Mittelpunkt der Grundfläche), `axis: [0, 0, 1]`, `radius`, `height`, `operation: "join"` | SolidCrafts eigener Zylinder-Primitive speichert `radius` als `"(10 mm) / 2"`, wenn man ihm einen Durchmesser gibt; revmesh schreibt `"boss_<n>_d / 2"`. |
 | `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (drei Ausdrücke) | Verschiebt den ganzen Body; spätere Features nutzen Weltkoordinaten. Die Flächennamen der Extrusion (`F2:side:l1`) bleiben danach gültig. |
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` oder `{"type": "circular", origin: [3 Ausdrücke], axis, count, angle: "360 deg"}` | Anzahlen inklusive des Originals und Ausdrücke; ein als Anzahl genutzter Parameter darf keine Einheit haben (`"unit": ""`), SolidCraft verweigert eine Länge. Richtungen und die Achse sind Zahlen. |
-| `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flache `x,y,z`-Positionen und flache Ecken-Indizes; `body_names` listet die Bodies. |
+| `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flache `x,y,z`-Positionen und flache Ecken-Indizes; `body_names` listet die Bodies. Eine Position ist eine einfachgenaue Zahl, wenn sie den Roundtrip übersteht (die Präzision des STL selbst, damit die Datei klein bleibt), sonst eine doppeltgenaue — Teile weit vom Ursprung behalten so ihre Präzision. |
 
 ## Ebenen
 

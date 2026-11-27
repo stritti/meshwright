@@ -136,9 +136,12 @@
       `block-60x40x6.obj`, `block-60x40x6.ply` und `block-60x40x6-bin.ply` importieren den
       STL-Block unverändert, `obj-bad.obj`/`ply-bad.ply` decken die Fehlerfälle ab) OBJ- und
       PLY-Eingabe neben STL
-   3. doppeltgenaue Koordinaten in Mesh-Bodies jenseits des einfachgenauen Bereichs (die Konstruktion
-      wird heute mit `f32`-Koordinaten geschrieben, `design/mod.rs`) — Teile weit vom Ursprung verlieren
-      im Netz-Fallback an Präzision
+   3. (erledigt: der `Positions`-Serializer von `MeshData` in `crates/revmesh-core/src/design/mod.rs`
+      schreibt eine Koordinate als `f32`, wenn sie den Roundtrip übersteht — die Präzision, in der STL
+      sie speichert — und sonst als `f64`, sodass Teile weit vom Ursprung im Netz-Fallback ihre
+      Präzision behalten) doppeltgenaue Koordinaten in Mesh-Bodies jenseits des einfachgenauen
+      Bereichs (die Konstruktion wird heute mit `f32`-Koordinaten geschrieben, `design/mod.rs`) —
+      Teile weit vom Ursprung verlieren im Netz-Fallback an Präzision
    4. eine höhere Erkennungsgrenze (heute ≈ 335.000 Dreiecke ≈ 16 MiB binäres STL,
       `MAX_RECOGNITION_TRIANGLES` in `revmesh-core`), indem
       die Indexe, die die Erkennung über Flächen und Wände baut, schlanker werden
