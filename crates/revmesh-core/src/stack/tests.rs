@@ -426,3 +426,54 @@ fn a_tessellated_chamfer_is_still_recognised() {
     assert_eq!(found.bands[1].chamfer, Some(Chamfer { w: 2.0, h: 2.0 }));
     assert!((found.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", found.volume(), mesh.volume());
 }
+
+/// Many distinct slanted planes (a finely tessellated curved surface) are refused at a cap
+/// instead of being grouped one by one — the grouping stays linear in the facet count (review
+/// finding on roadmap 3.12).
+#[test]
+fn too_many_slanted_planes_are_no_stack() {
+    let outline = [[15.0, 10.0], [45.0, 10.0], [45.0, 30.0], [15.0, 30.0]];
+    let mut mesh = chamfered_stack(60.0, 40.0, 10.0, &outline, 10.0, Chamfer { w: 2.0, h: 2.0 });
+    // 300 stray slanted triangles fanned around a point, each in its own plane.
+    for k in 0..300 {
+        let a = f64::from(k) * std::f64::consts::TAU / 300.0;
+        mesh.triangles.push([[30.0, 20.0, 20.0], [30.0 + a.cos(), 20.0 + a.sin(), 19.0], [30.0 - a.sin(), 20.0 + a.cos(), 19.0]]);
+    }
+    let err = recognize_stack(&mesh).expect_err("too many slanted planes");
+    assert!(err.contains("more than 256 slanted faces"), "{err}");
+}
+
+/// An asymmetric chamfer on a stack along X or Y: at an edge whose side face points up in world
+/// space that side is the up-most face, so its chamfer feature swaps `distance` and
+/// `distance2` (review finding on roadmap 3.12).
+#[test]
+fn an_asymmetric_chamfer_along_x_swaps_the_distances() {
+    let outline = [[15.0, 10.0], [45.0, 10.0], [45.0, 30.0], [15.0, 30.0]];
+    let mesh = chamfered_stack(60.0, 40.0, 10.0, &outline, 10.0, Chamfer { w: 3.0, h: 2.0 });
+    let lying = Axis::X.unrotate_mesh(&mesh);
+    let (spec, frame_at) = recognize_stack(&Axis::X.rotate_mesh(&lying)).expect("a stack along X");
+    assert_eq!(spec.bands[1].chamfer, Some(Chamfer { w: 3.0, h: 2.0 }));
+    let json: serde_json::Value =
+        serde_json::from_str(&spec.to_design_on("", Axis::X.unrotate(frame_at), Axis::X).to_json()).expect("json");
+    let chamfers: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "chamfer").collect();
+    assert_eq!(chamfers.len(), 2, "{chamfers:?}");
+    let c1 = chamfers.iter().find(|c| c["name"] == "Chamfer1").expect("Chamfer1");
+    assert_eq!(c1["distance"], "chamfer_w");
+    assert_eq!(c1["distance2"], "chamfer_h");
+    assert_eq!(c1["edge_names"].as_array().expect("names").len(), 3);
+    let c2 = chamfers.iter().find(|c| c["name"] == "Chamfer2").expect("Chamfer2");
+    assert_eq!(c2["distance"], "chamfer_h");
+    assert_eq!(c2["distance2"], "chamfer_w");
+    assert_eq!(c2["edge_names"].as_array().expect("names").len(), 1);
+    // A Z stack keeps one Chamfer1 with the extrusion's top face first.
+    let (spec_z, at_z) = recognize_stack(&mesh).expect("a stack along Z");
+    let json: serde_json::Value = serde_json::from_str(&spec_z.to_design_on("", at_z, Axis::Z).to_json()).expect("json");
+    let chamfers: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "chamfer").collect();
+    assert_eq!(chamfers.len(), 1);
+    assert_eq!(chamfers[0]["name"], "Chamfer1");
+    assert_eq!(chamfers[0]["distance"], "chamfer_w");
+    assert_eq!(chamfers[0]["distance2"], "chamfer_h");
+    assert_eq!(chamfers[0]["edge_names"].as_array().expect("names").len(), 4);
+}

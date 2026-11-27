@@ -120,8 +120,10 @@ turned, along Y; `extrude_z1_len = 15` rebuilds to 46,296 mm³, the bands above 
 When the top band's top edges all carry one chamfer (a bevel, or a roof when the chamfers meet),
 the design writes one `chamfer` feature after the `move`: its `edge_names` are the top band's
 extrusion's `F<id>:side:l<i>|F<id>:top` for every side `i`, its `edges` the sides' middles on the
-top, and its `distance` runs along the top face (in from the edge) with `distance2` down the
-side when the two differ — driven by `chamfer` (a 45° one) or `chamfer_w`/`chamfer_h`.
+top, and its `distance` runs along the face facing up most with `distance2` along the other when
+the two differ — along the top face (in from the edge) on a Z stack; on an X or Y stack the edges
+whose side face points up get a second `chamfer` feature with the two distances swapped. Driven
+by `chamfer` (a 45° one) or `chamfer_w`/`chamfer_h`.
 
 ## Cut-outs
 

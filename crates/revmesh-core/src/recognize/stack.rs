@@ -145,16 +145,16 @@ impl StackSpec {
         }
         // The top band's chamfer (roadmap 3.12); a 45° one keeps mesh2cad's single parameter.
         let chamfer = self.bands.last().and_then(|band| band.chamfer);
-        let (distance, distance2) = match chamfer {
+        let (w_expr, h_expr) = match chamfer {
             Some(c) if (c.w - c.h).abs() < 1e-9 => {
                 b.param(Param::user("chamfer", snap_mm(c.w)));
-                ("chamfer".to_owned(), None)
+                ("chamfer".to_owned(), "chamfer".to_owned())
             }
             Some(c) => {
                 b.param(Param::user("chamfer_w", snap_mm(c.w))).param(Param::user("chamfer_h", snap_mm(c.h)));
-                ("chamfer_w".to_owned(), Some("chamfer_h".to_owned()))
+                ("chamfer_w".to_owned(), "chamfer_h".to_owned())
             }
-            None => (String::new(), None),
+            None => (String::new(), String::new()),
         };
         // The openings are numbered across the bands, in design order.
         let mut cutout_n = 0;
@@ -205,20 +205,47 @@ impl StackSpec {
         translate[axis.index()] = format!("extrude_{a}1_0");
         b.feature("Move1", vec![], FeatureKind::Move { bodies: vec!["Body1".into()], translate });
         if let Some(top) = self.bands.last().filter(|band| band.chamfer.is_some()) {
-            // The chamfer of the top band's top edges (roadmap 3.12): one edge per side of its
-            // outline, picked at the side's middle on the top, named after the extrusion's side
-            // and top faces. The first distance runs along the top face (in from the edge),
-            // the second down the side.
-            let m = top.outline.len();
-            let edge_names: Vec<String> = (1..=m).map(|i| format!("F{top_extrude}:side:l{i}|F{top_extrude}:top")).collect();
-            let edges: Vec<Vec3> = (0..m)
-                .map(|i| {
-                    let (a, b) = (top.outline[i], top.outline[(i + 1) % m]);
-                    axis.world(at, f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), top.to)
-                })
-                .collect();
-            b.feature("Chamfer1", vec![], FeatureKind::Chamfer { edge_names, edges, distance, distance2 });
+            chamfer_features(&mut b, axis, at, top, top_extrude, &w_expr, &h_expr);
         }
         b.build()
+    }
+}
+
+/// The chamfer features of the top band's top edges (roadmap 3.12): one edge per side of its
+/// outline, picked at the side's middle on the top, named after the extrusion's side and top
+/// faces. The first distance runs along the face facing up most — the extrusion's top on a Z
+/// stack, but a side facing up on an X or Y stack, where the two distances swap.
+fn chamfer_features(b: &mut DesignBuilder, axis: Axis, at: Vec3, top: &Band, top_extrude: u32, w_expr: &str, h_expr: &str) {
+    let m = top.outline.len();
+    let top_up = axis.dir()[2];
+    let mut top_first: (Vec<String>, Vec<Vec3>) = (Vec::new(), Vec::new());
+    let mut side_first: (Vec<String>, Vec<Vec3>) = (Vec::new(), Vec::new());
+    for i in 0..m {
+        let (a, b) = (top.outline[i], top.outline[(i + 1) % m]);
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let len = d[0].hypot(d[1]);
+        let side_up = axis.unrotate([d[1] / len, -d[0] / len, 0.0])[2];
+        let name = format!("F{top_extrude}:side:l{}|F{top_extrude}:top", i + 1);
+        let point = axis.world(at, f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), top.to);
+        if side_up > top_up {
+            side_first.0.push(name);
+            side_first.1.push(point);
+        } else {
+            top_first.0.push(name);
+            top_first.1.push(point);
+        }
+    }
+    let symmetric = w_expr == h_expr;
+    let mut n = 0;
+    for (names, points, first, second) in [
+        (top_first.0, top_first.1, w_expr.to_owned(), h_expr.to_owned()),
+        (side_first.0, side_first.1, h_expr.to_owned(), w_expr.to_owned()),
+    ] {
+        if names.is_empty() {
+            continue;
+        }
+        n += 1;
+        let distance2 = if symmetric { None } else { Some(second) };
+        b.feature(format!("Chamfer{n}"), vec![], FeatureKind::Chamfer { edge_names: names, edges: points, distance: first, distance2 });
     }
 }

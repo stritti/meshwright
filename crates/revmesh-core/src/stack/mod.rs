@@ -34,6 +34,11 @@ const SIDE_COS: f64 = 0.9999;
 /// At most this many facets (each band's section is cut from all of them).
 const MAX_FACETS: usize = 100_000;
 
+/// At most this many distinct slanted planes: a chamfer has one per top edge, and a mesh with
+/// more of them (a finely tessellated curved surface) is no stack — refusing at the cap keeps
+/// the grouping linear instead of comparing every facet with every plane.
+const MAX_SLANTED_PLANES: usize = 256;
+
 const NOT_STACK: &str = "it is no stack of extrusions";
 
 /// A facet: its corners and its unit normal.
@@ -63,7 +68,7 @@ pub(crate) fn recognize_stack(mesh: &Mesh) -> Result<(StackSpec, Vec3), String> 
     // built). Facets of one plane count as one face, however finely an exporter tessellated it,
     // so a chamfer split into rows of triangles still reaches the top as a whole.
     let slanted: Vec<Facet> = facets.iter().filter(|(_, n)| !level(n) && n[2].abs() > PARALLEL).copied().collect();
-    let slanted = plane_groups(&slanted, tol);
+    let slanted = plane_groups(&slanted, tol)?;
     if slanted.iter().any(|g| g.zmax < size[2] - tol) {
         return Err(format!("{NOT_STACK}: a slanted face lies below its top"));
     }
@@ -176,22 +181,25 @@ struct SlantedPlane {
     zmax: f64,
 }
 
-/// Groups `facets` by the plane they lie in: same unit normal and same offset `n . p`.
-fn plane_groups(facets: &[Facet], tol: f64) -> Vec<SlantedPlane> {
+/// Groups `facets` by the plane they lie in: same unit normal and same offset `n . p`. Refuses
+/// a mesh with more than [`MAX_SLANTED_PLANES`] distinct planes.
+fn plane_groups(facets: &[Facet], tol: f64) -> Result<Vec<SlantedPlane>, String> {
     let mut groups: Vec<SlantedPlane> = Vec::new();
     for &(t, n) in facets {
         let offset = dot(n, t[0]);
         let (zmin, zmax) = t.iter().map(|p| p[2]).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), z| (lo.min(z), hi.max(z)));
-        match groups.iter_mut().find(|g| length(sub(g.n, n)) <= PARALLEL && (g.offset - offset).abs() <= tol) {
-            Some(g) => {
-                g.facets.push((t, n));
-                g.zmin = g.zmin.min(zmin);
-                g.zmax = g.zmax.max(zmax);
+        if let Some(g) = groups.iter_mut().find(|g| length(sub(g.n, n)) <= PARALLEL && (g.offset - offset).abs() <= tol) {
+            g.facets.push((t, n));
+            g.zmin = g.zmin.min(zmin);
+            g.zmax = g.zmax.max(zmax);
+        } else {
+            if groups.len() >= MAX_SLANTED_PLANES {
+                return Err(format!("{NOT_STACK}: it has more than {MAX_SLANTED_PLANES} slanted faces"));
             }
-            None => groups.push(SlantedPlane { n, offset, facets: vec![(t, n)], zmin, zmax }),
+            groups.push(SlantedPlane { n, offset, facets: vec![(t, n)], zmin, zmax });
         }
     }
-    groups
+    Ok(groups)
 }
 
 /// Recognise the slanted `planes` as one chamfer of all the top band's top edges (roadmap 3.12: a

@@ -121,9 +121,11 @@ und, gedreht, entlang Y neu; `extrude_z1_len = 15` baut auf 46.296 mm³, die Bä
 Trägt die Oberkante des obersten Bandes an allen seinen Kanten eine Fase (eine Fase, oder ein Dach, wenn
 die Fasen sich treffen), schreibt die Konstruktion nach dem `move` ein `chamfer`-Feature: seine
 `edge_names` sind für jede Seite `i` `F<id>:side:l<i>|F<id>:top` der Extrusion des obersten Bands, seine
-`edges` die Seitenmitten auf der Oberseite, und `distance` läuft entlang der Oberseite (von der Kante
-hinein), mit `distance2` an der Seite hinab, wenn beide verschieden sind — getrieben von `chamfer`
-(45°) oder `chamfer_w`/`chamfer_h`.
+`edges` die Seitenmitten auf der Oberseite, und `distance` läuft entlang der am höchsten zeigenden
+Fläche, mit `distance2` entlang der anderen, wenn beide verschieden sind — entlang der Oberseite
+(von der Kante hinein) bei einem Stapel entlang Z; bei einem Stapel entlang X oder Y bekommen die
+Kanten, deren Seitenfläche nach oben zeigt, ein zweites `chamfer`-Feature mit vertauschten
+Distanzen. Getrieben von `chamfer` (45°) oder `chamfer_w`/`chamfer_h`.
 
 ## Ausschnitte
 
