@@ -92,7 +92,7 @@
       the proper rotation `Frame` taking that axis to +Z; when no principal axis fits,
       `recognize` runs the Z pipeline in that frame and returns
       `Recognition::Slanted { prism, frame, offset }`.
-      Recognition-side only: SolidCraft 0.50.0's origin-plane sketches and translate-only moves
+      Recognition-side only: SolidCraft 0.51.1's origin-plane sketches and translate-only moves
       cannot place a slanted prism at the pinned version, so the import keeps the mesh and
       reports what was recognised (`revmesh.slanted`); writing it parametrically needs
       construction planes or a newer pin)

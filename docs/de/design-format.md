@@ -2,12 +2,12 @@
 
 SolidCrafts Dokumentenformat ist intern und hat kein veröffentlichtes Schema. Diese Seite hält fest, worauf
 revmesh sich verlässt, gelernt aus Konstruktionen, die SolidCraft als JSON gespeichert hat (verifiziert gegen
-0.50.0) und aus handgeschriebenen Dateien, die darin geöffnet wurden. Prüfe es mit jedem SolidCraft-Release
+0.51.1) und aus handgeschriebenen Dateien, die darin geöffnet wurden. Prüfe es mit jedem SolidCraft-Release
 erneut.
 
 ## Version
 
-`"format": "solidcraft/63"`. SolidCraft 0.50.0 aktualisiert ältere Versionen beim Öffnen einer Datei (es
+`"format": "solidcraft/63"`. SolidCraft 0.51.1 aktualisiert ältere Versionen beim Öffnen einer Datei (es
 speichert `solidcraft/68`), daher ist das Schreiben einer festen Version sicher, solange SolidCraft sie noch
 liest.
 
@@ -68,7 +68,7 @@ treibender Seite, getrieben von `outline_<a>_<i>_len` (`<a>` der Achsen-Buchstab
 längsten schrägen Seite, getrieben von `outline_<a>_<i>_angle`, sodass ein kombiniertes Teil in SolidCraft
 ebenso Seite für Seite neu bemaßt und neu gewinkelt wird. Die erste Extrusion erzeugt den Body
 (`operation: "new_body"`), jede weitere hat `operation: "intersect"` ohne `body_names` und ohne Ziele:
-SolidCraft schneidet den bestehenden Body, koinzidente Flächen eingeschlossen, wie `solidcraft-cli 0.50.0`
+SolidCraft schneidet den bestehenden Body, koinzidente Flächen eingeschlossen, wie `solidcraft-cli 0.51.1`
 ihn baut. Ein `move` bringt den Body dann dorthin, wo er ist, seine Translation entlang der Achse jeder
 Kontur `extrude_<a>_0`. Ändert man `extrude_x_len` von 60 auf 50 bei `plugin/revmesh/tests/combined.stl`,
 baut es auf 32.500 mm³ neu, wie gerechnet, und `extrude_z_0 = 10` hebt das Teil um 10 mm an.
@@ -114,7 +114,7 @@ wie die Kontur einer Platte bemaßt: eine `Length` pro treibender Seite seiner K
 `outline_<k>_<i>_len`, und eine `Angle` an ihrer längsten schrägen Seite, getrieben von
 `outline_<k>_<i>_angle` (Öffnungen durch das Band mit `cutout_<n>_<i>_len`/`_angle`, über die Bänder
 nummeriert). SolidCraft fusioniert Bänder, die sich Fläche an Fläche treffen, zu einem Body
-(`solidcraft-cli 0.50.0`); mesh2cad überlappt sie um 0.02 mm für OpenCascades Fuse, was SolidCraft nicht
+(`solidcraft-cli 0.51.1`); mesh2cad überlappt sie um 0.02 mm für OpenCascades Fuse, was SolidCraft nicht
 braucht. `plugin/revmesh/tests/stack.stl` (eine Basis, ein L und ein Rhombus) baut auf 34.296 mm³ entlang Z
 und, gedreht, entlang Y neu; `extrude_z1_len = 15` baut auf 46.296 mm³, die Bänder darüber um 5 mm angehoben.
 
@@ -172,7 +172,7 @@ Oberseite der Platte und der Seite des Zylinders: `edge_names: ["F<extrude>:top|
 nennt diese Kante `F1:+z|F2:side` bei einem Box-Primitiv), Radius `boss_<n>_fillet`. Im Netz verbreitert die
 Verrundung die Standfläche des Zapfens in der Oberseite um ihren Radius; sie muss in Schritten von höchstens
 50° ihres Viertelskreises gemeesht sein (in einem Schritt ist sie eine 45°-Fase, die genauso aussieht).
-`boss-fillet.stl` (exportiert von SolidCraft 0.50: eine 70 x 40 x 6 Platte mit einem Ø10 x 8 Zapfen, dessen Fuß
+`boss-fillet.stl` (exportiert von SolidCraft 0.51: eine 70 x 40 x 6 Platte mit einem Ø10 x 8 Zapfen, dessen Fuß
 mit 2 mm verrundet ist, einem Ø8 x 5 Zapfen und einer Ø4-Bohrung) importiert auf 17.633.625 mm³, das Volumen, das
 SolidCraft für das exportierte Teil gemessen hat (die Verrundung addiert `2π (f² (r + f/2) − π f²/4 (r + f) +
 f³/3)`); mit `boss_1_fillet = 3`, `boss_1_d = 12`, `boss_1_x = 22` und `base_t = 8` baut es fehlerfrei auf
@@ -186,7 +186,7 @@ zwischen der Fläche und ihrer Bohrung: `edge_names: ["F<extrude>:top|F<hole>:bo
 `hole_<n>_bot_rim_r`, wie mesh2cad sie nennt. Im Netz ist die Mündung um den Radius der Verrundung breiter als
 die Bohrung und genauso tief, wie eine 90°-Kegelsenkung; sie ist eine Verrundung, wenn ihre Ecken zwischen Fläche
 und Bohrung auf dem Viertelskreis liegen (eine Verrundung in einem Schritt bleibt die Kegelsenkung, als die sie
-aussieht). `hole-rims.stl` (exportiert von SolidCraft 0.50: eine 70 x 40 x 8 Platte mit einer Ø8-Bohrung, deren
+aussieht). `hole-rims.stl` (exportiert von SolidCraft 0.51: eine 70 x 40 x 8 Platte mit einer Ø8-Bohrung, deren
 oberer Rand mit 1.5 mm verrundet ist, und einer Ø6-Bohrung, deren unterer Rand mit 1 mm verrundet ist)
 importiert auf 21.754.183 mm³, das Volumen, das SolidCraft für das exportierte Teil gemessen hat; mit
 `hole_1_rim_r = 2`, `hole_1_d = 9`, `hole_2_bot_rim_r = 1.5`, `hole_2_x = 52` und `base_t = 10` baut es
@@ -203,7 +203,7 @@ liegenden Fläche, der Oberseite: `boss_<n>_chamfer_w` von der Seite hinein, `di
 an ihr hinab; eine 45°-Fase ist eine einzige `boss_<n>_chamfer`, wie mesh2cad sie schreibt. Im Netz ist die
 Oberseite eines solchen Zapfens schmaler als seine Standfläche; seine Wand wird gegen das Profil jeder Art der
 Reihe nach geprüft (eine Verrundung am Fuß, ein gerader Kegel, ein Zylinder und dann die Fase), jede Ecke und jede
-Kantenmitte auf ihr rund um die Achse. `boss-draft-chamfer.stl` (exportiert von SolidCraft 0.50: eine
+Kantenmitte auf ihr rund um die Achse. `boss-draft-chamfer.stl` (exportiert von SolidCraft 0.51: eine
 70 x 40 x 6 Platte mit einem Ø12 x 8 Zapfen mit 5° Formschräge, einem Ø10 x 6 Zapfen, dessen Oberkante mit
 1 mm gefast ist, und einer Ø4-Bohrung) importiert auf 17.984.519 mm³, das Volumen, das SolidCraft für das
 exportierte Teil gemessen hat; mit `boss_1_draft_deg = 8`, `boss_1_h = 7`, `boss_2_chamfer = 1.5`, `boss_2_d = 11`
@@ -280,7 +280,7 @@ Extrusion) und `F2:start` (auf der Skizzen-Ebene), daher nennt eine rundum verru
 ## Verifiziert
 
 `crates/revmesh-core/tests/data/plate-with-hole.json` (geschrieben von `PlateSpec::to_design`) öffnete in
-SolidCraft 0.50.0 fehlerfrei: Volumen 16.452.05 mm³, von Hand gerechnet (70 × 40 × 6 abzüglich einer 8 mm
+SolidCraft 0.51.1 fehlerfrei: Volumen 16.452.05 mm³, von Hand gerechnet (70 × 40 × 6 abzüglich einer 8 mm
 Bohrung abzüglich vier 3 mm Ecken-Verrundungen). `base_x = 100`, `hole_1_x = 50` und `hole_1_d = 12` bauen
 auf 23.275.06 mm³ neu, ebenfalls wie gerechnet, ohne Warnungen.
 
@@ -302,13 +302,13 @@ eine `equal`-Bedingung einen Radius, nur die erste treibt ihren `Diameter`. Die 
 `Length`-Bedingungen — außer der einer Bogen-Seite gegenüberliegenden Seite, die tangential an beide Nachbarn in
 einem vierseitigen Ring stößt (eine halbrunde Seite an einem Rechteck): Die Tangenten machen ihre Länge zum
 Durchmesser des Bogens, daher ist sie abgeleitet. Das L-Winkelstück aus `plugin/revmesh/tests/l-bracket.stl`
-importiert in `solidcraft-cli 0.50.0` auf 6.118.29 mm³, wie gerechnet; `outline_fillet_r = 4`, `hole_1_d = 8`,
+importiert in `solidcraft-cli 0.51.1` auf 6.118.29 mm³, wie gerechnet; `outline_fillet_r = 4`, `hole_1_d = 8`,
 `hole_2_x = 50` und `base_z = 8` bauen jede Feature fehlerfrei auf 9.461.81 mm³ neu, ebenfalls wie gerechnet.
 
 Da revmesh ein Teil dort lässt, wo es in der Datei ist, bleiben Skizze und Extrusion am Ursprung und ein
 `move`-Feature direkt nach der Extrusion bringt den Body dorthin: bei einer rechteckigen Platte um
 `[base_cx - base_x / 2, base_cy - base_y / 2, base_z0]`, bei einer Kontur um ihre Ecke und `extrude_0`.
-Bohrungen und Verrundungs-Picks sind in Weltkoordinaten. In `solidcraft-cli 0.50.0` baut `plate-holes.stl` mit
+Bohrungen und Verrundungs-Picks sind in Weltkoordinaten. In `solidcraft-cli 0.51.1` baut `plate-holes.stl` mit
 `base_cx = 50`, `base_x = 90`, `base_z0 = 5`, `fillet_r = 5` und `hole_2_x = 70` fehlerfrei und ohne Warnungen auf
 20.978.79 mm³ neu, und das L-Winkelstück (in der Datei bei (20, 10)) mit `extrude_0 = 4`, `extrude_len = 8` und
 `outline_fillet_r = 4` auf 9.706.85 mm³, beides wie gerechnet.
@@ -318,7 +318,7 @@ eines Reihen-Musters ist ein Zahlenvektor, kein Ausdruck, daher wird eine Reihe 
 X oder Y verläuft, als einzelne `hole`-Features geschrieben. Die erste
 Bohrung eines Lochkreises liegt bei `[cx + r * cos(angle), cy + r * sin(angle), top]` als Ausdrücke und der
 Ursprung ihres Musters bei `[cx, cy, 0]`. `plate-patterns.stl` (ein 2 x 2 Gitter, eine Reihe aus drei, ein
-Lochkreis aus sechs um eine einzelne Bohrung) importiert in `solidcraft-cli 0.50.0` auf 55.995.49 mm³, wie
+Lochkreis aus sechs um eine einzelne Bohrung) importiert in `solidcraft-cli 0.51.1` auf 55.995.49 mm³, wie
 gerechnet; mit `hole_grid_1_nx = 3`, `hole_grid_1_pitch_x = 50`, `hole_row_1_n = 4`, `hole_circle_1_n = 8`,
 `hole_circle_1_r = 18` und `hole_circle_1_angle = 0` baut es fehlerfrei und ohne Warnungen auf 55.566.66 mm³ mit
 fünf weiteren Bohrungen neu, ebenfalls wie gerechnet.
@@ -337,7 +337,7 @@ flachem Boden. Mit `hole_1_d = 7`, `hole_1_depth = 6`, `hole_3_x = 40`, `hole_3_
 
 In einer polygonalen Kontur kommt die Verrundung vor die Bohrungen: Die Verrundung einer Innenecke fügt Material
 hinzu, und eine davor gebohrte Bohrung würde Leere bohren. `l-inside-hole.stl` (5 mm Ecken, eine 0.4 mm Bohrung
-bei (16, 16) in diesem Material) baut in `solidcraft-cli 0.50.0` auf 6.267.07 mm³ neu, wie gerechnet, mit
+bei (16, 16) in diesem Material) baut in `solidcraft-cli 0.51.1` auf 6.267.07 mm³ neu, wie gerechnet, mit
 7 zylindrischen Flächen (sechs Verrundungen und die Bohrung) und ohne Feature-Fehler. Die Historie des Rechtecks
 behält ihre verifizierte Reihenfolge (Bohrungen, dann Verrundung): Seine Ecken sind alles Außenecken, die nur
 Material wegnehmen.

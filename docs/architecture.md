@@ -40,7 +40,7 @@ crates/
     src/import.rs      the whole pipeline, and the import options
     tests/data/        fixtures and golden designs
   revmesh-plugin/   the component: craft:plugin@0.2.0, importer-plugin world
-    wit/plugin.wit     vendored from SolidCraft v0.50.0
+    wit/plugin.wit     vendored from SolidCraft v0.51.1
 plugin/revmesh/     the package: plugin.json, icons/ (the SVG SolidCraft shows in its Plugins menu), the built .wasm, SolidCraft test cases
 xtask/                 component wrapping, packaging, plugin tests
 ```
@@ -93,7 +93,7 @@ index-based face storage); a larger mesh is kept as it is. A rotated X/Y recogni
 face/wall indexes on top of the original (measured up to ~420 bytes per triangle peak on a
 densely banded mesh — 133 MiB at 333k triangles), so `recognize` only tries Z above 200,000
 triangles and a larger part lying along X or Y falls back to a mesh body instead of trapping the
-component. Measured with SolidCraft 0.50: a 1.5 million triangle STL (75 MB) imports
+component. Measured with SolidCraft 0.51: a 1.5 million triangle STL (75 MB) imports
 as a mesh in about 8 s; 2 million triangles exceed 128 MiB (before streaming, 600,000 already
 did).
 

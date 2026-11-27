@@ -17,7 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
   # The SolidCraft release whose plugin interface and test runner the plugin is checked against.
-  SOLIDCRAFT_VERSION: 0.50.0
+  SOLIDCRAFT_VERSION: 0.51.1
   # release-please bumps the version in Cargo.toml and its sync-lockfile job commits the
   # matching Cargo.lock in a follow-up push, so on release branches the first CI run must
   # be allowed to update the lockfile instead of asserting it is unchanged.
