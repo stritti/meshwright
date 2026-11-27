@@ -286,6 +286,18 @@ mod tests {
     }
 
     #[test]
+    fn a_file_at_or_under_the_size_limit_is_read() {
+        let text = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+        let size = text.len() as u64;
+        for max_bytes in [size, size + 1] {
+            let mut reader = MeshReader::new_with_size_limit(text, size, max_bytes, "x.obj").expect("within the limit");
+            reader.push(text).expect("push");
+            assert_eq!(reader.finish().expect("finish").triangles.len(), 1);
+        }
+        assert!(matches!(MeshReader::new_with_size_limit(text, size, size - 1, "x.obj"), Err(MeshError::SizeLimit { .. })));
+    }
+
+    #[test]
     fn errors_are_localised() {
         let err = MeshError::Empty;
         assert_eq!(err.to_string(), "the file holds no triangles");
