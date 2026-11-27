@@ -532,3 +532,83 @@ fn a_block_on_a_side_wall_is_no_side_boss() {
     let plate_with_side_boss = matches!(&found, Recognition::Plate { plate, .. } if !plate.side_bosses.is_empty());
     assert!(!plate_with_side_boss, "{found:?}");
 }
+
+/// A plate translated away from the origin keeps its side boss relative to its own corner, like
+/// a top boss's position: the writer adds the recognition offset again when writing the design.
+#[test]
+fn a_translated_plates_side_boss_is_relative_to_its_corner() {
+    use crate::recognize::{HoleSpec, PlateSpec, SideBossSpec, Wall};
+    let expected = PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 6.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        side_bosses: vec![SideBossSpec { wall: Wall::PosX, at: [20.0, 3.0], d: 5.0, h: 5.0 }],
+        slots: vec![],
+        outline_fillet_rs: vec![],
+        edge_fillet_r: None,
+    };
+    let offset = [100.0, -20.0, 5.0];
+    let mesh = synth::plate(&expected, 32, offset);
+    let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+    let (plate, found_offset) = found(&reread);
+    assert_eq!(plate, expected);
+    assert_eq!(found_offset, offset);
+}
+
+/// A stepped side boss — a narrow tip on a wide base on one wall — is refused: only one of the
+/// two cylinders could be written on the wall, so the part is no plate with a side boss.
+#[test]
+fn a_stepped_side_boss_is_refused() {
+    use crate::recognize::{HoleSpec, PlateSpec, Wall, recognize};
+    let mut mesh = synth::plate(
+        &PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 6.0, head: None, blind: None }],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            side_bosses: vec![],
+            slots: vec![],
+            outline_fillet_rs: vec![],
+            edge_fillet_r: None,
+        },
+        32,
+        [0.0; 3],
+    );
+    // On the +X wall (x = 60, local u = y, v = z): a Ø5 cylinder out to x = 62 about (20, 3),
+    // with a Ø3 cylinder on it out to x = 64 — the wall pierced by the base's footprint, the
+    // base's cap by the tip's.
+    mesh.triangles.retain(|t| !t.iter().all(|p| (p[0] - 60.0).abs() < 1e-9));
+    let wall: Vec<P2> = vec![[0.0, 0.0], [40.0, 0.0], [40.0, 6.0], [0.0, 6.0]];
+    let base_foot = circle([20.0, 3.0], 2.5, 32);
+    let tip_foot = circle([20.0, 3.0], 1.5, 32);
+    let at = |p: P2, w: f64| [60.0 + w, p[0], p[1]];
+    for [a, b, c] in synth::triangulate(&wall, std::slice::from_ref(&base_foot)) {
+        mesh.triangles.push([at(a, 0.0), at(b, 0.0), at(c, 0.0)]);
+    }
+    let mut cylinder = |foot: &[P2], w0: f64, w1: f64, cap_hole: Option<&[P2]>| {
+        let n = foot.len();
+        for i in 0..n {
+            let (a, c) = (foot[i], foot[(i + 1) % n]);
+            mesh.triangles.push([at(a, w0), at(c, w1), at(a, w1)]);
+            mesh.triangles.push([at(a, w0), at(c, w0), at(c, w1)]);
+        }
+        let holes = cap_hole.map_or_else(Vec::new, |h| vec![h.to_vec()]);
+        for [a, b, c] in synth::triangulate(foot, &holes) {
+            mesh.triangles.push([at(a, w1), at(b, w1), at(c, w1)]);
+        }
+    };
+    cylinder(&base_foot, 0.0, 2.0, Some(&tip_foot));
+    cylinder(&tip_foot, 2.0, 4.0, None);
+    let found = recognize(&mesh);
+    let plate_with_side_boss = matches!(&found, Recognition::Plate { plate, .. } if !plate.side_bosses.is_empty());
+    assert!(!plate_with_side_boss, "{found:?}");
+}
