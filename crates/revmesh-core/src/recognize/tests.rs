@@ -1716,4 +1716,28 @@ fn a_slanted_profile_is_recognised_in_its_own_frame() {
     let Recognition::Profile { profile, .. } = &**prism else { panic!("not a profile: {prism:?}") };
     assert_eq!(profile.corners.len(), 6);
     assert!((profile.volume() - spec.volume()).abs() < 1e-3 * spec.volume(), "{} vs {}", profile.volume(), spec.volume());
+    // Extruded 100 mm deep instead: the largest faces are then walls, not caps — the
+    // candidate planes beyond the dominant one must still find the caps' axis.
+    let mut deep = spec.clone();
+    deep.z = 100.0;
+    let mesh = synth::profile(&deep, 32, [0.0; 3]);
+    let slanted = mapped(&mesh, &rotation([2.0, -1.0, 0.5], 1.1));
+    let found = recognize(&slanted);
+    let (height, volume, _) = slanted_prism(&found);
+    assert!((height - 100.0).abs() < 0.01, "{height}");
+    assert!((volume - deep.volume()).abs() < 1e-3 * deep.volume(), "{volume} vs {}", deep.volume());
+}
+
+/// A plate tilted 1° about Y is beyond the principal axes' positional tolerance, so the X/Y/Z
+/// attempts miss it — the fitted axis (1° off Z is no world axis) must catch it.
+#[test]
+fn a_one_degree_tilted_plate_is_slanted() {
+    let spec = slanted_plate_spec();
+    let mesh = synth::plate(&spec, 32, [0.0; 3]);
+    let tilted = mapped(&mesh, &rotation([0.0, 1.0, 0.0], 1.0_f64.to_radians()));
+    let found = recognize(&tilted);
+    let (height, volume, holes) = slanted_prism(&found);
+    assert!((height - 6.0).abs() < 0.01, "{height}");
+    assert_eq!(holes, 1);
+    assert!((volume - spec.volume()).abs() < 1e-2 * spec.volume(), "{volume} vs {}", spec.volume());
 }

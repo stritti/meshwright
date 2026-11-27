@@ -215,27 +215,32 @@ impl Frame {
     }
 }
 
-/// A facet's plane sample: unit normal, twice its area, one corner.
+/// A facet's plane sample: unit normal, twice its area, one corner, and the facet's index in
+/// the mesh's triangle list (degenerate facets are dropped, so the two lists differ in length).
 struct Facet {
     n: Vec3,
     area2: f64,
     p: Vec3,
+    idx: usize,
 }
 
 /// Facet normals within this angle count as parallel to a candidate plane (5°).
 const PLANE_PARALLEL_COS: f64 = 0.996_194_698_091_745_5; // cos(5°)
 
-/// An axis within this angle of a world axis is left to the X/Y/Z attempts (2°).
-const WORLD_AXIS_COS: f64 = 0.999_390_827_019_095_7; // cos(2°)
+/// An axis within this angle of a world axis is numerically a world axis; the X/Y/Z attempts
+/// cover those (anything tilted further already failed them on the positional tolerance, which
+/// is far tighter than this) — 0.01°.
+const WORLD_AXIS_COS: f64 = 0.999_999_984_769_913_2; // cos(0.01°)
 
 /// The facets of `mesh` as plane samples, degenerate ones dropped.
 fn facets_of(mesh: &Mesh) -> Vec<Facet> {
     mesh.triangles
         .iter()
-        .filter_map(|t| {
+        .enumerate()
+        .filter_map(|(idx, t)| {
             let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
             let len = length(n);
-            (len > 0.0).then(|| Facet { n: [n[0] / len, n[1] / len, n[2] / len], area2: len, p: t[0] })
+            (len > 0.0).then(|| Facet { n: [n[0] / len, n[1] / len, n[2] / len], area2: len, p: t[0], idx })
         })
         .collect()
 }
@@ -244,7 +249,7 @@ fn facets_of(mesh: &Mesh) -> Vec<Facet> {
 /// `tol` of it.
 fn on_plane(facets: &[Facet], triangles: &[crate::mesh::Triangle], j: usize, n: Vec3, d: f64, tol: f64) -> bool {
     let g = &facets[j];
-    dot(g.n, n).abs() >= PLANE_PARALLEL_COS && triangles[j].iter().all(|p| (dot(*p, n) - d).abs() <= tol)
+    dot(g.n, n).abs() >= PLANE_PARALLEL_COS && triangles[g.idx].iter().all(|p| (dot(*p, n) - d).abs() <= tol)
 }
 
 /// The dominant plane of `facets` (sampled over the strided `pool`) by fixed-seed RANSAC
@@ -274,8 +279,9 @@ fn ransac_plane(facets: &[Facet], triangles: &[crate::mesh::Triangle], pool: &[u
                 count += 1;
             }
         }
-        // A plane needs more than the sampled facet behind it; a quad cap is two facets.
-        if count >= 2 && best.as_ref().is_none_or(|(a, _, _)| area > *a) {
+        // A single nondegenerate facet may establish a candidate plane (a triangular prism's
+        // cap is one triangle); the area score and the gates below reject weak ones.
+        if best.as_ref().is_none_or(|(a, _, _)| area > *a) {
             best = Some((area, n, d));
             w = count as f64 / pool.len() as f64;
         }
@@ -340,32 +346,26 @@ fn opposite_plane(facets: &[Facet], n: Vec3, d1: f64, tol: f64) -> Option<(f64, 
     best
 }
 
-/// The prism axis of `mesh` found by fixed-seed RANSAC over its facets (Schnabel, Wahl, Klein
-/// 2007): a prism's two caps are the two dominant parallel planes, and their normal is the
-/// axis. `None` when no such pair exists, when the part does not lie between the two planes, or
-/// when the axis is (nearly) a world axis — those parts the X/Y/Z attempts already cover.
+/// The frame for one candidate plane `(n, d1)`, when it pairs with an opposite parallel plane
+/// into a prism: the pair's areas comparable, the part lying between the two planes, and the
+/// axis off every world axis (those the X/Y/Z attempts already cover).
 #[allow(clippy::many_single_char_names)] // the normal n, offsets d, areas a, as in the geometry
-pub(crate) fn prism_axis(mesh: &Mesh, tol: f64) -> Option<Frame> {
-    let facets = facets_of(mesh);
-    if facets.len() < 3 {
-        return None;
-    }
-    // A deterministic strided sample pool, so the RANSAC cost stays bounded on big meshes.
-    let step = (facets.len() / 10_000).max(1);
-    let pool: Vec<usize> = (0..facets.len()).step_by(step).collect();
-    let (n, d1) = ransac_plane(&facets, &mesh.triangles, &pool, tol)?;
+fn frame_for_plane(mesh: &Mesh, facets: &[Facet], n: Vec3, d1: f64, tol: f64) -> Option<Frame> {
+    let triangles = &mesh.triangles;
     // The inlier area over all facets, for the pair's significance.
-    let area1: f64 =
-        facets.iter().enumerate().filter(|(j, _)| on_plane(&facets, &mesh.triangles, *j, n, d1, tol)).map(|(_, g)| g.area2).sum();
-    let (area2, d2) = opposite_plane(&facets, n, d1, tol)?;
-    // A prism's two caps carry comparable area, the part lies between them, and they are apart.
+    let area1: f64 = facets.iter().enumerate().filter(|(j, _)| on_plane(facets, triangles, *j, n, d1, tol)).map(|(_, g)| g.area2).sum();
+    let (area2, d2) = opposite_plane(facets, n, d1, tol)?;
+    // A prism's two caps carry comparable area, and they are apart.
     if area2 < 0.5 * area1 || (d2 - d1).abs() <= tol {
         return None;
     }
+    // The part lies between the two planes (degenerate facets carry no corners of the part).
     let (lo, hi) = (d1.min(d2), d1.max(d2));
-    if !mesh.triangles.iter().flatten().all(|p| {
-        let o = dot(*p, n);
-        o >= lo - tol && o <= hi + tol
+    if !facets.iter().all(|g| {
+        triangles[g.idx].iter().all(|p| {
+            let o = dot(*p, n);
+            o >= lo - tol && o <= hi + tol
+        })
     }) {
         return None;
     }
@@ -379,6 +379,43 @@ pub(crate) fn prism_axis(mesh: &Mesh, tol: f64) -> Option<Frame> {
         }
     }
     Some(Frame::from_axis(n))
+}
+
+/// The prism axes of `mesh` found by fixed-seed RANSAC over its facets (Schnabel, Wahl, Klein
+/// 2007): a prism's two caps are a pair of dominant parallel planes, and their normal is the
+/// axis. Up to eight candidate planes are tried, largest first — for a long extrusion the
+/// largest faces are walls, not caps. Empty when no candidate pairs up into a prism or the
+/// axis is (numerically) a world axis, which the X/Y/Z attempts already cover.
+#[allow(clippy::many_single_char_names)] // the normal n, offset d, as in the geometry
+pub(crate) fn prism_axes(mesh: &Mesh, tol: f64) -> Vec<Frame> {
+    let facets = facets_of(mesh);
+    if facets.len() < 3 {
+        return Vec::new();
+    }
+    // A deterministic strided sample pool, so the RANSAC cost stays bounded on big meshes.
+    let step = (facets.len() / 10_000).max(1);
+    let all: Vec<usize> = (0..facets.len()).step_by(step).collect();
+    let mut avail = all.clone();
+    let mut candidates: Vec<(Vec3, f64)> = Vec::new();
+    let mut out: Vec<Frame> = Vec::new();
+    // A long extrusion's largest faces are walls; its caps may rank further down, so try
+    // enough candidates to reach them.
+    for _ in 0..8 {
+        let Some((n, d)) = ransac_plane(&facets, &mesh.triangles, &avail, tol) else { break };
+        // Skip a near-duplicate of an earlier candidate, but still take its facets out of the
+        // pool so the next RANSAC run finds a different plane.
+        if !candidates.iter().any(|(cn, cd)| dot(*cn, n).abs() > PLANE_PARALLEL_COS && (cd - d).abs() <= tol) {
+            candidates.push((n, d));
+            if let Some(frame) = frame_for_plane(mesh, &facets, n, d, tol) {
+                out.push(frame);
+            }
+        }
+        avail.retain(|&j| !on_plane(&facets, &mesh.triangles, j, n, d, tol));
+        if avail.len() < 2 {
+            break;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -435,20 +472,12 @@ mod tests {
         }
     }
 
-    #[test]
-    #[allow(clippy::many_single_char_names)] // the axis k, angle c/s, point p
-    fn prism_axis_needs_two_parallel_planes() {
-        // A tetrahedron has no pair of parallel faces: no axis.
-        let tetra = crate::mesh::tests::tetrahedron(10.0);
-        assert!(prism_axis(&tetra, 0.01).is_none());
-        // An axis-aligned box's caps are horizontal: a world axis, left to the Z attempt.
-        let b = crate::recognize::tests::block(30.0, 20.0, 5.0, [0.0; 3]);
-        assert!(prism_axis(&b, 0.01).is_none());
-        // The same box turned about (1, 1, 1): the caps give the axis.
-        let len = 3.0_f64.sqrt();
-        let (s, c) = (0.9_f64.sin(), 0.9_f64.cos());
-        let k = [1.0 / len, 1.0 / len, 1.0 / len];
-        let rot = |p: Vec3| {
+    /// A proper rotation about `axis` by `angle` (Rodrigues' formula).
+    fn rotation(axis: [f64; 3], angle: f64) -> impl Fn(Vec3) -> Vec3 {
+        let len = length(axis);
+        let k = [axis[0] / len, axis[1] / len, axis[2] / len];
+        let (s, c) = angle.sin_cos();
+        move |p: Vec3| {
             let d = dot(p, k);
             let cr = cross(k, p);
             [
@@ -456,12 +485,59 @@ mod tests {
                 p[1] * c + cr[1] * s + k[1] * d * (1.0 - c),
                 p[2] * c + cr[2] * s + k[2] * d * (1.0 - c),
             ]
-        };
-        let turned = Mesh::new(b.triangles.iter().map(|t| t.map(rot)).collect());
-        let frame = prism_axis(&turned, 0.01).expect("a slanted box has an axis");
+        }
+    }
+
+    #[test]
+    #[allow(clippy::many_single_char_names)] // the axis k, angle c/s, point p
+    fn prism_axes_need_two_parallel_planes() {
+        // A tetrahedron has no pair of parallel faces: no axis.
+        let tetra = crate::mesh::tests::tetrahedron(10.0);
+        assert_eq!(prism_axes(&tetra, 0.01), Vec::<Frame>::new());
+        // An axis-aligned box's caps are horizontal: a world axis, left to the Z attempt.
+        let b = crate::recognize::tests::block(30.0, 20.0, 5.0, [0.0; 3]);
+        assert_eq!(prism_axes(&b, 0.01), Vec::<Frame>::new());
+        // The same box turned about (1, 1, 1): the caps give the axis.
+        let rot = rotation([1.0, 1.0, 1.0], 0.9);
+        let turned = Mesh::new(b.triangles.iter().map(|t| t.map(&rot)).collect());
+        let frame = prism_axes(&turned, 0.01).into_iter().next().expect("a slanted box has an axis");
         // The cap normal (Z after the turn) becomes +Z, not the rotation axis itself.
         let z = frame.rotate(rot([0.0, 0.0, 1.0]));
         assert!(z[0].abs() < 1e-6 && z[1].abs() < 1e-6 && (z[2] - 1.0).abs() < 1e-6, "{z:?}");
+        // A zero-area facet in front does not shift the facet indices: same axis.
+        let mut with_degenerate = turned.triangles.clone();
+        with_degenerate.insert(0, [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+        let turned2 = Mesh::new(with_degenerate);
+        let frame2 = prism_axes(&turned2, 0.01).into_iter().next().expect("degenerate facet must not break the axis");
+        let z2 = frame2.rotate(rot([0.0, 0.0, 1.0]));
+        assert!(z2[0].abs() < 1e-6 && z2[1].abs() < 1e-6 && (z2[2] - 1.0).abs() < 1e-6, "{z2:?}");
+    }
+
+    /// A triangular prism whose caps are single triangles still gets its axis, and a tilt of
+    /// 1° — far beyond the recognition tolerance, so the X/Y/Z attempts miss it — is not
+    /// excluded as a "world axis".
+    #[test]
+    fn prism_axes_accept_single_triangle_caps_and_small_tilts() {
+        // A right-triangular prism, legs 60 and 40, extruded 5: each cap one triangle.
+        let outline = [[0.0, 0.0], [60.0, 0.0], [0.0, 40.0]];
+        let mut t: Vec<[Vec3; 3]> = Vec::new();
+        let at = |p: [f64; 2], z: f64| [p[0], p[1], z];
+        t.push([at(outline[0], 0.0), at(outline[2], 0.0), at(outline[1], 0.0)]);
+        t.push([at(outline[0], 5.0), at(outline[1], 5.0), at(outline[2], 5.0)]);
+        for i in 0..3 {
+            let (a, b) = (outline[i], outline[(i + 1) % 3]);
+            t.push([at(a, 0.0), at(b, 0.0), at(b, 5.0)]);
+            t.push([at(a, 0.0), at(b, 5.0), at(a, 5.0)]);
+        }
+        let prism = Mesh::new(t);
+        let rot = rotation([1.0, 2.0, 3.0], 0.8);
+        let turned = Mesh::new(prism.triangles.iter().map(|t| t.map(&rot)).collect());
+        let frames = prism_axes(&turned, 0.01);
+        assert!(!frames.is_empty(), "a triangular prism's single-triangle caps give an axis");
+        // A plate tilted 1° about Y: off every world axis for the X/Y/Z attempts.
+        let b = crate::recognize::tests::block(60.0, 40.0, 6.0, [0.0; 3]);
+        let tilted = Mesh::new(b.triangles.iter().map(|t| t.map(rotation([0.0, 1.0, 0.0], 1.0_f64.to_radians()))).collect());
+        assert!(!prism_axes(&tilted, 0.001).is_empty(), "a 1°-tilt is no world axis");
     }
 
     #[test]
