@@ -141,12 +141,9 @@
       and `cargo xtask check` take any of them; the plugin-test fixtures `block-60x40x6.obj`,
       `block-60x40x6.ply` and `block-60x40x6-bin.ply` import the STL block unchanged, and
       `obj-bad.obj`/`ply-bad.ply` cover the error cases) OBJ and PLY input next to STL
-   3. (done: the `Positions` serializer of `MeshData` in `crates/revmesh-core/src/design/mod.rs`
-      writes a coordinate as `f32` when it survives that round trip — the precision STL stores it
-      in — and as `f64` otherwise, so parts far from the origin keep their precision in the mesh
-      fallback) double-precision coordinates in mesh bodies beyond the single-precision range (the
-      design is written with `f32` coordinates today, `design/mod.rs`) — parts far from the origin
-      lose precision in the mesh fallback
+   3. (done) OBJ, PLY and ASCII STL accept finite double-precision coordinates. The mesh
+      fallback preserves coordinates beyond the single-precision range. Parametric feature
+      recognition uses its existing coordinate range.
    4. (done: files up to 32 MiB are accepted (`MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`)
       and recognition is gated at `MAX_RECOGNITION_TRIANGLES` (≈ 335k triangles ≈ 16 MiB of binary
       STL) in `revmesh-core` — `import_mesh` takes the mesh by reference and clones only in the

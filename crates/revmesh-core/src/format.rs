@@ -8,7 +8,7 @@
 use std::fmt;
 
 use crate::i18n::Locale;
-use crate::mesh::{Mesh, Triangle, Vec3};
+use crate::mesh::{Mesh, Triangle, Vec3, cross, sub};
 use crate::obj::{ObjReader, ObjReason};
 use crate::ply::{PlyReader, PlyReason};
 use crate::stl::{StlError, StlReader};
@@ -73,7 +73,7 @@ pub enum MeshError {
         /// 1-based number of the triangle.
         triangle: usize,
     },
-    /// Any format: a corner coordinate is finite but too large for a single-precision float.
+    /// Legacy error for coordinates beyond the former single-precision import range.
     OutOfRange {
         /// 1-based number of the triangle.
         triangle: usize,
@@ -159,14 +159,96 @@ pub(crate) fn extend_reserved(vec: &mut Vec<u8>, bytes: &[u8]) -> Result<(), Mes
     Ok(())
 }
 
-/// Pushes a triangle, checking its corners like [`crate::stl`] does: finite, and within the
-/// single-precision range meshes are written in.
+/// Triangulates a flat, simple face, keeping the winding and original 3D coordinates.
+pub(crate) fn push_face(
+    triangles: &mut Vec<Triangle>,
+    vertices: &[Vec3],
+    indices: &[usize],
+    face_error: impl FnOnce() -> MeshError,
+) -> Result<(), MeshError> {
+    if let [a, b, c] = *indices {
+        return push_checked(triangles, [vertices[a], vertices[b], vertices[c]]);
+    }
+
+    let mut corners = Vec::new();
+    corners.try_reserve_exact(indices.len()).map_err(|_| MeshError::Allocation)?;
+    let origin = vertices[indices[0]];
+    for &i in indices {
+        if vertices[i].iter().any(|v| !v.is_finite()) {
+            return Err(MeshError::NonFinite { triangle: triangles.len() + 1 });
+        }
+        corners.push((i, sub(vertices[i], origin)));
+    }
+    let extent = |ring: &[(usize, Vec3)]| ring.iter().flat_map(|(_, p)| *p).map(f64::abs).fold(0.0, f64::max);
+    let mut scale = extent(&corners);
+    if !scale.is_finite() {
+        // Opposite-sign coordinates near the f64 limit can overflow on subtraction.
+        let half_origin = origin.map(|v| v * 0.5);
+        for (i, point) in &mut corners {
+            *point = sub(vertices[*i].map(|v| v * 0.5), half_origin);
+        }
+        scale = extent(&corners);
+    }
+    if scale == 0.0 {
+        return Err(face_error());
+    }
+    for (_, point) in &mut corners {
+        *point = point.map(|v| v / scale);
+    }
+    let mut normal = [0.0; 3];
+    for k in 1..corners.len() - 1 {
+        let contribution = cross(corners[k].1, corners[k + 1].1);
+        for (sum, component) in normal.iter_mut().zip(contribution) {
+            *sum += component;
+        }
+    }
+    let drop_axis = (0..3).max_by(|&a, &b| normal[a].abs().total_cmp(&normal[b].abs())).unwrap_or(2);
+    if normal[drop_axis] == 0.0 {
+        return Err(face_error());
+    }
+    let (first_axis, second_axis) = ((drop_axis + 1) % 3, (drop_axis + 2) % 3);
+    let winding = normal[drop_axis].signum();
+    let orient = |a: Vec3, b: Vec3, c: Vec3| {
+        let ab = sub(b, a);
+        let ac = sub(c, a);
+        winding * (ab[first_axis] * ac[second_axis] - ab[second_axis] * ac[first_axis])
+    };
+    let corner = |n: usize, i: usize| [(i + n - 1) % n, i, (i + 1) % n];
+    let emit =
+        |triangles: &mut Vec<Triangle>, ring: &[(usize, Vec3)], ids: [usize; 3]| push_checked(triangles, ids.map(|i| vertices[ring[i].0]));
+
+    let n = corners.len();
+    if (0..n).all(|i| {
+        let [a, b, c] = corner(n, i).map(|j| corners[j].1);
+        orient(a, b, c) > 0.0
+    }) {
+        for i in 1..n - 1 {
+            emit(triangles, &corners, [0, i, i + 1])?;
+        }
+        return Ok(());
+    }
+
+    while corners.len() > 3 {
+        let n = corners.len();
+        let ear = (0..n).map(|i| corner(n, i)).find(|ids| {
+            let [a, b, c] = ids.map(|i| corners[i].1);
+            orient(a, b, c) > 0.0
+                && corners
+                    .iter()
+                    .enumerate()
+                    .all(|(i, &(_, p))| ids.contains(&i) || orient(a, b, p) < 0.0 || orient(b, c, p) < 0.0 || orient(c, a, p) < 0.0)
+        });
+        let Some(ear) = ear else { return Err(face_error()) };
+        emit(triangles, &corners, ear)?;
+        corners.remove(ear[1]);
+    }
+    emit(triangles, &corners, [0, 1, 2])
+}
+
+/// Pushes a triangle after checking that all coordinates are finite.
 pub(crate) fn push_checked(triangles: &mut Vec<Triangle>, triangle: Triangle) -> Result<(), MeshError> {
     if triangle.iter().flatten().any(|v| !v.is_finite()) {
         return Err(MeshError::NonFinite { triangle: triangles.len() + 1 });
-    }
-    if triangle.iter().flatten().any(|v| v.abs() > f64::from(f32::MAX)) {
-        return Err(MeshError::OutOfRange { triangle: triangles.len() + 1 });
     }
     push_reserved(triangles, triangle)
 }
@@ -265,6 +347,33 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Mesh, MeshError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concave_faces_keep_area_and_winding_in_obj_and_ply() {
+        let ply_header = "ply\nformat ascii 1.0\nelement vertex 8\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n";
+        let obj_vertices = "v 0 0 0\nv 4 0 0\nv 4 4 0\nv 3 4 0\nv 3 1 0\nv 1 1 0\nv 1 4 0\nv 0 4 0\n";
+        let ply_vertices = "0 0 0\n4 0 0\n4 4 0\n3 4 0\n3 1 0\n1 1 0\n1 4 0\n0 4 0\n";
+        for (obj_face, ply_face, sign) in
+            [("f 1 2 3 4 5 6 7 8", "8 0 1 2 3 4 5 6 7", 1.0), ("f 1 8 7 6 5 4 3 2", "8 0 7 6 5 4 3 2 1", -1.0)]
+        {
+            for (file, input) in
+                [("u.obj", format!("{obj_vertices}{obj_face}\n")), ("u.ply", format!("{ply_header}{ply_vertices}{ply_face}\n"))]
+            {
+                let mesh = parse(input.as_bytes(), file).expect("imports a concave face");
+                assert_eq!(mesh.triangles.len(), 6);
+                let area: f64 = mesh
+                    .triangles
+                    .iter()
+                    .map(|[a, b, c]| {
+                        let twice = crate::mesh::cross(crate::mesh::sub(*b, *a), crate::mesh::sub(*c, *a))[2];
+                        assert!(twice * sign > 0.0, "{file}: {twice}");
+                        twice.abs() / 2.0
+                    })
+                    .sum();
+                assert!((area - 10.0).abs() < 1e-9, "{file}: {area}");
+            }
+        }
+    }
 
     #[test]
     fn format_is_told_by_name_or_sniffed() {

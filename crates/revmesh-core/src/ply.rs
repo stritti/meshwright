@@ -3,7 +3,7 @@
 //! Only what a mesh needs: a `vertex` element with `x`, `y` and `z` properties (extra scalar
 //! properties such as colours are read and ignored) and a `face` element whose `vertex_indices`
 //! list holds the corners (0-based indices; faces with more than three corners are triangulated
-//! as a fan; any other list on the face element, e.g. texture coordinates, is read and ignored,
+//! on import; any other list on the face element, e.g. texture coordinates, is read and ignored,
 //! as is any other property of the face). `comment` and `obj_info` header lines are skipped, and
 //! so are the records of every other element (`edge`, `material`, …); the formats other than
 //! `ascii 1.0` and `binary_little_endian 1.0` are refused.
@@ -14,7 +14,7 @@
 
 use std::fmt;
 
-use crate::format::{MeshError, extend_reserved, fmt_num, push_checked, push_reserved, welded_vertices};
+use crate::format::{MeshError, extend_reserved, fmt_num, push_face, push_reserved, welded_vertices};
 use crate::i18n::Locale;
 use crate::mesh::{Mesh, Triangle, Vec3};
 
@@ -39,6 +39,8 @@ pub enum PlyReason {
     NoFaceList,
     /// A number that does not parse (a header count or a body value).
     BadNumber,
+    /// A polygon face could not be triangulated.
+    InvalidPolygon,
     /// The file ends before every announced record is read.
     Truncated,
     /// A face corner index outside the vertices read so far.
@@ -60,6 +62,7 @@ impl PlyReason {
             Self::NoVertexCoords => locale.text("ply.reason.no_vertex_coords").to_owned(),
             Self::MissingFace => locale.text("ply.reason.missing_face").to_owned(),
             Self::NoFaceList => locale.text("ply.reason.no_face_list").to_owned(),
+            Self::InvalidPolygon => locale.text("ply.reason.invalid_polygon").to_owned(),
             Self::BadNumber => locale.text("ply.reason.bad_number").to_owned(),
             Self::Truncated => locale.text("ply.reason.truncated").to_owned(),
             Self::IndexOutOfRange(n) => locale.format("ply.reason.index_out_of_range", &[("n", n)]),
@@ -78,6 +81,7 @@ impl fmt::Display for PlyReason {
             Self::NoVertexCoords => f.write_str("the vertex element has no x, y and z coordinates"),
             Self::MissingFace => f.write_str("the header has no face element"),
             Self::NoFaceList => f.write_str("the face element has no vertex index list"),
+            Self::InvalidPolygon => f.write_str("face could not be triangulated"),
             Self::BadNumber => f.write_str("bad number"),
             Self::Truncated => f.write_str("the file ends before all records are read"),
             Self::IndexOutOfRange(n) => write!(f, "vertex index {n} is out of range"),
@@ -583,16 +587,12 @@ impl PlyReader {
         Ok(indices)
     }
 
-    /// Fan-triangulates a face's corner indices into checked triangles.
+    /// Triangulates a face's corner indices into checked triangles.
     fn face_from_indices(&mut self, indices: &[usize], record: usize) -> Result<(), MeshError> {
         if indices.len() < 3 {
             return Err(MeshError::PlyBody { record, reason: PlyReason::FaceTooSmall(indices.len()) });
         }
-        for k in 1..indices.len() - 1 {
-            let triangle = [self.vertices[indices[0]], self.vertices[indices[k]], self.vertices[indices[k + 1]]];
-            push_checked(&mut self.triangles, triangle)?;
-        }
-        Ok(())
+        push_face(&mut self.triangles, &self.vertices, indices, || MeshError::PlyBody { record, reason: PlyReason::InvalidPolygon })
     }
 
     /// Moves to the next body element once the current one's records are read.
@@ -919,11 +919,9 @@ mod tests {
     }
 
     #[test]
-    fn non_finite_and_out_of_range_corners_are_refused_like_stl() {
+    fn non_finite_corners_are_refused_like_stl() {
         let nan = format!("{HEADER}0 0 nan\n10 0 0\n0 10 0\n0 0 10\n3 0 1 2\n");
         assert_eq!(read(nan.as_bytes()).expect_err("an error"), MeshError::NonFinite { triangle: 1 });
-        let big = format!("{HEADER}0 0 0\n1e39 0 0\n0 10 0\n0 0 10\n3 0 1 2\n");
-        assert_eq!(read(big.as_bytes()).expect_err("an error"), MeshError::OutOfRange { triangle: 1 });
     }
 
     #[test]

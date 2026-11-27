@@ -450,7 +450,11 @@ fn recognize_with(mesh: &Mesh, max_rotated_triangles: usize) -> Recognition {
     // exactly two facets, in opposite directions, so the recognised faces close into loops.
     // Refused before any axis is tried; a twisted or non-manifold fake never reaches the
     // volume gate.
-    let scale = mesh.bounds().map_or(0.0, |b| b.size().into_iter().fold(0.0, f64::max));
+    let bounds = mesh.bounds();
+    if bounds.is_some_and(|b| b.min.into_iter().chain(b.max).any(|v| v.abs() > f64::from(f32::MAX))) {
+        return Recognition::Unrecognized { reason: "coordinates exceed the range supported by feature recognition".into() };
+    }
+    let scale = bounds.map_or(0.0, |b| b.size().into_iter().fold(0.0, f64::max));
     if let Err(why) = closed_loops(mesh, tolerance(scale)) {
         return Recognition::Unrecognized { reason: why };
     }
