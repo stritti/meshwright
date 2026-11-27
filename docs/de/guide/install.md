@@ -6,6 +6,9 @@
 2. Öffne in SolidCraft **Preferences › Plugins › Install plugin…** (auch *File › Plugins…*) und
    wähle die zip-Datei.
 
+revmesh ist außerdem in der Community-[Liste der SolidCraft-Plugins](https://tharje.github.io/solidcraft-plugins/)
+geführt, die die neueste zip als Download-Button anbietet.
+
 Per Skript (`solidcraft-cli`) zuerst das Paket prüfen und mit dem ausgegebenen Approval-Hash
 installieren — SolidCraft führt Plugin-Code nur für genau das geprüfte Paket aus:
 
