@@ -50,13 +50,14 @@ pub(crate) use outline::{edge_fillet_removed, fillet_loss};
 
 use std::f64::consts::PI;
 
+pub(crate) use bosses::strip_side_bosses;
 use bosses::{Shape, strip_bosses};
 use holes::Footprint;
 use prism::recognize_prism;
 pub(crate) use prism::{face_deviations, walls_deviations};
 
 use crate::mesh::{Mesh, snap_mm};
-use crate::recognize::{BossChamfer, BossSpec, PadSpec, Recognition};
+use crate::recognize::{BossChamfer, BossSpec, PadSpec, Recognition, Wall};
 
 /// The draft of a boss `h` high (as written) narrowing from radius `foot` (as written) to the
 /// measured `top`, in degrees as a parameter: a whole degree, else a hundredth of one, else the
@@ -170,16 +171,45 @@ const NOT_FLAT: &str = "it is not a flat plate: some corners lie between its top
 
 const NOT_CLOSED: &str = "the mesh is not closed, or its top and bottom faces differ";
 
-/// Looks for a plate in `mesh`, possibly with round bosses on its top face. `Err` carries the
-/// reason in the user's words.
+/// Looks for a plate in `mesh`, possibly with round bosses on its top face or on a side wall
+/// (roadmap 3.10). `Err` carries the reason in the user's words.
 pub(crate) fn recognize_plate(mesh: &Mesh, allow_steps: bool) -> Result<Recognition, String> {
     let why = match recognize_prism(mesh, allow_steps) {
         Ok(found) => return Ok(found),
         Err(why) => why,
     };
+    // Something may stand on a side wall: strip it there (the wall rotated to face up) and
+    // recognise what lies behind it, which may have top bosses of its own. Only in the Z frame
+    // and below the rotated-mesh size cap — along X or Y a side boss is the top boss of the
+    // rotated attempt, which the caller tries anyway.
+    if allow_steps
+        && mesh.triangles.len() <= crate::recognize::MAX_ROTATED_TRIANGLES
+        && let Some((stripped, mut side_bosses)) = strip_side_bosses(mesh)
+        && let Ok(mut recognised) = recognize_plate(&stripped, allow_steps)
+        && let Recognition::Plate { plate, offset } = &mut recognised
+        // A boss standing on a side boss (a stepped one) cannot be written, one cylinder at a
+        // time: refuse the part instead of dropping the inner boss.
+        && plate.side_bosses.is_empty()
+    {
+        // The bosses were found in the file's frame; the spec wants them relative to the plate's
+        // corner, as the top bosses' are — the writer adds the offset again.
+        for b in &mut side_bosses {
+            let (across, up) = match b.wall {
+                Wall::PosX | Wall::NegX => (offset[1], offset[2]),
+                Wall::PosY | Wall::NegY => (offset[0], offset[2]),
+            };
+            b.at = [snap_mm(b.at[0] - across), snap_mm(b.at[1] - up)];
+        }
+        plate.side_bosses = side_bosses;
+        let error = (plate.volume() - mesh.volume()) / mesh.volume();
+        if error.abs() > MAX_VOLUME_ERROR {
+            return Err(format!("the rebuilt plate would differ from the mesh by {:.1}% in volume", error.abs() * 100.0));
+        }
+        return Ok(recognised);
+    }
     // Something may stand on the top face: the plate is then what lies below it, its top face
     // closed over the bosses' footprints.
-    let Some((plate, found)) = strip_bosses(mesh)? else { return Err(why) };
+    let Some((plate, found, _)) = strip_bosses(mesh)? else { return Err(why) };
     let mut recognised = recognize_prism(&plate, allow_steps)?;
     let (offset, top) = match &recognised {
         Recognition::Plate { plate, offset } => (*offset, offset[2] + plate.z),

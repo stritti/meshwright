@@ -152,6 +152,11 @@ a mesh.
 
 A boss is a `cylinder` joined to the plate, standing on the top face's expression
 (`base_z0 + base_t`, or `extrude_0 + extrude_len` for an outline), after the holes and slots.
+A boss on a side wall (roadmap 3.10) is the same `cylinder` with its base on the wall's
+expression (`base_cx ± base_x / 2`, `base_cy ± base_y / 2`) and its axis the wall's outward
+normal (`[±1, 0, 0]` or `[0, ±1, 0]`); its position across the wall is `boss_<n>_y`/`_z` (on an X
+wall) or `boss_<n>_x`/`_z` (on a Y wall). `side-boss.stl` (a 60 x 40 x 6 plate with a 6 mm hole and
+a Ø5 x 5 boss on its +X wall) imports to 14,328.529 mm³ as computed.
 `bosses.stl` (exported by SolidCraft: a 70 x 40 x 6 plate with an Ø10 x 5 and an Ø8 x 3 boss and
 an Ø5 hole) imports to 17,225.686 mm³, the volume SolidCraft measured for the part it exported.
 With `boss_1_d = 12`, `boss_1_h = 8`, `boss_2_x = 40`, `boss_2_h = 4`, `base_t = 9` and

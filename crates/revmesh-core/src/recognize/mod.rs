@@ -29,7 +29,7 @@ pub use axis::Axis;
 pub use combined::{CombinedHole, CombinedSpec, Cut, Extrusion};
 pub use spec::{
     ArcSide, Blind, BossChamfer, BossSpec, CutoutSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec,
-    SlotSpec,
+    SideBossSpec, SlotSpec, Wall,
 };
 pub use stack::{Band, StackSpec};
 
@@ -44,7 +44,15 @@ use crate::plate::{WELD_GRID_TOL, tolerance};
 /// 1"), a stack's per band ("band 2 side 1"). Empty for an unrecognised mesh.
 pub(crate) fn deviations(mesh: &Mesh, found: &Recognition) -> Vec<(String, f64)> {
     match found {
-        Recognition::Plate { .. } => crate::plate::face_deviations(mesh),
+        Recognition::Plate { plate, .. } => {
+            // A side boss's surface is no wall of the plate (roadmap 3.10): strip them before
+            // measuring, as the top bosses' surfaces keep the report from running at all.
+            if let Some((stripped, _)) = (!plate.side_bosses.is_empty()).then(|| crate::plate::strip_side_bosses(mesh)).flatten() {
+                crate::plate::face_deviations(&stripped)
+            } else {
+                crate::plate::face_deviations(mesh)
+            }
+        }
         Recognition::Profile { axis, .. } => crate::plate::face_deviations(&axis.rotate_mesh(mesh)),
         Recognition::Combined { spec, .. } => {
             // The combined spec's frame: the bounding box's corner at the origin in world
@@ -174,7 +182,7 @@ pub enum Recognition {
 /// for), which would trap the component before it can fall back to a mesh body. Above this
 /// many triangles only Z is tried (it needs no copy), so a too-large part along X or Y is
 /// imported as a mesh body instead.
-const MAX_ROTATED_TRIANGLES: usize = 200_000;
+pub(crate) const MAX_ROTATED_TRIANGLES: usize = 200_000;
 
 /// A supporting line of one or more non-standard edges: a point on it, its canonical unit
 /// direction, and the bad segments along it (merged where they overlap or touch). Coverage is

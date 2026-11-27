@@ -58,6 +58,7 @@ fn recognises_block_on_origin() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
@@ -76,6 +77,7 @@ fn moves_offset_block_to_the_origin() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
@@ -94,6 +96,7 @@ fn describes_plates() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,
@@ -118,6 +121,7 @@ fn slots_become_sketches_and_cuts() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![slot(15.0, 0.0), slot(40.0, 30.0)],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
@@ -165,6 +169,7 @@ fn cut_outs_are_cut_after_the_fillet() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         cutouts: vec![cutout(&[[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]])],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
@@ -662,6 +667,7 @@ fn pads_and_pockets_become_boxes() {
             PocketSpec { x: 40.0, y: 30.0, w: 12.0, l: 6.0, depth: 1.5, bottom: true },
         ],
         bosses: vec![],
+        side_bosses: Vec::new(),
         cutouts: vec![],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
@@ -690,6 +696,7 @@ fn bosses_become_cylinders() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![BossSpec { x: 20.0, y: 15.0, d: 10.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }],
+        side_bosses: Vec::new(),
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
     };
@@ -718,6 +725,7 @@ fn plate_volume_matches_solidcraft() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,
@@ -823,6 +831,7 @@ fn x_extruded_plate_becomes_a_yz_profile() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
@@ -872,6 +881,7 @@ fn oversized_mesh_skips_rotated_attempts() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
@@ -949,6 +959,7 @@ fn mixed_corner_radii_write_one_fillet_per_radius_group() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: vec![2.0, 3.0, 5.0, 4.0],
         edge_fillet_r: None,
@@ -1013,6 +1024,7 @@ fn plate_design_matches_golden_file() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,
@@ -1036,6 +1048,7 @@ fn rounded_box_fillets_all_twelve_edges_before_the_holes() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: Some(5.0),
@@ -1157,6 +1170,7 @@ fn drafted_and_chamfered_bosses_in_the_design() {
             BossSpec { chamfer: Some(BossChamfer { w: 1.0, h: 1.0 }), ..boss(40.0) },
             BossSpec { chamfer: Some(BossChamfer { w: 1.5, h: 0.5 }), ..boss(65.0) },
         ],
+        side_bosses: Vec::new(),
         pads: vec![],
         pockets: vec![],
         cutouts: vec![],
@@ -1269,6 +1283,7 @@ fn a_bottom_rounded_hole_beneath_a_step_is_drilled_from_the_bottom() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         cutouts: vec![],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
@@ -1529,4 +1544,48 @@ fn a_straight_cut_out_beside_an_arc_sided_one_gets_its_own_sketch() {
     assert_eq!(triangle["constraints"].as_array().expect("constraints").iter().filter(|c| c["type"] == "angle").count(), 1);
     let arc_cutout = &features[5]["sketch"];
     assert_eq!(arc_cutout["curves"].as_array().expect("curves").iter().filter(|c| c["type"] == "arc").count(), 1);
+}
+
+/// Roadmap 3.10: a side boss writes a `cylinder` joined to the plate, its base on the wall's
+/// `base_*` expression, its axis the wall's outward normal, its position across the wall as
+/// `boss_<n>_*` parameters in world coordinates (numbered after the top bosses).
+#[test]
+fn side_boss_writes_a_cylinder_on_the_wall() {
+    use crate::recognize::{SideBossSpec, Wall};
+    let spec = PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![BossSpec { x: 15.0, y: 30.0, d: 8.0, h: 4.0, fillet: None, draft_deg: None, chamfer: None }],
+        side_bosses: vec![SideBossSpec { wall: Wall::PosX, at: [20.0, 3.0], d: 5.0, h: 5.0 }],
+        slots: vec![],
+        outline_fillet_rs: vec![],
+        edge_fillet_r: None,
+    };
+    assert_eq!(spec.describe(), "A 60 x 40 x 6 mm plate with 2 bosses");
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let param = |name: &str| {
+        json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"))
+    };
+    assert_eq!(param("boss_2_d"), Some("5 mm"));
+    assert_eq!(param("boss_2_h"), Some("5 mm"));
+    assert_eq!(param("boss_2_y"), Some("20 mm"));
+    assert_eq!(param("boss_2_z"), Some("3 mm"));
+    let bosses: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "cylinder").collect();
+    assert_eq!(bosses.len(), 2);
+    let side = bosses.iter().find(|f| f["name"] == "Boss2").expect("the side boss");
+    assert_eq!(side["base"], serde_json::json!(["base_cx + base_x / 2", "boss_2_y", "boss_2_z"]));
+    assert_eq!(side["axis"], serde_json::json!([1.0, 0.0, 0.0]));
+    assert_eq!(side["radius"], "boss_2_d / 2");
+    assert_eq!(side["height"], "boss_2_h");
+    assert_eq!(side["operation"], "join");
+    // The top boss keeps the plain cylinder on the top face.
+    let top = bosses.iter().find(|f| f["name"] == "Boss1").expect("the top boss");
+    assert_eq!(top["axis"], serde_json::json!([0.0, 0.0, 1.0]));
+    assert_eq!(top["base"], serde_json::json!(["boss_1_x", "boss_1_y", "base_z0 + base_t"]));
 }

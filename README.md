@@ -96,6 +96,7 @@ with the features and parameters it gets.
 | A through hole whose rim is rounded, on the top or the bottom face | `Hole<n>` and `Hole<n>Rim` (a fillet of the edge between the face and the bore) | `hole_<n>_d`, `hole_<n>_rim_r` (top) or `hole_<n>_bot_rim_r` (bottom) |
 | A round blind hole with a flat floor, drilled from the top or the bottom face | `Hole<n>` with a depth (drilled from that face) | `hole_<n>_d`, `hole_<n>_depth` (from that face) |
 | A straight slot through the plate (two round ends of one width), along X, Y or at any angle | `Slot<n>Sketch` (the slot on XY) and `Slot<n>` (a cut through everything) | `slot_<n>_len` (between the end centres), `_w`, the middle `_x`, `_y`, and `_angle` (of the long axis, from +X) |
+| A straight round boss on a side wall (the X or Y wall of a rectangular plate), protruding along the wall's normal | `Boss<n>` (a `cylinder` joined to the plate, its base on the wall's `base_*` expression, its axis the wall's outward normal), numbered after the top bosses | `boss_<n>_d`, `boss_<n>_h` (out from the wall), the axis across the wall `boss_<n>_y`/`_z` (on an X wall) or `boss_<n>_x`/`_z` (on a Y wall) |
 | A round boss standing on the top face, straight, drafted (narrowing upwards) or with its top edge chamfered | `Boss<n>` (a cylinder joined to the plate, on its top face) | `boss_<n>_d`, `boss_<n>_h` (above the top face), `boss_<n>_fillet` (a round at its foot, if it has one; `Boss<n>Fillet`), `boss_<n>_draft_deg` (a drafted boss is a cone), `boss_<n>_chamfer` (45°) or `boss_<n>_chamfer_h` and `_w` (`Boss<n>Chamfer`), the centre `boss_<n>_x`, `boss_<n>_y` |
 | A cut-out of straight sides through the plate (3 to 24 corners, each a real turn) | `CutoutsSketch` (every cut-out, on XY, every side a `Length` dimension) and `Cutouts` (a cut through everything, after the outline's fillet) | `cutout_<n>_<i>_len` per side (mesh2cad writes the corners as the point list `cutout_<n>`) |
 | A rectangular block (pad) along X and Y standing on the top face | `Pad<n>` (a box joined to the plate) | `pad_<n>_w` (along X), `pad_<n>_l` (along Y), `pad_<n>_h`, the middle `pad_<n>_x`, `pad_<n>_y` |
@@ -130,7 +131,8 @@ the mesh's volume within 1%, otherwise the mesh is kept. The import report notes
 volume changed because round facets became true circles. Not recognised yet (kept as a mesh, with the
 reason): curved sides that are not circular arcs and round outlines, rounded corners mixed with arc sides, only some corners rounded,
 D-shaped and other curved cut-outs, blind or slanted slots, corners rounded almost all the way along their sides,
-steps along X or Y, pockets with curved sides, bosses with a draft, a round or a hole, other shapes on the top face, a counterbore, countersink or
+steps along X or Y, pockets with curved sides, bosses with a draft, a round or a hole, other shapes on the top face,
+shaped bosses or pads on a side wall, a counterbore, countersink or
 rounded rim opening on a step's level, blind holes with a drill
 point or a counterbore, and parts rotated off X, Y and Z. Blind holes, like counterbored and
 countersunk ones, stay single holes, not patterns.

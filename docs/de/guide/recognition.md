@@ -14,6 +14,7 @@
 | Drei oder mehr Bohrungen eines Durchmessers gleichmäßig auf einem Kreis verteilt (ein Lochkreis) | `HoleCircle<n>` und `HoleCircle<n>Pattern` (ein kreisförmiges Muster um den Kreis-Mittelpunkt) | `hole_circle_<n>_n`, `_d`, `_r` (Mittelpunkt zu Bohrung), `_cx`, `_cy`, `_angle` (erste Bohrung, von +X) |
 | Eine runde Sacklochbohrung mit flachem Boden, von der Ober- oder Unterseite gebohrt | `Hole<n>` mit einer Tiefe (von dieser Fläche gebohrt) | `hole_<n>_d`, `hole_<n>_depth` (von dieser Fläche) |
 | Ein gerades Langloch durch die Platte (zwei runde Enden einer Breite), entlang X, Y oder in einem beliebigen Winkel | `Slot<n>Sketch` (das Langloch auf XY) und `Slot<n>` (ein Schnitt durch alles) | `slot_<n>_len` (zwischen den End-Mittelpunkten), `_w`, die Mitte `_x`, `_y` und `_angle` (der langen Achse, von +X) |
+| Ein gerader runder Zapfen an einer Seitenwand (der X- oder Y-Wand einer rechteckigen Platte), entlang der Wand-Normale vorstehend | `Boss<n>` (ein `cylinder`, mit der Platte verbunden, seine Basis an der Wand-`base_*`-Ausdruck, seine Achse die Wand-Außennormale), nach den Ober-Zapfen nummeriert | `boss_<n>_d`, `boss_<n>_h` (aus der Wand), die Achse quer zur Wand `boss_<n>_y`/`_z` (an einer X-Wand) bzw. `boss_<n>_x`/`_z` (an einer Y-Wand) |
 | Ein runder Zapfen auf der Oberseite, gerade, mit Formschräge (nach oben schmaler) oder mit gefaster Oberkante | `Boss<n>` (ein Zylinder, mit der Platte verbunden, auf ihrer Oberseite) | `boss_<n>_d`, `boss_<n>_h` (über der Oberseite), `boss_<n>_fillet` (eine Verrundung an seinem Fuß, falls vorhanden; `Boss<n>Fillet`), `boss_<n>_draft_deg` (ein Zapfen mit Formschräge ist ein Kegel), `boss_<n>_chamfer` (45°) oder `boss_<n>_chamfer_h` und `_w` (`Boss<n>Chamfer`), die Mitte `boss_<n>_x`, `boss_<n>_y` |
 | Ein Ausschnitt aus geraden Seiten durch die Platte (3 bis 24 Ecken, jede ein echter Knick) | `CutoutsSketch` (jeder Ausschnitt auf XY, jede Seite eine `Length`-Bemaßung) und `Cutouts` (ein Schnitt durch alles, nach der Verrundung der Kontur) | `cutout_<n>_<i>_len` pro Seite (mesh2cad schreibt die Ecken als Punktliste `cutout_<n>`) |
 | Ein rechteckiger Block (Aufsatz) entlang X und Y auf der Oberseite | `Pad<n>` (eine mit der Platte verbundene Box) | `pad_<n>_w` (entlang X), `pad_<n>_l` (entlang Y), `pad_<n>_h`, die Mitte `pad_<n>_x`, `pad_<n>_y` |
@@ -50,7 +51,7 @@ Diese bleiben ein Netz, mit dem Grund im Bericht:
 - nur einige Ecken verrundet
 - D-förmige und andere gekrümmte Ausschnitte, Sackloch- oder schräge Langlöcher
 - Ecken, die fast ihre ganze Seite entlang verrundet sind
-- Taschen mit gekrümmten Seiten, andere Formen auf der Oberseite und Zapfen mit Formschräge, einer Verrundung oder einer Bohrung
+- Taschen mit gekrümmten Seiten, andere Formen auf der Oberseite und Zapfen mit Formschräge, einer Verrundung oder einer Bohrung (und alles außer einem geraden runden Zapfen an einer Seitenwand)
 - Sacklochbohrungen mit Bohrerspitze oder Senkung
 - Teile, die aus den Achsen gedreht sind
 - kombinierte Extrusionen mit Bohrungen, die einander oder einen Schnitt kreuzen, oder runde Bohrungen, die in einer schrägen Fläche enden (sie bleiben Öffnungen ihrer Facetten), gesenkte oder gefaste Bohrungen, Schnitte, die einander berühren oder Inseln haben; Stapel mit schrägen Dächern, Fasen oder Bohrungen

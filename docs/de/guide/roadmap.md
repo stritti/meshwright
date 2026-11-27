@@ -17,7 +17,10 @@
    8. (erledigt) Aufsätze und rechteckige Taschen (Stufen und andere Taschen später)
    9. (erledigt) Extrusionen entlang X und Y
    10. (erledigt) Boxen, deren Kanten alle verrundet sind (`edge_fillet_r`), mit Durchgangsbohrungen
-       darin; Zapfen an Seitenflächen noch offen
+       darin, und (erledigt: ein runder Zapfen an einer Seitenwand wird abgezogen, indem die Wand
+       nach oben gedreht wird (`plate/bosses.rs::strip_side_bosses`), und als `cylinder` geschrieben,
+       der an der Wand-`base_*`-Ausdruck mit der Wand-Außennormale als Achse verbunden wird)
+       Zapfen an Seitenflächen
    11. (erledigt) Fasen, Formschrägen und die Verrundungen an einem Zapfenfuß oder einem Bohrungsrand
    12. kombinierte Extrusionen: (erledigt) der Schnitt von Konturen, die entlang X, Y und Z extrudiert
        werden, mit Öffnungen durch sie, geraden Sackloch-Schnitten hinein und runden Bohrungen, und
@@ -115,7 +118,7 @@
       plus der Pfeilhöhe der runden Wände eine Gerade ist, Wände also ihre Fläche rechtwinklig
       treffen) ComplexGen-artige Topologie-Gates neben exact-or-nothing und der Volumen-Prüfung:
       erkannte Flächen schließen zu Schleifen, Wände treffen ihre Fläche rechtwinklig
-   plus was in 3.10 und 3.12 noch offen ist: Zapfen an Seitenflächen, Dächer und Fasen auf Stapeln
+   plus was in 3.12 noch offen ist: Dächer und Fasen auf Stapeln, sich kreuzende Bohrungen in einem kombinierten Teil
 7. **Import und Konvertierung**:
    1. (erledigt: das Manifest fordert `evaluate@0.2`; im auto-Modus wird die serialisierte Konstruktion
       in der privaten Sandbox der App gestaget und dort neu aufgebaut (`document.inspect`), bevor sie

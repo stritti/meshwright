@@ -14,6 +14,7 @@
 | Three or more holes of one diameter equally spaced on a circle (a bolt circle) | `HoleCircle<n>` and `HoleCircle<n>Pattern` (a circular pattern about the circle's centre) | `hole_circle_<n>_n`, `_d`, `_r` (centre to hole), `_cx`, `_cy`, `_angle` (first hole, from +X) |
 | A round blind hole with a flat floor, drilled from the top or the bottom face | `Hole<n>` with a depth (drilled from that face) | `hole_<n>_d`, `hole_<n>_depth` (from that face) |
 | A straight slot through the plate (two round ends of one width), along X, Y or at any angle | `Slot<n>Sketch` (the slot on XY) and `Slot<n>` (a cut through everything) | `slot_<n>_len` (between the end centres), `_w`, the middle `_x`, `_y`, and `_angle` (of the long axis, from +X) |
+| A straight round boss on a side wall (the X or Y wall of a rectangular plate), protruding along the wall's normal | `Boss<n>` (a `cylinder` joined to the plate, its base on the wall's `base_*` expression, its axis the wall's outward normal), numbered after the top bosses | `boss_<n>_d`, `boss_<n>_h` (out from the wall), the axis across the wall `boss_<n>_y`/`_z` (on an X wall) or `boss_<n>_x`/`_z` (on a Y wall) |
 | A round boss standing on the top face, straight, drafted (narrowing upwards) or with its top edge chamfered | `Boss<n>` (a cylinder joined to the plate, on its top face) | `boss_<n>_d`, `boss_<n>_h` (above the top face), `boss_<n>_fillet` (a round at its foot, if it has one; `Boss<n>Fillet`), `boss_<n>_draft_deg` (a drafted boss is a cone), `boss_<n>_chamfer` (45°) or `boss_<n>_chamfer_h` and `_w` (`Boss<n>Chamfer`), the centre `boss_<n>_x`, `boss_<n>_y` |
 | A cut-out of straight sides through the plate (3 to 24 corners, each a real turn) | `CutoutsSketch` (every cut-out, on XY, every side a `Length` dimension) and `Cutouts` (a cut through everything, after the outline's fillet) | `cutout_<n>_<i>_len` per side (mesh2cad writes the corners as the point list `cutout_<n>`) |
 | A rectangular block (pad) along X and Y standing on the top face | `Pad<n>` (a box joined to the plate) | `pad_<n>_w` (along X), `pad_<n>_l` (along Y), `pad_<n>_h`, the middle `pad_<n>_x`, `pad_<n>_y` |
@@ -48,7 +49,7 @@ These are kept as a mesh, with the reason in the report:
 - only some corners rounded
 - D-shaped and other curved cut-outs, blind or slanted slots
 - corners rounded almost all the way along their sides
-- pockets with curved sides, other shapes on the top face, and bosses with a draft, a round or a hole
+- pockets with curved sides, other shapes on the top face, and bosses with a draft, a round or a hole (and any but a straight round boss on a side wall)
 - blind holes with a drill point or a counterbore
 - parts rotated off the axes
 - combined extrusions with holes that cross each other or a cut, round holes ending in a

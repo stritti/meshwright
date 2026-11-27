@@ -7,16 +7,137 @@
 use std::f64::consts::PI;
 
 use crate::mesh::{Mesh, Triangle, Vec3};
-use crate::recognize::{ArcSide, CutoutSpec, HoleSpec, PlateSpec, ProfileSpec};
+use crate::recognize::{ArcSide, CutoutSpec, HoleSpec, PlateSpec, ProfileSpec, SideBossSpec, Wall};
 
 type P2 = [f64; 2];
 
 /// The plate `spec` as a closed mesh, moved by `offset`. Each hole is a polygon of `segments`
-/// corners and each rounded corner a quarter of one (at least one facet).
+/// corners and each rounded corner a quarter of one (at least one facet). A side boss is a
+/// cylinder on its wall, the wall pierced by the boss's footprint. Top bosses synthesise as
+/// straight cylinders.
+///
+/// # Panics
+///
+/// If a side boss or top boss is given on an outline with rounded corners (only a sharp
+/// rectangle is synthesised with them).
 #[must_use]
 pub fn plate(spec: &PlateSpec, segments: usize, offset: Vec3) -> Mesh {
     let corners = [[0.0, 0.0], [spec.x, 0.0], [spec.x, spec.y], [0.0, spec.y]];
-    prism(&rounded(&corners, &spec.outline_fillet_rs, segments), &openings(&spec.holes, &spec.cutouts, segments), spec.z, offset)
+    let outline = rounded(&corners, &spec.outline_fillet_rs, segments);
+    let openings = openings(&spec.holes, &spec.cutouts, segments);
+    if spec.side_bosses.is_empty() && spec.bosses.is_empty() {
+        return prism(&outline, &openings, spec.z, offset);
+    }
+    assert!(outline.len() == 4 && outline == corners, "side bosses synthesise on a sharp rectangle only");
+    plate_with_side_bosses(spec, &openings, segments, offset)
+}
+
+/// The plate with side bosses: like [`prism`], but each wall pierced by the footprints of the
+/// bosses standing on it and each boss a cylinder out along the wall's normal. Built wall by
+/// wall in a local frame (u, v, w = out along the wall's normal), a proper rotation per wall, so
+/// the winding is the same everywhere.
+fn plate_with_side_bosses(spec: &PlateSpec, openings: &[Vec<P2>], segments: usize, offset: Vec3) -> Mesh {
+    let (x, y, z) = (spec.x, spec.y, spec.z);
+    let mut t: Vec<Triangle> = Vec::new();
+    let at = |p: P2, h: f64| [p[0] + offset[0], p[1] + offset[1], h + offset[2]];
+    // Straight top bosses stand on the top face, their footprints holes in it.
+    let feet: Vec<Vec<P2>> = spec
+        .bosses
+        .iter()
+        .map(|b| {
+            (0..segments)
+                .map(|i| {
+                    let a = 2.0 * PI * i as f64 / segments as f64;
+                    [b.x + b.d / 2.0 * a.cos(), b.y + b.d / 2.0 * a.sin()]
+                })
+                .collect()
+        })
+        .collect();
+    let mut holes = openings.to_vec();
+    holes.extend(feet.iter().cloned());
+    // The top face carries the top bosses' footprints as holes; the bottom face does not.
+    for [a, b, c] in triangulate(&[[0.0, 0.0], [x, 0.0], [x, y], [0.0, y]], &holes) {
+        t.push([at(a, z), at(b, z), at(c, z)]);
+    }
+    for [a, b, c] in triangulate(&[[0.0, 0.0], [x, 0.0], [x, y], [0.0, y]], openings) {
+        t.push([at(a, 0.0), at(c, 0.0), at(b, 0.0)]);
+    }
+    for (b, foot) in spec.bosses.iter().zip(&feet) {
+        let n = foot.len();
+        for i in 0..n {
+            let (a, c) = (foot[i], foot[(i + 1) % n]);
+            t.push([at(a, z), at(c, z), at(c, z + b.h)]);
+            t.push([at(a, z), at(c, z + b.h), at(a, z + b.h)]);
+        }
+        for [a, b2, c] in triangulate(foot, &[]) {
+            t.push([at(a, z + b.h), at(b2, z + b.h), at(c, z + b.h)]);
+        }
+    }
+    // The openings' bores, as [`prism`] builds them (each hole, seen as the top face's boundary,
+    // clockwise, gives outward walls).
+    for ring in openings.iter().map(|ring| ring.iter().rev().copied().collect::<Vec<P2>>()) {
+        for i in 0..ring.len() {
+            let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+            t.push([at(a, 0.0), at(b, 0.0), at(b, z)]);
+            t.push([at(a, 0.0), at(b, z), at(a, z)]);
+        }
+    }
+    // Per wall: the local (u, v, w) to spec-coordinates map (a proper rotation, w out along the
+    // wall's normal) and the wall's local size (U, V).
+    for wall in [Wall::PosX, Wall::NegX, Wall::PosY, Wall::NegY] {
+        let (u_len, v_len) = match wall {
+            Wall::PosX | Wall::NegX => (y, z),
+            Wall::PosY | Wall::NegY => (x, z),
+        };
+        let map = |p: P2, w: f64| -> Vec3 {
+            match wall {
+                Wall::PosX => [x + w, p[0], p[1]],
+                Wall::NegX => [-w, p[0], z - p[1]],
+                Wall::PosY => [p[0], y + w, z - p[1]],
+                Wall::NegY => [p[0], -w, p[1]],
+            }
+        };
+        let bosses: Vec<&SideBossSpec> = spec.side_bosses.iter().filter(|b| b.wall == wall).collect();
+        // The boss axis's local (u, v): across the wall, the v coordinate mirrored where the
+        // map runs along −z.
+        let local_at = |b: &SideBossSpec| match wall {
+            Wall::PosX | Wall::NegY => [b.at[0], b.at[1]],
+            Wall::NegX | Wall::PosY => [b.at[0], z - b.at[1]],
+        };
+        let feet: Vec<Vec<P2>> = bosses
+            .iter()
+            .map(|b| {
+                let c = local_at(b);
+                (0..segments)
+                    .map(|i| {
+                        let a = 2.0 * PI * i as f64 / segments as f64;
+                        [c[0] + b.d / 2.0 * a.cos(), c[1] + b.d / 2.0 * a.sin()]
+                    })
+                    .collect()
+            })
+            .collect();
+        let rect = vec![[0.0, 0.0], [u_len, 0.0], [u_len, v_len], [0.0, v_len]];
+        let to3 = |p: P2, w: f64| {
+            let q = map(p, w);
+            [q[0] + offset[0], q[1] + offset[1], q[2] + offset[2]]
+        };
+        for [a, b, c] in triangulate(&rect, &feet) {
+            t.push([to3(a, 0.0), to3(b, 0.0), to3(c, 0.0)]);
+        }
+        for (b, foot) in bosses.iter().zip(&feet) {
+            let h = b.h;
+            let n = foot.len();
+            for i in 0..n {
+                let (a, c) = (foot[i], foot[(i + 1) % n]);
+                t.push([to3(a, 0.0), to3(c, h), to3(a, h)]);
+                t.push([to3(a, 0.0), to3(c, 0.0), to3(c, h)]);
+            }
+            for [a, b2, c] in triangulate(foot, &[]) {
+                t.push([to3(a, h), to3(b2, h), to3(c, h)]);
+            }
+        }
+    }
+    Mesh::new(t)
 }
 
 /// The plate `spec` with any outline as a closed mesh, moved by `offset`, faceted as [`plate`].

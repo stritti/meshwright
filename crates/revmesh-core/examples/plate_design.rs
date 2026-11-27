@@ -19,6 +19,7 @@ fn main() {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,

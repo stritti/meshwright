@@ -325,6 +325,7 @@ mod tests {
             pads: vec![],
             pockets: vec![],
             bosses: vec![],
+            side_bosses: Vec::new(),
             slots: vec![],
             outline_fillet_rs: Vec::new(),
             edge_fillet_r: None,

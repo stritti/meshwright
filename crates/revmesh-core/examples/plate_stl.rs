@@ -19,7 +19,9 @@
 //!   16 x 16 cut-out whose top side is a radius-8 semicircle arc side;
 //! - `mixed-radii`: `plugin/revmesh/tests/mixed-radii.stl`, a 70 x 40 x 6 mm plate with one
 //!   through hole and its four corners rounded with different radii (2, 3, 5 and 4 mm,
-//!   counter-clockwise from the origin corner).
+//!   counter-clockwise from the origin corner);
+//! - `side-boss`: `plugin/revmesh/tests/side-boss.stl`, a 60 x 40 x 6 mm plate with a 6 mm
+//!   through hole and a Ø5 x 5 mm round boss on its +X side wall.
 //! - `block-obj`, `block-ply`, `block-ply-bin`: `plugin/revmesh/tests/block-60x40x6.obj`,
 //!   `block-60x40x6.ply` (ASCII) and `block-60x40x6-bin.ply` (binary) — the block of
 //!   `block-60x40x6.stl` written as OBJ and PLY, so the format cases import the same geometry.
@@ -34,6 +36,7 @@
 //! cargo run -p revmesh-core --example plate_stl -- stadium > plugin/revmesh/tests/stadium.stl
 //! cargo run -p revmesh-core --example plate_stl -- cutout-arc > plugin/revmesh/tests/cutout-arc.stl
 //! cargo run -p revmesh-core --example plate_stl -- mixed-radii > plugin/revmesh/tests/mixed-radii.stl
+//! cargo run -p revmesh-core --example plate_stl -- side-boss > plugin/revmesh/tests/side-boss.stl
 //! cargo run -p revmesh-core --example plate_stl -- block-obj > plugin/revmesh/tests/block-60x40x6.obj
 //! cargo run -p revmesh-core --example plate_stl -- block-ply > plugin/revmesh/tests/block-60x40x6.ply
 //! cargo run -p revmesh-core --example plate_stl -- block-ply-bin > plugin/revmesh/tests/block-60x40x6-bin.ply
@@ -66,7 +69,7 @@
 use std::io::Write as _;
 
 use revmesh_core::mesh::{Mesh, snap_mm};
-use revmesh_core::recognize::{ArcSide, Axis, CutoutSpec, HoleSpec, PlateSpec, ProfileSpec};
+use revmesh_core::recognize::{ArcSide, Axis, CutoutSpec, HoleSpec, PlateSpec, ProfileSpec, SideBossSpec, Wall};
 use revmesh_core::{obj, ply, stl, synth};
 
 /// The plate in `plate-holes.stl`.
@@ -84,6 +87,7 @@ fn plate() -> PlateSpec {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: vec![3.0; 4],
         edge_fillet_r: None,
@@ -136,6 +140,7 @@ fn patterns() -> PlateSpec {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: vec![4.0; 4],
         edge_fillet_r: None,
@@ -207,8 +212,28 @@ fn mixed_radii() -> PlateSpec {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: vec![2.0, 3.0, 5.0, 4.0],
+        edge_fillet_r: None,
+    }
+}
+
+/// The plate in `side-boss.stl`: a 60 x 40 x 6 mm plate with a 6 mm through hole and a
+/// Ø5 x 5 mm boss on its +X side wall at (y, z) = (20, 3).
+fn side_boss() -> PlateSpec {
+    PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 6.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        side_bosses: vec![SideBossSpec { wall: Wall::PosX, at: [20.0, 3.0], d: 5.0, h: 5.0 }],
+        slots: vec![],
+        outline_fillet_rs: vec![],
         edge_fillet_r: None,
     }
 }
@@ -225,6 +250,7 @@ fn rounded_box() -> (PlateSpec, revmesh_core::mesh::Vec3) {
             pads: vec![],
             pockets: vec![],
             bosses: vec![],
+            side_bosses: Vec::new(),
             slots: vec![],
             outline_fillet_rs: Vec::new(),
             edge_fillet_r: Some(5.0),
@@ -246,6 +272,7 @@ fn x_plate() -> (revmesh_core::mesh::Mesh, String, f64) {
         pads: vec![],
         pockets: vec![],
         bosses: vec![],
+        side_bosses: Vec::new(),
         slots: vec![],
         outline_fillet_rs: Vec::new(),
         edge_fillet_r: None,
@@ -323,6 +350,7 @@ fn main() -> std::io::Result<()> {
         let spec = match which.as_deref() {
             Some("patterns") => patterns(),
             Some("mixed-radii") => mixed_radii(),
+            Some("side-boss") => side_boss(),
             _ => plate(),
         };
         (synth::plate(&spec, 48, [0.0; 3]), spec.describe(), spec.volume())
