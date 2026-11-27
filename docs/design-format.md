@@ -310,7 +310,9 @@ and `extrude_0`. Holes and fillet picks are in world coordinates. In `solidcraft
 file at (20, 10)) with `extrude_0 = 4`, `extrude_len = 8` and `outline_fillet_r = 4` to
 9,706.85 mm³, both as computed.
 
-A hole pattern is one `hole` feature at the first hole and a `pattern` feature on it. A bolt
+A hole pattern is one `hole` feature at the first hole and a `pattern` feature on it. A row's
+pattern direction is a number vector, not an expression, so a row at an angle other than along X
+or Y is written as single `hole` features instead. A bolt
 circle's first hole is at `[cx + r * cos(angle), cy + r * sin(angle), top]` as expressions and
 its pattern's origin is `[cx, cy, 0]`. `plate-patterns.stl` (a 2 x 2 grid, a row of three, a
 bolt circle of six round a single bore) imports in `solidcraft-cli 0.50.0` to 55,995.49 mm³ as

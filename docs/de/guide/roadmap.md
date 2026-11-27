@@ -108,7 +108,10 @@
       Ecke und das Design schreibt ein `Fillet<g>` pro Radius-Gruppe mit `fillet_r_<g>` /
       `outline_fillet_r_<g>` — ein gemeinsamer Radius behält das schlichte `fillet_r` /
       `outline_fillet_r` und `Fillet1`) pro-Ecken-Radien in Konturen
-   5. Bohrungsreihen in beliebigem Winkel (die Richtung eines Musters ist in SolidCraft kein Ausdruck —
+   5. (erledigt: `hole_groups` in `crates/revmesh-core/src/recognize/to_design.rs` schreibt eine Reihe,
+      deren Winkel nicht 0° oder ±90° ist, als einzelne Bohrungen, da die Richtung eines Musters in
+      SolidCraft kein Ausdruck ist; eine achsparallele Reihe bleibt ein `HoleRow<n>`-Muster)
+      Bohrungsreihen in beliebigem Winkel (die Richtung eines Musters ist in SolidCraft kein Ausdruck —
       als einzelne Bohrungen oder auf einer gedrehten Skizze schreiben)
    6. (done: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` lehnt, bevor eine Achse
       probiert wird, ein Netz ab, dessen Kanten nicht von zwei Facetten in Gegenrichtung bedeckt

@@ -104,7 +104,8 @@ with the features and parameters it gets.
 | A rectangular blind pocket along X and Y with a flat floor, in the top or the bottom face | `Pocket<n>` (a box cut out of the plate) | `pocket_<n>_w`, `pocket_<n>_l`, `pocket_<n>_depth` (from that face), the middle `pocket_<n>_x`, `pocket_<n>_y` |
 | A blind pocket of any other outline of straight sides with a flat floor, in the top or the bottom face | `Pocket<n>Sketch` (the mouth's outline on XY, every side a `Length` dimension) and `Pocket<n>` (a cut from that face), numbered after the rectangular pockets | `pocket_<n>_depth`, `pocket_<n>_<i>_len` per side |
 | A step down from the top face along Z (a lower level whose region shares an edge with the outline) | written like a pocket of that region's outline: `Pocket<n>Sketch` and `Pocket<n>` cut from the top down to the level | `pocket_<n>_depth` (the step's height), `pocket_<n>_<i>_len` per side |
-| Three or more holes of one diameter on a straight line at one pitch | `HoleRow<n>` and `HoleRow<n>Pattern` (a rectangular pattern along the row) | `hole_row_<n>_n`, `_pitch`, `_d`, and the first hole `_x`, `_y` |
+| Three or more holes of one diameter on a straight line at one pitch, along X or Y | `HoleRow<n>` and `HoleRow<n>Pattern` (a rectangular pattern along the row) | `hole_row_<n>_n`, `_pitch`, `_d`, and the first hole `_x`, `_y` |
+| The same row at any other angle (a pattern's direction is not an expression in SolidCraft) | one `Hole<n>` per hole | `hole_<n>_x`, `hole_<n>_y`, `hole_<n>_d` |
 | Holes of one diameter in an axis-aligned grid of at least 2 x 2 | `HoleGrid<n>` and `HoleGrid<n>Pattern` | `hole_grid_<n>_nx`, `_ny`, `_pitch_x`, `_pitch_y`, `_d`, and the corner hole `_x`, `_y` |
 | Three or more holes of one diameter equally spaced on a circle (a bolt circle) | `HoleCircle<n>` and `HoleCircle<n>Pattern` (a circular pattern about the circle's centre) | `hole_circle_<n>_n`, `_d`, `_r` (centre to hole), `_cx`, `_cy`, `_angle` (first hole, from +X) |
 | The four vertical corners of a rectangular plate rounded, each with its own radius | one `Fillet<g>` per radius group | `fillet_r` (all corners one radius) or `fillet_r_<g>` per group |
@@ -125,8 +126,9 @@ exported by SolidCraft itself, or by other tools that mesh walls in bands, are r
 `hole_row_1_n` or `hole_circle_1_r` and every hole of that pattern follows. A grid wins over a
 bolt circle (four corner holes are both). A complete grid can also be found alongside one
 same-diameter hole that shares neither a row nor a column with it. Two holes are never a pattern, and a pattern with one
-hole missing or out of place stays single holes. A row's direction is fixed (mesh2cad's
-`hole_row_N_angle` is not a parameter, as a SolidCraft pattern direction is not an expression). A chamfered
+hole missing or out of place stays single holes. A row along X or Y is a pattern whose direction is fixed (mesh2cad's
+`hole_row_N_angle` is not a parameter, as a SolidCraft pattern direction is not an expression); a row at any other
+angle is written as single holes. A chamfered
 corner is simply one more straight side, so it comes over exactly. The rebuilt part must match
 the mesh's volume within 1%, otherwise the mesh is kept. The import report notes how much the
 volume changed because round facets became true circles. Not recognised yet (kept as a mesh, with the

@@ -1034,6 +1034,56 @@ fn plate_design_matches_golden_file() {
     assert_eq!(actual.trim(), golden.trim(), "regenerate with `cargo run -p revmesh-core --example plate_design`");
 }
 
+/// Roadmap 6.5: a hole row at an angle that is not a profile axis is written as single holes,
+/// because a pattern's direction is not an expression in SolidCraft — there is no
+/// `hole_row_N_angle` parameter to drive it. A row along an axis stays a pattern.
+#[test]
+fn a_slanted_hole_row_is_written_as_single_holes() {
+    let plate = |holes: Vec<HoleSpec>| PlateSpec {
+        x: 80.0,
+        y: 50.0,
+        z: 6.0,
+        holes,
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        side_bosses: Vec::new(),
+        slots: vec![],
+        outline_fillet_rs: Vec::new(),
+        edge_fillet_r: None,
+    };
+    let (sin, cos) = 30f64.to_radians().sin_cos();
+    let slanted: Vec<HoleSpec> = (0..4)
+        .map(|i| HoleSpec { x: 15.0 + 12.0 * f64::from(i) * cos, y: 25.0 + 12.0 * f64::from(i) * sin, d: 6.0, head: None, blind: None })
+        .collect();
+    let json: serde_json::Value = serde_json::from_str(&plate(slanted).to_design("").to_json()).expect("valid");
+    let features = json["features"].as_array().expect("features");
+    let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
+    assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "Hole1", "Hole2", "Hole3", "Hole4"]);
+    assert!(features.iter().all(|f| f["type"] != "pattern"), "no pattern feature");
+    let params = json["params"].as_array().expect("params");
+    let param = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"));
+    assert!(!params.iter().any(|p| p["name"].as_str().is_some_and(|n| n.starts_with("hole_row"))), "no row params");
+    for (i, n) in (1..=4).enumerate() {
+        assert_eq!(param(&format!("hole_{n}_d")), Some("6 mm"));
+        assert_eq!(features[3 + i]["diameter"], format!("hole_{n}_d"));
+    }
+    assert_eq!(param("hole_1_x"), Some("15 mm"));
+    assert_eq!(param("hole_2_x"), Some("25.392 mm"));
+    assert_eq!(param("hole_2_y"), Some("31 mm"));
+    // A row along X stays a pattern.
+    let aligned: Vec<HoleSpec> =
+        (0..4).map(|i| HoleSpec { x: 15.0 + 12.0 * f64::from(i), y: 25.0, d: 6.0, head: None, blind: None }).collect();
+    let json: serde_json::Value = serde_json::from_str(&plate(aligned).to_design("").to_json()).expect("valid");
+    let names: Vec<&str> = json["features"].as_array().expect("features").iter().filter_map(|f| f["name"].as_str()).collect();
+    assert_eq!(names, ["Sketch1", "Extrude1", "Move1", "HoleRow1", "HoleRow1Pattern"]);
+    let params = json["params"].as_array().expect("params");
+    let param = |name: &str| params.iter().find(|p| p["name"] == name).map(|p| p["expr"].as_str().expect("expr"));
+    assert_eq!(param("hole_row_1_pitch"), Some("12 mm"));
+    assert_eq!(param("hole_row_1_n"), Some("4"));
+}
+
 /// A box rounded all over (mesh2cad's `edge_fillet_r`) is a plate whose one fillet rounds all
 /// twelve edges of the extrude — the four vertical ones and the eight on the top and bottom
 /// caps — before the holes are cut, as mesh2cad's `.edges().fillet()` does.

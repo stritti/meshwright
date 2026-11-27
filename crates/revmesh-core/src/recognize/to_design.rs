@@ -12,7 +12,7 @@ use crate::design::{
     polygons_sketch_dimensioned, rectangle_sketch, slot_sketch,
 };
 use crate::mesh::{Vec3, snap_dim, snap_mm};
-use crate::patterns::{HoleGroup, group_holes};
+use crate::patterns::{HoleGroup, group_holes_with_members, row_is_axis_aligned};
 
 /// The expressions for a point's world coordinates: along the extrusion axis the face's
 /// expression, along the profile axes the parameters named after their world axis letters.
@@ -850,23 +850,33 @@ fn block_features(
 
 /// The holes, grouped into patterns (see [`crate::patterns`]), each with the parameter prefix
 /// mesh2cad gives it: `hole_<n>`, `hole_row_<n>`, `hole_grid_<n>` or `hole_circle_<n>`, numbered
-/// per kind.
+/// per kind. A row that is not axis-aligned comes out as its single holes instead: a pattern's
+/// direction is not an expression in SolidCraft (roadmap 6.5).
 fn hole_groups(holes: &[HoleSpec]) -> Vec<(String, HoleGroup)> {
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
-    group_holes(holes)
-        .into_iter()
-        .map(|group| {
-            let prefix = match &group {
-                HoleGroup::Single(_) => "hole",
-                HoleGroup::Row { .. } => "hole_row",
-                HoleGroup::Grid { .. } => "hole_grid",
-                HoleGroup::Circle { .. } => "hole_circle",
-            };
-            let n = counts.entry(prefix).or_insert(0);
-            *n += 1;
-            (format!("{prefix}_{n}"), group)
-        })
-        .collect()
+    let mut named = Vec::new();
+    for (group, members) in group_holes_with_members(holes) {
+        if let HoleGroup::Row { angle, .. } = &group
+            && !row_is_axis_aligned(*angle)
+        {
+            for &i in &members {
+                let n = counts.entry("hole").or_insert(0);
+                *n += 1;
+                named.push((format!("hole_{n}"), HoleGroup::Single(holes[i].clone())));
+            }
+            continue;
+        }
+        let prefix = match &group {
+            HoleGroup::Single(_) => "hole",
+            HoleGroup::Row { .. } => "hole_row",
+            HoleGroup::Grid { .. } => "hole_grid",
+            HoleGroup::Circle { .. } => "hole_circle",
+        };
+        let n = counts.entry(prefix).or_insert(0);
+        *n += 1;
+        named.push((format!("{prefix}_{n}"), group));
+    }
+    named
 }
 
 /// The holes' parameters, positions in world coordinates for a part whose corner is at `at`,
