@@ -21,6 +21,9 @@ hero:
     - theme: alt
       text: GitHub
       link: https://github.com/stritti/revmesh
+    - theme: alt
+      text: Plugin list
+      link: https://tharje.github.io/solidcraft-plugins/
 
 features:
   - title: Editable, not a dead mesh
