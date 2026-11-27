@@ -1589,3 +1589,155 @@ fn side_boss_writes_a_cylinder_on_the_wall() {
     assert_eq!(top["axis"], serde_json::json!([0.0, 0.0, 1.0]));
     assert_eq!(top["base"], serde_json::json!(["boss_1_x", "boss_1_y", "base_z0 + base_t"]));
 }
+
+/// A proper rotation about `axis` by `angle` (Rodrigues' formula), as a map on points.
+fn rotation(axis: [f64; 3], angle: f64) -> impl Fn([f64; 3]) -> [f64; 3] {
+    use crate::mesh::{cross, dot};
+    let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+    let k = [axis[0] / len, axis[1] / len, axis[2] / len];
+    let (s, c) = angle.sin_cos();
+    move |p: [f64; 3]| {
+        let d = dot(p, k);
+        let cr = cross(k, p);
+        [
+            p[0] * c + cr[0] * s + k[0] * d * (1.0 - c),
+            p[1] * c + cr[1] * s + k[1] * d * (1.0 - c),
+            p[2] * c + cr[2] * s + k[2] * d * (1.0 - c),
+        ]
+    }
+}
+
+/// The mesh with every corner mapped through `f`.
+fn mapped(mesh: &Mesh, f: &dyn Fn([f64; 3]) -> [f64; 3]) -> Mesh {
+    Mesh::new(mesh.triangles.iter().map(|t| t.map(f)).collect())
+}
+
+/// The plate `spec` used by the slanted tests: 60 x 40 x 6 with one round hole.
+fn slanted_plate_spec() -> PlateSpec {
+    PlateSpec {
+        x: 60.0,
+        y: 40.0,
+        z: 6.0,
+        holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 6.0, head: None, blind: None }],
+        cutouts: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        side_bosses: vec![],
+        slots: vec![],
+        outline_fillet_rs: vec![],
+        edge_fillet_r: None,
+    }
+}
+
+/// The prism's height and volume in the slanted frame's recognition (a plate or a profile
+/// there — the frame's in-plane basis need not align with the outline's sides).
+fn slanted_prism(found: &Recognition) -> (f64, f64, usize) {
+    let Recognition::Slanted { prism, .. } = found else { panic!("not slanted: {found:?}") };
+    match &**prism {
+        Recognition::Plate { plate, .. } => (plate.z, plate.volume(), plate.holes.len()),
+        Recognition::Profile { profile, .. } => (profile.z, profile.volume(), profile.holes.len()),
+        other => panic!("not a prism in the frame: {other:?}"),
+    }
+}
+
+/// Roadmap 6.1: a plate rotated arbitrarily in the file is recognised in its own frame — the
+/// two dominant parallel planes give the axis by fixed-seed RANSAC, the Z pipeline runs in
+/// that frame — and reported as slanted, since SolidCraft's origin-plane sketches cannot
+/// place it.
+#[test]
+fn a_slanted_plate_is_recognised_in_its_own_frame() {
+    let spec = slanted_plate_spec();
+    let mesh = synth::plate(&spec, 32, [0.0; 3]);
+    let rot = rotation([1.0, 2.0, 3.0], 0.7);
+    let slanted = mapped(&mesh, &rot);
+    let found = recognize(&slanted);
+    let Recognition::Slanted { frame, .. } = &found else { panic!("not slanted: {found:?}") };
+    // The cap normal (Z after the rotation) becomes +Z in the frame.
+    let cap_normal = rot([0.0, 0.0, 1.0]);
+    let z = frame.rotate(cap_normal);
+    assert!(z[0].abs() < 1e-9 && z[1].abs() < 1e-9 && (z[2] - 1.0).abs() < 1e-9, "{z:?}");
+    // The frame is a proper rotation: it round-trips.
+    let p = [3.0, -5.0, 7.0];
+    let q = frame.unrotate(frame.rotate(p));
+    assert!((q[0] - p[0]).abs() < 1e-12 && (q[1] - p[1]).abs() < 1e-12 && (q[2] - p[2]).abs() < 1e-12, "{q:?}");
+    // The prism in the frame: the same height, hole and volume (corners snap to 0.001 mm).
+    let (height, volume, holes) = slanted_prism(&found);
+    assert_eq!(height, 6.0);
+    assert_eq!(holes, 1);
+    assert!((volume - spec.volume()).abs() < 1e-3 * spec.volume(), "{volume} vs {}", spec.volume());
+}
+
+/// The same through a single-precision STL round trip, as a file arrives.
+#[test]
+fn a_slanted_plate_from_a_file_is_recognised() {
+    let spec = slanted_plate_spec();
+    let mesh = synth::plate(&spec, 32, [0.0; 3]);
+    let parsed = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("parses");
+    let slanted = mapped(&parsed, &rotation([0.0, 1.0, 0.0], 0.9));
+    let found = recognize(&slanted);
+    let (height, volume, holes) = slanted_prism(&found);
+    assert!((height - 6.0).abs() < 0.01, "{height}");
+    assert_eq!(holes, 1);
+    assert!((volume - spec.volume()).abs() < 1e-2 * spec.volume(), "{volume} vs {}", spec.volume());
+}
+
+/// A rotation onto a principal axis is no slanted case: the X/Y/Z attempts read it as before.
+#[test]
+fn axis_aligned_rotations_are_not_slanted() {
+    let mut spec = slanted_plate_spec();
+    spec.holes = vec![];
+    let mesh = synth::plate(&spec, 32, [0.0; 3]);
+    let turned = mapped(&mesh, &rotation([1.0, 0.0, 0.0], std::f64::consts::FRAC_PI_2));
+    let found = recognize(&turned);
+    assert!(matches!(found, Recognition::Plate { .. } | Recognition::Profile { .. }), "{found:?}");
+}
+
+/// A slanted outline that is no rectangle is recognised as a profile in its own frame.
+#[test]
+fn a_slanted_profile_is_recognised_in_its_own_frame() {
+    let spec = ProfileSpec {
+        corners: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 15.0], [15.0, 15.0], [15.0, 40.0], [0.0, 40.0]],
+        z: 5.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        outline_pockets: Vec::new(),
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: Vec::new(),
+        outline_fillet_rs: vec![],
+    };
+    let mesh = synth::profile(&spec, 32, [0.0; 3]);
+    let slanted = mapped(&mesh, &rotation([2.0, -1.0, 0.5], 1.1));
+    let found = recognize(&slanted);
+    let Recognition::Slanted { prism, .. } = &found else { panic!("not slanted: {found:?}") };
+    let Recognition::Profile { profile, .. } = &**prism else { panic!("not a profile: {prism:?}") };
+    assert_eq!(profile.corners.len(), 6);
+    assert!((profile.volume() - spec.volume()).abs() < 1e-3 * spec.volume(), "{} vs {}", profile.volume(), spec.volume());
+    // Extruded 100 mm deep instead: the largest faces are then walls, not caps — the
+    // candidate planes beyond the dominant one must still find the caps' axis.
+    let mut deep = spec.clone();
+    deep.z = 100.0;
+    let mesh = synth::profile(&deep, 32, [0.0; 3]);
+    let slanted = mapped(&mesh, &rotation([2.0, -1.0, 0.5], 1.1));
+    let found = recognize(&slanted);
+    let (height, volume, _) = slanted_prism(&found);
+    assert!((height - 100.0).abs() < 0.01, "{height}");
+    assert!((volume - deep.volume()).abs() < 1e-3 * deep.volume(), "{volume} vs {}", deep.volume());
+}
+
+/// A plate tilted 1° about Y is beyond the principal axes' positional tolerance, so the X/Y/Z
+/// attempts miss it — the fitted axis (1° off Z is no world axis) must catch it.
+#[test]
+fn a_one_degree_tilted_plate_is_slanted() {
+    let spec = slanted_plate_spec();
+    let mesh = synth::plate(&spec, 32, [0.0; 3]);
+    let tilted = mapped(&mesh, &rotation([0.0, 1.0, 0.0], 1.0_f64.to_radians()));
+    let found = recognize(&tilted);
+    let (height, volume, holes) = slanted_prism(&found);
+    assert!((height - 6.0).abs() < 0.01, "{height}");
+    assert_eq!(holes, 1);
+    assert!((volume - spec.volume()).abs() < 1e-2 * spec.volume(), "{volume} vs {}", spec.volume());
+}

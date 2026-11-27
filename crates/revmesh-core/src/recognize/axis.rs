@@ -3,7 +3,9 @@
 //! mesh2cad tries a prism along X, Y and Z and takes whichever fits. revmesh has one pipeline,
 //! written for a Z extrusion, so it rotates the mesh into a frame where the part's axis is +Z,
 //! recognises there, and rotates the result back. Both rotations are proper (determinant +1), so
-//! volumes, areas and loop windings survive unchanged.
+//! volumes, areas and loop windings survive unchanged. When no principal axis fits, roadmap 6.1
+//! fits the prism's axis itself: [`prism_axis`] finds the two dominant parallel planes by
+//! fixed-seed RANSAC and returns their normal as a [`Frame`], another proper rotation.
 //!
 //! SolidCraft's origin planes fix the sketch side of each frame (solidcore's `Plane`: `YZ` has
 //! sketch axes (Y, Z) and normal +X, `XZ` has (X, −Z) and normal +Y, `XY` has (X, Y) and normal
@@ -11,7 +13,8 @@
 //! matching plane, and `Extent::positive` extrudes along the axis. mesh2cad stores the outline
 //! the same way: X extrusions as (y, z), Y as (x, z), Z as (x, y).
 
-use crate::mesh::{Mesh, Vec3};
+use crate::mesh::{Mesh, Vec3, cross, dot, length, sub};
+use crate::plate::Rng;
 
 /// A principal axis a part may be extruded along.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +167,257 @@ impl Axis {
     }
 }
 
+/// A proper rotation (determinant +1) taking the file's frame to a recognition frame in which a
+/// prism's axis is +Z: the orthonormal, right-handed rows `u`, `v`, `w` (the axis). Rotating a
+/// mesh with it keeps volumes, areas and loop windings unchanged, so the Z pipeline runs as is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Frame {
+    u: Vec3,
+    v: Vec3,
+    w: Vec3,
+}
+
+impl Frame {
+    /// The canonical frame whose axis is the unit vector `w`: `u` is built from the world axis
+    /// least parallel to `w`, so the same `w` always gives the same basis.
+    #[must_use]
+    #[allow(clippy::many_single_char_names)] // the basis vectors u, v, w and helper h
+    pub fn from_axis(w: Vec3) -> Self {
+        let i = (0..3).min_by(|&a, &b| w[a].abs().total_cmp(&w[b].abs())).unwrap_or(0);
+        let mut h = [0.0; 3];
+        h[i] = 1.0;
+        let u = cross(w, h);
+        let u = [u[0] / length(u), u[1] / length(u), u[2] / length(u)];
+        let v = cross(w, u);
+        Self { u, v, w }
+    }
+
+    /// A world point in the recognition frame.
+    #[must_use]
+    pub fn rotate(&self, p: Vec3) -> Vec3 {
+        [dot(p, self.u), dot(p, self.v), dot(p, self.w)]
+    }
+
+    /// A recognition-frame point back in world coordinates.
+    #[must_use]
+    pub fn unrotate(&self, p: Vec3) -> Vec3 {
+        [
+            self.u[0] * p[0] + self.v[0] * p[1] + self.w[0] * p[2],
+            self.u[1] * p[0] + self.v[1] * p[1] + self.w[1] * p[2],
+            self.u[2] * p[0] + self.v[2] * p[1] + self.w[2] * p[2],
+        ]
+    }
+
+    /// The mesh with every corner rotated into the recognition frame.
+    #[must_use]
+    pub fn rotate_mesh(&self, mesh: &Mesh) -> Mesh {
+        Mesh::new(mesh.triangles.iter().map(|t| t.map(|p| self.rotate(p))).collect())
+    }
+}
+
+/// A facet's plane sample: unit normal, twice its area, one corner, and the facet's index in
+/// the mesh's triangle list (degenerate facets are dropped, so the two lists differ in length).
+struct Facet {
+    n: Vec3,
+    area2: f64,
+    p: Vec3,
+    idx: usize,
+}
+
+/// Facet normals within this angle count as parallel to a candidate plane (5°).
+const PLANE_PARALLEL_COS: f64 = 0.996_194_698_091_745_5; // cos(5°)
+
+/// An axis within this angle of a world axis is numerically a world axis; the X/Y/Z attempts
+/// cover those (anything tilted further already failed them on the positional tolerance, which
+/// is far tighter than this) — 0.01°.
+const WORLD_AXIS_COS: f64 = 0.999_999_984_769_913_2; // cos(0.01°)
+
+/// The facets of `mesh` as plane samples, degenerate ones dropped.
+fn facets_of(mesh: &Mesh) -> Vec<Facet> {
+    mesh.triangles
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, t)| {
+            let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+            let len = length(n);
+            (len > 0.0).then(|| Facet { n: [n[0] / len, n[1] / len, n[2] / len], area2: len, p: t[0], idx })
+        })
+        .collect()
+}
+
+/// Whether facet `j` lies on the plane `(n, d)`: its normal parallel and all its corners within
+/// `tol` of it.
+fn on_plane(facets: &[Facet], triangles: &[crate::mesh::Triangle], j: usize, n: Vec3, d: f64, tol: f64) -> bool {
+    let g = &facets[j];
+    dot(g.n, n).abs() >= PLANE_PARALLEL_COS && triangles[g.idx].iter().all(|p| (dot(*p, n) - d).abs() <= tol)
+}
+
+/// The dominant plane of `facets` (sampled over the strided `pool`) by fixed-seed RANSAC
+/// (Schnabel, Wahl, Klein 2007, as `ransac_circle` in `plate/geometry.rs` does for circles):
+/// one facet per sample is the 3-point minimal sample (its own plane), inliers are the pool's
+/// facets on the plane within `tol`, scored by area, the iteration count adapted to the inlier
+/// ratio. Returns the refined unit normal and offset.
+#[allow(clippy::many_single_char_names)] // points and normals n, p, the areas a, as in the geometry
+fn ransac_plane(facets: &[Facet], triangles: &[crate::mesh::Triangle], pool: &[usize], tol: f64) -> Option<(Vec3, f64)> {
+    let mut rng = Rng::new(0xA51A_6E01);
+    let mut best: Option<(f64, Vec3, f64)> = None; // inlier area, unit normal, offset
+    let mut w = 0.5_f64; // the inlier ratio estimate, adapted as samples come in
+    let mut iter = 0_usize;
+    loop {
+        let n_max = ((1.0 - 0.99_f64).ln() / (1.0 - w).ln()).ceil().clamp(3.0, 512.0);
+        if iter as f64 >= n_max {
+            break;
+        }
+        iter += 1;
+        let f = &facets[pool[rng.below(pool.len())]];
+        let (n, d) = (f.n, dot(f.p, f.n));
+        let mut area = 0.0;
+        let mut count = 0_usize;
+        for &j in pool {
+            if on_plane(facets, triangles, j, n, d, tol) {
+                area += facets[j].area2;
+                count += 1;
+            }
+        }
+        // A single nondegenerate facet may establish a candidate plane (a triangular prism's
+        // cap is one triangle); the area score and the gates below reject weak ones.
+        if best.as_ref().is_none_or(|(a, _, _)| area > *a) {
+            best = Some((area, n, d));
+            w = count as f64 / pool.len() as f64;
+        }
+    }
+    let (_, n, d) = best?;
+    // Refine on the pool's inliers: the area-weighted mean normal and offset.
+    let mut sum = [0.0; 3];
+    let mut d_sum = 0.0;
+    let mut area = 0.0;
+    for &j in pool {
+        if on_plane(facets, triangles, j, n, d, tol) {
+            for k in 0..3 {
+                sum[k] += facets[j].n[k] * facets[j].area2;
+            }
+            d_sum += dot(facets[j].p, n) * facets[j].area2;
+            area += facets[j].area2;
+        }
+    }
+    Some(([sum[0] / length(sum), sum[1] / length(sum), sum[2] / length(sum)], d_sum / area))
+}
+
+/// The dominant opposite-facing parallel plane to `(n, d1)`: the anti-parallel facets' offsets
+/// along `n`, clustered where they are within `tol`, the dominant cluster that is not coplanar
+/// with the first plane. Returns its area (twice) and mean offset.
+#[allow(clippy::many_single_char_names)] // offsets o and areas a, as in the geometry
+fn opposite_plane(facets: &[Facet], n: Vec3, d1: f64, tol: f64) -> Option<(f64, f64)> {
+    let mut opposite: Vec<(f64, f64)> = facets // offset along n, area2
+        .iter()
+        .filter(|g| dot(g.n, n) <= -PLANE_PARALLEL_COS)
+        .map(|g| (dot(g.p, n), g.area2))
+        .filter(|(o, _)| (*o - d1).abs() > tol)
+        .collect();
+    if opposite.is_empty() {
+        return None;
+    }
+    opposite.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // Cluster the sorted offsets where they are within `tol` of each other; the dominant
+    // cluster's area-weighted mean offset is the second plane.
+    let mut best: Option<(f64, f64)> = None; // area, mean offset
+    let mut cluster: Vec<(f64, f64)> = Vec::new();
+    let flush = |cluster: &mut Vec<(f64, f64)>, best: &mut Option<(f64, f64)>| {
+        if !cluster.is_empty() {
+            let area: f64 = cluster.iter().map(|c| c.1).sum();
+            let mean = cluster.iter().map(|c| c.0 * c.1).sum::<f64>() / area;
+            if best.as_ref().is_none_or(|(a, _)| area > *a) {
+                *best = Some((area, mean));
+            }
+        }
+        cluster.clear();
+    };
+    for &(o, a) in &opposite {
+        if let Some(last) = cluster.last()
+            && (o - last.0).abs() <= tol
+        {
+            cluster.push((o, a));
+        } else {
+            flush(&mut cluster, &mut best);
+            cluster.push((o, a));
+        }
+    }
+    flush(&mut cluster, &mut best);
+    best
+}
+
+/// The frame for one candidate plane `(n, d1)`, when it pairs with an opposite parallel plane
+/// into a prism: the pair's areas comparable, the part lying between the two planes, and the
+/// axis off every world axis (those the X/Y/Z attempts already cover).
+#[allow(clippy::many_single_char_names)] // the normal n, offsets d, areas a, as in the geometry
+fn frame_for_plane(mesh: &Mesh, facets: &[Facet], n: Vec3, d1: f64, tol: f64) -> Option<Frame> {
+    let triangles = &mesh.triangles;
+    // The inlier area over all facets, for the pair's significance.
+    let area1: f64 = facets.iter().enumerate().filter(|(j, _)| on_plane(facets, triangles, *j, n, d1, tol)).map(|(_, g)| g.area2).sum();
+    let (area2, d2) = opposite_plane(facets, n, d1, tol)?;
+    // A prism's two caps carry comparable area, and they are apart.
+    if area2 < 0.5 * area1 || (d2 - d1).abs() <= tol {
+        return None;
+    }
+    // The part lies between the two planes (degenerate facets carry no corners of the part).
+    let (lo, hi) = (d1.min(d2), d1.max(d2));
+    if !facets.iter().all(|g| {
+        triangles[g.idx].iter().all(|p| {
+            let o = dot(*p, n);
+            o >= lo - tol && o <= hi + tol
+        })
+    }) {
+        return None;
+    }
+    // A canonical sign, as `unit_dir` fixes one: the largest-magnitude component positive.
+    let i = (0..3).max_by(|&a, &b| n[a].abs().total_cmp(&n[b].abs())).unwrap_or(0);
+    let n = if n[i] < 0.0 { [-n[0], -n[1], -n[2]] } else { n };
+    // A world axis is the X/Y/Z attempts' job, already tried.
+    for e in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] {
+        if dot(n, e).abs() >= WORLD_AXIS_COS {
+            return None;
+        }
+    }
+    Some(Frame::from_axis(n))
+}
+
+/// The prism axes of `mesh` found by fixed-seed RANSAC over its facets (Schnabel, Wahl, Klein
+/// 2007): a prism's two caps are a pair of dominant parallel planes, and their normal is the
+/// axis. Up to eight candidate planes are tried, largest first — for a long extrusion the
+/// largest faces are walls, not caps. Empty when no candidate pairs up into a prism or the
+/// axis is (numerically) a world axis, which the X/Y/Z attempts already cover.
+#[allow(clippy::many_single_char_names)] // the normal n, offset d, as in the geometry
+pub(crate) fn prism_axes(mesh: &Mesh, tol: f64) -> Vec<Frame> {
+    let facets = facets_of(mesh);
+    if facets.len() < 3 {
+        return Vec::new();
+    }
+    // A deterministic strided sample pool, so the RANSAC cost stays bounded on big meshes.
+    let step = (facets.len() / 10_000).max(1);
+    let all: Vec<usize> = (0..facets.len()).step_by(step).collect();
+    let mut avail = all.clone();
+    let mut candidates: Vec<(Vec3, f64)> = Vec::new();
+    let mut out: Vec<Frame> = Vec::new();
+    // A long extrusion's largest faces are walls; its caps may rank further down, so try
+    // enough candidates to reach them.
+    for _ in 0..8 {
+        let Some((n, d)) = ransac_plane(&facets, &mesh.triangles, &avail, tol) else { break };
+        // Skip a near-duplicate of an earlier candidate, but still take its facets out of the
+        // pool so the next RANSAC run finds a different plane.
+        if !candidates.iter().any(|(cn, cd)| dot(*cn, n).abs() > PLANE_PARALLEL_COS && (cd - d).abs() <= tol) {
+            candidates.push((n, d));
+            if let Some(frame) = frame_for_plane(mesh, &facets, n, d, tol) {
+                out.push(frame);
+            }
+        }
+        avail.retain(|&j| !on_plane(&facets, &mesh.triangles, j, n, d, tol));
+        if avail.len() < 2 {
+            break;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +448,96 @@ mod tests {
         // Y: profile (u, v) is world (x, -z); the XZ plane's sketch y is -Z.
         assert_eq!(Axis::Y.world(at, 1.0, 2.0, 3.0), [11.0, 23.0, 28.0]);
         assert_eq!(Axis::Y.sketch_point(at, [1.0, 2.0]), [11.0, -28.0]);
+    }
+
+    #[test]
+    #[allow(clippy::many_single_char_names)] // the axis w and point p
+    fn frames_are_proper_rotations_taking_the_axis_to_z() {
+        for w in [[0.3, 0.5, 0.81], [-0.6, 0.2, 0.77], [0.0, 1.0, 0.0]] {
+            let len = length(w);
+            let w = [w[0] / len, w[1] / len, w[2] / len];
+            let frame = Frame::from_axis(w);
+            let z = frame.rotate(w);
+            assert!(z[0].abs() < 1e-12 && z[1].abs() < 1e-12 && (z[2] - 1.0).abs() < 1e-12, "{w:?} {z:?}");
+            let p = [3.0, -5.0, 7.0];
+            let q = frame.unrotate(frame.rotate(p));
+            assert!((q[0] - p[0]).abs() < 1e-12 && (q[1] - p[1]).abs() < 1e-12 && (q[2] - p[2]).abs() < 1e-12, "{w:?} {q:?}");
+            // A proper rotation keeps the cross product: rotate(x) x rotate(y) = rotate(x x y).
+            let (x, y) = ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+            let cr = cross(frame.rotate(x), frame.rotate(y));
+            let want = frame.rotate(cross(x, y));
+            assert!((cr[0] - want[0]).abs() < 1e-12 && (cr[1] - want[1]).abs() < 1e-12 && (cr[2] - want[2]).abs() < 1e-12);
+            // The same axis gives the same basis, reproducibly.
+            assert_eq!(Frame::from_axis(w), frame);
+        }
+    }
+
+    /// A proper rotation about `axis` by `angle` (Rodrigues' formula).
+    fn rotation(axis: [f64; 3], angle: f64) -> impl Fn(Vec3) -> Vec3 {
+        let len = length(axis);
+        let k = [axis[0] / len, axis[1] / len, axis[2] / len];
+        let (s, c) = angle.sin_cos();
+        move |p: Vec3| {
+            let d = dot(p, k);
+            let cr = cross(k, p);
+            [
+                p[0] * c + cr[0] * s + k[0] * d * (1.0 - c),
+                p[1] * c + cr[1] * s + k[1] * d * (1.0 - c),
+                p[2] * c + cr[2] * s + k[2] * d * (1.0 - c),
+            ]
+        }
+    }
+
+    #[test]
+    #[allow(clippy::many_single_char_names)] // the axis k, angle c/s, point p
+    fn prism_axes_need_two_parallel_planes() {
+        // A tetrahedron has no pair of parallel faces: no axis.
+        let tetra = crate::mesh::tests::tetrahedron(10.0);
+        assert_eq!(prism_axes(&tetra, 0.01), Vec::<Frame>::new());
+        // An axis-aligned box's caps are horizontal: a world axis, left to the Z attempt.
+        let b = crate::recognize::tests::block(30.0, 20.0, 5.0, [0.0; 3]);
+        assert_eq!(prism_axes(&b, 0.01), Vec::<Frame>::new());
+        // The same box turned about (1, 1, 1): the caps give the axis.
+        let rot = rotation([1.0, 1.0, 1.0], 0.9);
+        let turned = Mesh::new(b.triangles.iter().map(|t| t.map(&rot)).collect());
+        let frame = prism_axes(&turned, 0.01).into_iter().next().expect("a slanted box has an axis");
+        // The cap normal (Z after the turn) becomes +Z, not the rotation axis itself.
+        let z = frame.rotate(rot([0.0, 0.0, 1.0]));
+        assert!(z[0].abs() < 1e-6 && z[1].abs() < 1e-6 && (z[2] - 1.0).abs() < 1e-6, "{z:?}");
+        // A zero-area facet in front does not shift the facet indices: same axis.
+        let mut with_degenerate = turned.triangles.clone();
+        with_degenerate.insert(0, [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+        let turned2 = Mesh::new(with_degenerate);
+        let frame2 = prism_axes(&turned2, 0.01).into_iter().next().expect("degenerate facet must not break the axis");
+        let z2 = frame2.rotate(rot([0.0, 0.0, 1.0]));
+        assert!(z2[0].abs() < 1e-6 && z2[1].abs() < 1e-6 && (z2[2] - 1.0).abs() < 1e-6, "{z2:?}");
+    }
+
+    /// A triangular prism whose caps are single triangles still gets its axis, and a tilt of
+    /// 1° — far beyond the recognition tolerance, so the X/Y/Z attempts miss it — is not
+    /// excluded as a "world axis".
+    #[test]
+    fn prism_axes_accept_single_triangle_caps_and_small_tilts() {
+        // A right-triangular prism, legs 60 and 40, extruded 5: each cap one triangle.
+        let outline = [[0.0, 0.0], [60.0, 0.0], [0.0, 40.0]];
+        let mut t: Vec<[Vec3; 3]> = Vec::new();
+        let at = |p: [f64; 2], z: f64| [p[0], p[1], z];
+        t.push([at(outline[0], 0.0), at(outline[2], 0.0), at(outline[1], 0.0)]);
+        t.push([at(outline[0], 5.0), at(outline[1], 5.0), at(outline[2], 5.0)]);
+        for i in 0..3 {
+            let (a, b) = (outline[i], outline[(i + 1) % 3]);
+            t.push([at(a, 0.0), at(b, 0.0), at(b, 5.0)]);
+            t.push([at(a, 0.0), at(b, 5.0), at(a, 5.0)]);
+        }
+        let prism = Mesh::new(t);
+        let rot = rotation([1.0, 2.0, 3.0], 0.8);
+        let turned = Mesh::new(prism.triangles.iter().map(|t| t.map(&rot)).collect());
+        let frames = prism_axes(&turned, 0.01);
+        assert!(!frames.is_empty(), "a triangular prism's single-triangle caps give an axis");
+        // A plate tilted 1° about Y: off every world axis for the X/Y/Z attempts.
+        let b = crate::recognize::tests::block(60.0, 40.0, 6.0, [0.0; 3]);
+        let tilted = Mesh::new(b.triangles.iter().map(|t| t.map(rotation([0.0, 1.0, 0.0], 1.0_f64.to_radians()))).collect());
+        assert!(!prism_axes(&tilted, 0.001).is_empty(), "a 1°-tilt is no world axis");
     }
 
     #[test]

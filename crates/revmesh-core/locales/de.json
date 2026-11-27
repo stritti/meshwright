@@ -14,6 +14,8 @@
   "report.deviation.message": "Die Flächen des Netzes liegen höchstens so weit von den erkannten Flächen entfernt: {faces}.",
   "report.unrecognized.title": "Als Netz behalten",
   "report.unrecognized.message": "Es wurden keine parametrischen Features erkannt: {reason}.",
+  "report.slanted.title": "Als Netz behalten — im File schräg ausgerichtet",
+  "report.slanted.message": "Als {summary} erkannt, aber die Achse liegt schräg im File: SolidCraft skizziert nur auf seinen Ursprungsebenen, daher bleibt das Teil ein Netz.",
   "report.units.title": "Einheiten umgerechnet",
   "report.units.message": "Die Datei wurde als Zoll gelesen und in Millimeter umgerechnet.",
   "report.selfcheck.title": "Das erkannte Design hat die Neuaufbau-Prüfung nicht bestanden",

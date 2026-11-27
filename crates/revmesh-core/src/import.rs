@@ -138,6 +138,25 @@ fn import_mesh_mm(mesh: &Mesh, file_name: &str, options: &ImportOptions) -> Impo
         return result;
     }
     let found = recognize(mesh);
+    // Roadmap 6.1: a prism slanted in the file is recognised — the report can say what it is —
+    // but SolidCraft's origin-plane sketches with translate-only moves cannot place it, so the
+    // mesh is kept.
+    if let Recognition::Slanted { prism, .. } = &found {
+        let summary = match &**prism {
+            Recognition::Plate { plate, .. } => plate.describe_in(locale),
+            Recognition::Profile { profile, .. } => profile.describe_in(locale),
+            _ => unreachable!("a slanted prism is a plate or a profile"),
+        };
+        let mut result = mesh_import(mesh.clone(), file_name, &body, locale);
+        result.report.push(LossItem {
+            severity: Severity::Degraded,
+            title: locale.text("report.slanted.title").into(),
+            subject: body,
+            message: locale.format("report.slanted.message", &[("summary", &summary)]),
+            code: "revmesh.slanted",
+        });
+        return result;
+    }
     let recognised = match &found {
         Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", *offset), plate.describe_in(locale), plate.volume())),
         Recognition::Profile { profile, offset, axis } => {
@@ -148,6 +167,7 @@ fn import_mesh_mm(mesh: &Mesh, file_name: &str, options: &ImportOptions) -> Impo
             Ok((spec.to_design_on("", *offset, *axis), spec.describe_in(locale, *axis), spec.volume()))
         }
         Recognition::Unrecognized { reason } => Err(reason.clone()),
+        Recognition::Slanted { .. } => unreachable!("a slanted prism is kept as a mesh above"),
     };
     match recognised {
         Ok((design, summary, volume)) => {
@@ -922,5 +942,62 @@ mod tests {
         assert_eq!(body_name("bracket.stl"), "bracket");
         assert_eq!(body_name("a.b.stl"), "a.b");
         assert_eq!(body_name(".stl"), "Mesh");
+    }
+}
+
+#[cfg(test)]
+mod slanted_tests {
+    use super::*;
+    use crate::mesh::Mesh;
+    use crate::recognize::{HoleSpec, PlateSpec};
+    use crate::stl;
+    use crate::synth;
+
+    /// A proper rotation about `axis` by `angle` (Rodrigues' formula).
+    fn rotation(axis: [f64; 3], angle: f64) -> impl Fn([f64; 3]) -> [f64; 3] {
+        use crate::mesh::{cross, dot};
+        let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+        let k = [axis[0] / len, axis[1] / len, axis[2] / len];
+        let (s, c) = angle.sin_cos();
+        move |p: [f64; 3]| {
+            let d = dot(p, k);
+            let cr = cross(k, p);
+            [
+                p[0] * c + cr[0] * s + k[0] * d * (1.0 - c),
+                p[1] * c + cr[1] * s + k[1] * d * (1.0 - c),
+                p[2] * c + cr[2] * s + k[2] * d * (1.0 - c),
+            ]
+        }
+    }
+
+    /// Roadmap 6.1: a plate slanted in the file is recognised but kept as a mesh (SolidCraft's
+    /// origin-plane sketches cannot place it), and the report says what was recognised
+    /// (`revmesh.slanted`).
+    #[test]
+    fn a_slanted_plate_is_kept_as_a_mesh_with_the_recognised_summary() {
+        let spec = PlateSpec {
+            x: 60.0,
+            y: 40.0,
+            z: 6.0,
+            holes: vec![HoleSpec { x: 30.0, y: 20.0, d: 6.0, head: None, blind: None }],
+            cutouts: vec![],
+            pads: vec![],
+            pockets: vec![],
+            bosses: vec![],
+            side_bosses: vec![],
+            slots: vec![],
+            outline_fillet_rs: vec![],
+            edge_fillet_r: None,
+        };
+        let mesh = synth::plate(&spec, 32, [0.0; 3]);
+        let rot = rotation([1.0, 2.0, 3.0], 0.7);
+        let slanted = Mesh::new(mesh.triangles.iter().map(|t| t.map(&rot)).collect());
+        let bytes = stl::write_binary(&slanted);
+        let result = import(&bytes, "slanted.stl", &ImportOptions::default()).expect("imports");
+        // A mesh body, not a parametric design.
+        assert_eq!(result.design.features.len(), 1);
+        let item = result.report.items.iter().find(|i| i.code == "revmesh.slanted").expect("the slanted report item");
+        assert!(item.message.contains("plate"), "{}", item.message);
+        assert!(item.message.contains("1 hole"), "{}", item.message);
     }
 }
