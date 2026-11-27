@@ -20,7 +20,7 @@ The recognition follows [mesh2cad](https://github.com/emirmrkaljevic/mesh2cad)
 runs inside SolidCraft's WebAssembly sandbox without Python, numpy or OpenCascade.
 
 > **Status: early.** The plugin pipeline works end to end: mesh in, design out, tested in
-> SolidCraft 0.50. Recognition finds plates: any outline of straight sides or circular arc> sides (rectangles, L-shapes, brackets, chamfered or slanted sides, bulges, stadium ends) extruded along Z — or along X or Y, a part
+> SolidCraft 0.51. Recognition finds plates: any outline of straight sides or circular arc> sides (rectangles, L-shapes, brackets, chamfered or slanted sides, bulges, stadium ends) extruded along Z — or along X or Y, a part
 > standing upright —, its corners parallel to that axis sharp or all rounded, each with its own radius,
 > with round through holes; and boxes with all twelve edges rounded with one radius. Everything
 > else is imported as a mesh body, with the reason in the
@@ -52,7 +52,7 @@ when set), `%LOCALAPPDATA%\SolidCraft\plugins\` (Windows), `~/Library/Applicatio
 
 | revmesh | SolidCraft |
 |---|---|
-| 0.2.x (current) | 0.50.x — the plugin interface (`crates/revmesh-plugin/wit/plugin.wit`) is vendored unchanged from SolidCraft **v0.50.0**, and CI runs the plugin tests against `solidcraft-cli` 0.50.0 |
+| 0.2.x (current) | 0.51.x — the plugin interface (`crates/revmesh-plugin/wit/plugin.wit`) is vendored unchanged from SolidCraft **v0.51.1**, and CI runs the plugin tests against `solidcraft-cli` 0.51.1 |
 
 SolidCraft's plugin runtime is experimental, so a different SolidCraft version may refuse the
 package or need a different revmesh — keep both up to date. The
@@ -234,7 +234,7 @@ three). [AGENTS.md](AGENTS.md) is the short orientation for agents working on th
 
 Every SolidCraft skill opens with the same mandatory conformance check: before touching the plugin
 boundary, verify compatibility and full utilization against SolidCraft's
-[`docs/plugins.md` at the pinned tag `v0.50.0`](https://github.com/tangency-labs/solidcraft/blob/v0.50.0/docs/plugins.md)
+[`docs/plugins.md` at the pinned tag `v0.51.1`](https://github.com/tangency-labs/solidcraft/blob/v0.51.1/docs/plugins.md)
 and [`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md).
 
 ## Contributing
