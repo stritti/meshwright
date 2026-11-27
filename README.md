@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-stritti.github.io%2Frevmesh-3e7bd6.svg)](https://stritti.github.io/revmesh/)
 
+![A NEMA 17 motor plate: STL mesh in, parametric sketch, extrude and holes out](docs/public/examples/nema17-motor-plate.png)
+
 **Open STL, OBJ and PLY files in [SolidCraft](https://github.com/tangency-labs/solidcraft) as editable designs.**
 
 revmesh is a SolidCraft importer plugin. Instead of a dead triangle mesh, it recognises what
