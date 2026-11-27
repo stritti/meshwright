@@ -1,4 +1,4 @@
-# What `auto` recognises
+# What the import recognises
 
 | In the STL | In SolidCraft | Parameters |
 |---|---|---|

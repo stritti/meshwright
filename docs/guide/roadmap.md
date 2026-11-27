@@ -114,10 +114,10 @@
       meet their face at 90°
    plus what is still open in 3.10 and 3.12: bosses on side faces, roofs and bevels on stacks
 7. **Import and conversion**:
-   1. (done: the manifest requests `evaluate@0.2`; in auto mode the serialised design is staged
+   1. (done: the manifest requests `evaluate@0.2`; a recognised design is staged
       and rebuilt in the app's private sandbox (`document.inspect`) before it is written, and a
       design the app cannot open falls back to the mesh body with the reason in the loss report,
-      code `revmesh.selfcheck`; mesh-mode imports are not checked — `self_check` in
+      code `revmesh.selfcheck`; mesh-body imports are not checked — `self_check` in
       `crates/revmesh-plugin/src/lib.rs`, closing item 4 at import time) an in-sandbox self-check:
       request the `evaluate@0.2` capability, stage the produced design
       and rebuild it, and on feature errors fall back to the mesh body with the reason in the
@@ -132,17 +132,23 @@
    3. double-precision coordinates in mesh bodies beyond the single-precision range (the design
       is written with `f32` coordinates today, `design/mod.rs`) — parts far from the origin lose
       precision in the mesh fallback
-   4. (done: `auto` accepts 16 MiB vs 32 MiB in mesh mode — `import_mesh` takes the mesh by
-      reference and clones only in the mesh/unrecognized fallback paths, and `Faces.chords` is
-      slimmed from (a, b, middle, length) to (a, b, mid_z, length); measured peak ≈ 90 MiB at
-      16 MiB, inside the 128 MiB budget (`AUTO_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`);
-      32 MiB would need index-based face storage) a higher `auto` input ceiling (16 MiB today vs
-      32 MiB in mesh mode, `revmesh-plugin`) by slimming the face and wall indexes recognition
+   4. (done: files up to 32 MiB are accepted (`MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`)
+      and recognition is gated at `MAX_RECOGNITION_TRIANGLES` (≈ 335k triangles ≈ 16 MiB of binary
+      STL) in `revmesh-core` — `import_mesh` takes the mesh by reference and clones only in the
+      mesh/unrecognized fallback paths, and `Faces.chords` is slimmed from (a, b, middle, length)
+      to (a, b, mid_z, length); measured peak ≈ 90 MiB at 16 MiB, inside the 128 MiB budget; more
+      would need index-based face storage) a higher recognition ceiling (335k triangles today,
+      `revmesh-core`) by slimming the face and wall indexes recognition
       builds
    5. (done: ASCII-STL syntax errors carry a `SyntaxReason` (`stl.rs`) rendered in the import
       language via `stl.syntax.reason.*` in the locale catalogs; the dialog's `units` option
       (`plugin.json`) reads inch files as inches and scales them to millimetres in place
       (`convert_units`, range-checked afterwards), noted in the report as `revmesh.units`).
+   6. (done: the import dialog's `mode` option (`auto`/`mesh`) is gone — `plugin.json` only asks
+      for `units`; the import always tries recognition and falls back to the mesh body where
+      nothing is recognised (`revmesh.unrecognized`), the app's self-check fails
+      (`revmesh.selfcheck`) or the mesh exceeds `MAX_RECOGNITION_TRIANGLES` (`revmesh.too_large`),
+      and the loss report says which one happened) an import dialog without a mode choice
 
 Converting a mesh body that is already in the open design (not just an STL file) is tracked in
 [issue #70](https://github.com/stritti/revmesh/issues/70); the spike's findings — second package

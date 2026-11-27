@@ -117,10 +117,10 @@
       erkannte Flächen schließen zu Schleifen, Wände treffen ihre Fläche rechtwinklig
    plus was in 3.10 und 3.12 noch offen ist: Zapfen an Seitenflächen, Dächer und Fasen auf Stapeln
 7. **Import und Konvertierung**:
-   1. (erledigt: das Manifest fordert `evaluate@0.2`; im auto-Modus wird die serialisierte Konstruktion
+   1. (erledigt: das Manifest fordert `evaluate@0.2`; wird eine erkannte Konstruktion
       in der privaten Sandbox der App gestaget und dort neu aufgebaut (`document.inspect`), bevor sie
       geschrieben wird, und eine Konstruktion, die die App nicht öffnen kann, fällt mit dem Grund im
-      Verlustbericht auf den Mesh-Body zurück, Code `revmesh.selfcheck`; mesh-Modus-Importe werden nicht
+      Verlustbericht auf den Mesh-Body zurück, Code `revmesh.selfcheck`; Mesh-Body-Importe werden nicht
       geprüft — `self_check` in `crates/revmesh-plugin/src/lib.rs`, schließt Punkt 4 zum Importzeitpunkt)
       eine Selbstprüfung in der App-Sandbox: die Capability `evaluate@0.2` anfordern, die erzeugte
       Konstruktion stagen und neu aufbauen, und bei Feature-Fehlern mit dem Grund im Bericht auf den
@@ -136,12 +136,19 @@
    3. doppeltgenaue Koordinaten in Mesh-Bodies jenseits des einfachgenauen Bereichs (die Konstruktion
       wird heute mit `f32`-Koordinaten geschrieben, `design/mod.rs`) — Teile weit vom Ursprung verlieren
       im Netz-Fallback an Präzision
-   4. eine höhere `auto`-Eingabegrenze (heute 16 MiB gegen 32 MiB im mesh-Modus, `revmesh-plugin`), indem
+   4. eine höhere Erkennungsgrenze (heute ≈ 335.000 Dreiecke ≈ 16 MiB binäres STL,
+      `MAX_RECOGNITION_TRIANGLES` in `revmesh-core`), indem
       die Indexe, die die Erkennung über Flächen und Wände baut, schlanker werden
    5. (erledigt: ASCII-STL-Syntaxfehler tragen einen `SyntaxReason` (`stl.rs`), gerendert in der
       Importsprache über `stl.syntax.reason.*` in den Lokalisierungskatalogen; die Dialogoption
       `units` (`plugin.json`) liest Zoll-Dateien als Zoll und skaliert sie direkt auf Millimeter
       (`convert_units`, danach bereichsgeprüft), vermerkt im Bericht als `revmesh.units`)
+   6. (erledigt: die Dialogoption `mode` (`auto`/`mesh`) ist entfallen — `plugin.json` fragt nur
+      noch nach `units`; der Import versucht immer die Erkennung und fällt auf den Mesh-Body
+      zurück, wo nichts erkannt wird (`revmesh.unrecognized`), die Selbstprüfung der App
+      fehlschlägt (`revmesh.selfcheck`) oder das Netz `MAX_RECOGNITION_TRIANGLES` überschreitet
+      (`revmesh.too_large`), und der Verlustbericht sagt, welcher Fall eingetreten ist) einen
+      Import-Dialog ohne Moduswahl
 
 Ein Mesh-Body, der bereits in der offenen Konstruktion liegt, direkt konvertieren (nicht nur eine
 STL-Datei) ist in [Issue #70](https://github.com/stritti/revmesh/issues/70) getrackt; die

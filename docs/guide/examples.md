@@ -129,7 +129,7 @@ Try: a **Shell** in SolidCraft turns it into an enclosure, which the mesh could 
 The plugin's own test files, in
 [`plugin/revmesh/tests/`](https://github.com/stritti/revmesh/tree/main/plugin/revmesh/tests),
 show each kind of feature on its own. Most of them were modelled and exported in SolidCraft.
-[What `auto` recognises](/guide/recognition) has the full list.
+[What the import recognises](/guide/recognition) has the full list.
 
 ### Counterbores and countersinks
 

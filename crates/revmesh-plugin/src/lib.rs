@@ -11,11 +11,13 @@
 //! Build it for `wasm32-unknown-unknown` (SolidCraft links no WASI) and wrap the module as a
 //! component; `cargo xtask dist` does both and packages the plugin.
 //!
-//! In auto mode the recognised design is also checked in the app's own sandbox before it is
-//! written: the manifest requests the `evaluate@0.2` capability, the serialised design is staged
-//! and `document.inspect` rebuilds it there, and a timeline feature that fails falls back to the
+//! A recognised design is also checked in the app's own sandbox before it is written: the
+//! manifest requests the `evaluate@0.2` capability, the serialised design is staged and
+//! `document.inspect` rebuilds it there, and a timeline feature that fails falls back to the
 //! mesh body with the reason in the loss report (roadmap 7.1; the policy itself lives in
-//! `revmesh_core::import::apply_self_check`).
+//! `revmesh_core::import::apply_self_check`). The import itself decides what the result is: it
+//! always tries recognition and keeps the mesh body where nothing is recognised or the mesh is
+//! too large for recognition (`MAX_RECOGNITION_TRIANGLES` in `revmesh_core::import`).
 //!
 //! Every import also checks whether a newer release than this build is out and notes it in the
 //! loss report. The sandbox has no network, so the newest release cannot be asked for at import
@@ -38,7 +40,7 @@ use craft::plugin::types::{FieldFailure, PluginError};
 use craft::plugin::{control, design, evaluate, log, source};
 use exports::craft::plugin::importer::Guest;
 use revmesh_core::format::MeshReader;
-use revmesh_core::import::{self, Mode, SelfCheck};
+use revmesh_core::import::{self, SelfCheck};
 use revmesh_core::mesh::Mesh;
 use revmesh_core::{ImportOptions, Locale, import_mesh, version};
 
@@ -46,15 +48,15 @@ use revmesh_core::{ImportOptions, Locale, import_mesh, version};
 const CHUNK: usize = 1 << 20;
 
 // Binary STL expands from 50 to 72 bytes per triangle; OBJ and PLY hold shared vertices, so they
-// expand less. Mesh mode also needs the
-// read/write buffers, while auto recognition builds face and wall indexes on top of the mesh
-// (measured: about 250 bytes per triangle in all, so 16 MiB of STL peaks at roughly 90 MiB —
-// inside the 128 MiB the manifest asks for; 32 MiB would not fit without index-based face
-// storage). Rotated X/Y recognition attempts would hold a second mesh copy on top and can
-// exceed the budget on densely banded meshes, so `recognize` skips them above
-// `MAX_ROTATED_TRIANGLES` and only tries Z then. Keep a lower input ceiling for mesh mode.
-const AUTO_MAX_BYTES: u64 = 16 << 20;
-const MESH_MAX_BYTES: u64 = 32 << 20;
+// expand less. A file up to 32 MiB always fits on its own: the mesh (72 bytes per triangle) plus
+// the read/write buffers stay inside the 128 MiB the manifest asks for. Recognition is the
+// expensive part — it builds face and wall indexes on top of the mesh (measured: about 250 bytes
+// per triangle in all, so 16 MiB of STL peaks at roughly 90 MiB; 32 MiB would not fit without
+// index-based face storage) — so the core skips it above `MAX_RECOGNITION_TRIANGLES` and keeps the
+// mesh (see `import_mesh_mm` in `revmesh-core`). Rotated X/Y recognition attempts would hold a
+// second mesh copy on top and can exceed the budget on densely banded meshes, so `recognize`
+// skips them above `MAX_ROTATED_TRIANGLES` and only tries Z then.
+const MAX_BYTES: u64 = 32 << 20;
 
 struct Importer;
 
@@ -67,11 +69,7 @@ impl Guest for Importer {
         }
         let mut options = ImportOptions::from_json(&options).map_err(|e| invalid("options", e))?;
         options.locale = locale;
-        let max_bytes = match options.mode {
-            Mode::Auto => AUTO_MAX_BYTES,
-            Mode::Mesh => MESH_MAX_BYTES,
-        };
-        let mut mesh = read_mesh(&file, max_bytes, locale)?;
+        let mut mesh = read_mesh(&file, MAX_BYTES, locale)?;
         // An inch file is scaled to millimetres in place, so the mesh is held only once.
         import::convert_units(&mut mesh, options.units).map_err(|e| invalid("file", e.message(locale)))?;
         control::progress(0.5, locale.text("progress.recognising"));
@@ -79,7 +77,7 @@ impl Guest for Importer {
         // 7.1); when the app cannot rebuild it the import falls back to the mesh body, which
         // import_mesh rebuilds from this same borrow — no second mesh is held.
         let mut result = import_mesh(&mesh, &file.name, &options);
-        if options.mode == Mode::Auto && !import::design_has_mesh_body(&result.design) {
+        if !import::design_has_mesh_body(&result.design) {
             control::progress(0.55, locale.text("progress.checking"));
             let mut staged = Vec::new();
             let check = result.design.write_json(&mut staged).ok().map_or(SelfCheck::Unavailable, |()| self_check(&staged));

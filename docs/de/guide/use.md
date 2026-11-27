@@ -3,10 +3,12 @@
 1. Klicke auf der Ribbon-Registerkarte **Model** auf die Beschriftung der Gruppe **Plugins**, um das
    Plugins-Menü zu öffnen, und wähle **revmesh › stl**. SolidCrafts eigenes *File › Open* nutzt für
    `.stl` weiterhin den eingebauten Netz-Import, daher erreicht man revmesh über das Plugins-Menü.
-2. Der Dialog bietet **Importieren als**: `auto` (Features erkennen und das Teil parametrisch neu
-   aufbauen — Facetten werden zu idealen Flächen, der Importbericht nennt die Abweichung; das Netz
-   bleibt nur dort, wo nichts erkannt wird; Datei bis 16 MiB; die Standardeinstellung) oder `mesh` (das
-   Netz exakt so übernehmen, wie es ist; Datei bis 32 MiB).
+2. Der Dialog fragt nur nach **Einheiten**: `mm` (die Standardeinstellung — Netzdateien sind
+   einheitenlos und werden als Millimeter gelesen) oder `inch`, was in Millimeter umgerechnet
+   (× 25,4) und im Bericht vermerkt wird. Was der Import aus der Datei macht, entscheidet er selbst:
+   Wo möglich werden Features erkannt und das Teil parametrisch neu aufgebaut; wo nichts erkannt
+   wird — oder die Datei zu groß für die Erkennung ist — bleibt das Netz so, wie es ist, und der
+   Bericht sagt, warum.
 3. Seine Schaltfläche wählt die Netzdatei (`.stl`, `.obj` oder `.ply`). Sie öffnet sich als neue,
    ungespeicherte Konstruktion.
 4. Danach folgt der **Importbericht**: eine Zusammenfassung, eine Zeile pro Art der Änderung und
@@ -29,13 +31,15 @@ den Parametern, die jedes einzelne bekommt.
 :::
 
 Welche Teile erkannt werden und welche Parameter sie bekommen, steht unter
-[Was auto erkennt](/de/guide/recognition).
+[Was der Import erkennt](/de/guide/recognition).
 
 ## Grenzen
 
-Netz-Eingabe (STL, OBJ, PLY): bis 16 MiB im Modus `auto`, 32 MiB im Modus `mesh` (`AUTO_MAX_BYTES` /
-`MESH_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`). Laufzeit: 128 MiB Speicher, eine Deadline
-von 120 s und 10¹¹ Fuel, wie in `plugin/revmesh/plugin.json` angefordert. Die Datei wird in
-1-MiB-Chunks gestreamt, daher erreicht eine 16-MiB-Datei etwa 90 MiB Spitzenwert im Speicher
-(binäres STL; OBJ und PLY halten gemeinsame Vertices, dehnen sich also weniger aus).
+Netz-Eingabe (STL, OBJ, PLY): bis 32 MiB (`MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`).
+Die Erkennung läuft bis etwa 335.000 Dreiecken — etwa 16 MiB binäres STL
+(`MAX_RECOGNITION_TRIANGLES` in `crates/revmesh-core/src/import.rs`); eine größere Datei bleibt
+als Netz erhalten. Laufzeit: 128 MiB Speicher, eine Deadline von 120 s und 10¹⁹ Fuel, wie in
+`plugin/revmesh/plugin.json` angefordert. Die Datei wird in 1-MiB-Chunks gestreamt, daher erreicht
+die Erkennung einer 16-MiB-Datei etwa 90 MiB Spitzenwert im Speicher (binäres STL; OBJ und PLY
+halten gemeinsame Vertices, dehnen sich also weniger aus).
 Gemessene Werte und die Begründung dahinter: [Architektur](/de/architecture#limits-in-solidcraft).

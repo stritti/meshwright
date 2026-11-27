@@ -62,10 +62,11 @@ older SolidCraft than the latest release, so current revmesh always targets the 
    (the same entry is in the Plugins menu: **Model** tab › **Plugins** group label › **revmesh ›
    stl**). SolidCraft's own *File › Open* keeps using its built-in mesh import for `.stl`, so
    revmesh is reached through the Insert tab or the Plugins menu.
-2. The dialog offers **Import as**: `auto` (recognise features and rebuild the part
-   parametrically — facets become ideal faces, the import report notes the deviation; the mesh is
-   kept only where nothing is found; file up to 16 MiB; the default) or `mesh` (keep the mesh
-   exactly as it is; file up to 32 MiB).
+2. The dialog only asks for **Units**: `mm` (the default — mesh files are unitless and read as
+   millimetres) or `inch`, which is converted to millimetres (× 25.4) and noted in the report.
+   What the import makes of the file it decides itself: features are recognised and the part is
+   rebuilt parametrically where possible; where nothing is recognised — or the file is too large
+   for recognition — the mesh is kept as it is, and the report says why.
 3. Its button chooses the mesh file (`.stl`, `.obj` or `.ply`). It opens as a new, unsaved design.
 4. The **Import report** follows: a summary, one line per kind of change, and everything in
    detail under *Details*. **Plugins › Last import report…** shows it again later.
@@ -79,7 +80,7 @@ one of the example parts in [`examples/`](examples/) (a motor plate, a flange, a
 …); the docs' [examples gallery](https://stritti.github.io/revmesh/guide/examples) shows each
 with the features and parameters it gets.
 
-### What `auto` recognises
+### What the import recognises
 
 | In the STL | In SolidCraft | Parameters |
 |---|---|---|
@@ -136,16 +137,16 @@ countersunk ones, stay single holes, not patterns.
 
 | Limit | Value | Set in |
 |---|---|---|
-| Mesh file size, `auto` | 16 MiB | `AUTO_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs` |
-| Mesh file size, `mesh` | 32 MiB | `MESH_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs` |
+| Mesh file size | 32 MiB | `MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs` |
+| Recognition, at most | ≈ 335k triangles (≈ 16 MiB of binary STL) | `MAX_RECOGNITION_TRIANGLES` in `crates/revmesh-core/src/import.rs` |
 | Memory | 128 MiB | `runtime.limits.memory_mib` in `plugin/revmesh/plugin.json` |
 | Import deadline | 120 s | `runtime.limits.deadline_ms` in `plugin/revmesh/plugin.json` |
 | Fuel | 10¹¹ | `runtime.limits.fuel` in `plugin/revmesh/plugin.json` |
 
 The file is streamed through the sandbox in 1 MiB chunks, so these limits are about peak memory,
-not file size: a 16 MiB STL peaks at ≈ 90 MiB (about 250 bytes per triangle; OBJ/PLY hold shared
-vertices and expand less) inside the 128 MiB
-budget; `auto` at 32 MiB would need index-based face storage. In `auto` mode the rebuilt part must
+not file size: recognition builds face and wall indexes on top of the mesh, so it runs only up to
+≈ 335k triangles (about 16 MiB of binary STL, ≈ 90 MiB peak; OBJ/PLY hold shared vertices and
+expand less) inside the 128 MiB budget — a larger file is kept as a mesh. The rebuilt part must
 match the mesh's volume within 1 %, otherwise the mesh is kept. Measured numbers and the reasoning
 behind them: [docs/architecture.md](docs/architecture.md#limits-inside-solidcraft).
 

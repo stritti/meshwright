@@ -1,9 +1,0 @@
-{
-  "entry": "stl",
-  "file": "block-60x40x6.stl",
-  "params": {"mode": "mesh"},
-  "expect": {
-    "reply": {"bodies": 1, "features": 1, "loss_report": {"summary": "A mesh of 12 triangles", "items": []}},
-    "model": {"body_count": 1, "total": {"volume_mm3": 14400}}
-  }
-}
