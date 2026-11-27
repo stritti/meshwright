@@ -48,6 +48,8 @@ pub(super) struct Bore {
     pub(super) r: f64,
     pub(super) lo: f64,
     pub(super) hi: f64,
+    /// The mouth ring on the +axis face, in the axis's profile coordinates, counter-clockwise.
+    pub(super) mouth: Vec<P2>,
 }
 
 impl Bore {
@@ -222,7 +224,17 @@ fn bore(facets: &[Facet], group: &[usize], axis: Axis, tol: f64) -> Option<Bore>
     };
     let lo = corners.iter().map(|q| q[2]).fold(f64::INFINITY, f64::min);
     let hi = corners.iter().map(|q| q[2]).fold(f64::NEG_INFINITY, f64::max);
-    (round(None) && round(Some(lo)) && round(Some(hi))).then_some(Bore { axis, centre, r, lo, hi })
+    let mouth = mouth_ring(&corners, centre, hi, tol);
+    (round(None) && round(Some(lo)) && round(Some(hi))).then_some(Bore { axis, centre, r, lo, hi, mouth })
+}
+
+/// The corners at height `w` (within `tol`), as a ring round `centre`, counter-clockwise.
+fn mouth_ring(corners: &[Vec3], centre: P2, w: f64, tol: f64) -> Vec<P2> {
+    let mut ring: Vec<(f64, P2)> =
+        corners.iter().filter(|q| (q[2] - w).abs() <= tol).map(|q| ((q[1] - centre[1]).atan2(q[0] - centre[0]), [q[0], q[1]])).collect();
+    ring.sort_by(|a, b| a.0.total_cmp(&b.0));
+    ring.dedup_by(|a, b| (a.0 - b.0).abs() <= 1e-9);
+    ring.into_iter().map(|(_, p)| p).collect()
 }
 
 /// The angles about `centre` that `corners` (already in the axis's profile frame) leave
@@ -298,13 +310,14 @@ fn crossed_bore(facets: &[Facet], group: &[usize], axis: Axis, tol: f64, others:
     if !ends_round(lo) || !ends_round(hi) {
         return None;
     }
+    let mouth = mouth_ring(&mcorners, centre, hi, tol);
     // Every gap in the wall lies inside another bore's cylinder: the bores cross there.
     for (a0, a1) in coverage_gaps(&mcorners, centre, MAX_GAP) {
         if !gap_covered(axis, centre, r, lo, hi, a0, a1, others, tol) {
             return None;
         }
     }
-    Some((Bore { axis, centre, r, lo, hi }, members))
+    Some((Bore { axis, centre, r, lo, hi, mouth }, members))
 }
 
 #[cfg(test)]

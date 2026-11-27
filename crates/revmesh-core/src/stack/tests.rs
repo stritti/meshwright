@@ -219,10 +219,12 @@ fn chamfered_stack(bw: f64, bd: f64, h0: f64, outline: &[[f64; 2]], h1: f64, c: 
     }
     // The top band's walls from `from` to `to - h`, then the chamfer facets up to the inset.
     let n = outline.len();
-    for i in 0..n {
-        let (a, b) = (outline[i], outline[(i + 1) % n]);
-        t.push([at(a, from), at(b, from), at(b, to - c.h)]);
-        t.push([at(a, from), at(b, to - c.h), at(a, to - c.h)]);
+    if to - c.h > from + 1e-9 {
+        for i in 0..n {
+            let (a, b) = (outline[i], outline[(i + 1) % n]);
+            t.push([at(a, from), at(b, from), at(b, to - c.h)]);
+            t.push([at(a, from), at(b, to - c.h), at(a, to - c.h)]);
+        }
     }
     let inset: Vec<[f64; 2]> = (0..n).map(|i| inset_corner(outline, i, c.w)).collect();
     let area = (0..n).map(|i| inset[i][0] * inset[(i + 1) % n][1] - inset[(i + 1) % n][0] * inset[i][1]).sum::<f64>() / 2.0;
@@ -476,4 +478,22 @@ fn an_asymmetric_chamfer_along_x_swaps_the_distances() {
     assert_eq!(chamfers[0]["distance"], "chamfer_w");
     assert_eq!(chamfers[0]["distance2"], "chamfer_h");
     assert_eq!(chamfers[0]["edge_names"].as_array().expect("names").len(), 4);
+}
+
+/// A roof whose chamfer height equals the top band's height consumes its walls entirely: the
+/// top band has no wall facet, and its footprint comes from the chamfer planes' bottom edges
+/// (review finding on roadmap 3.12).
+#[test]
+fn a_roof_that_consumes_the_top_bands_walls_is_a_stack() {
+    let outline = [[20.0, 10.0], [40.0, 10.0], [40.0, 30.0], [20.0, 30.0]];
+    // A 60 x 40 x 10 base with a 20 x 20 pyramid on top rising the band's whole height.
+    let mesh = chamfered_stack(60.0, 40.0, 10.0, &outline, 10.0, Chamfer { w: 10.0, h: 10.0 });
+    let (spec, _) = recognize_stack(&mesh).expect("a stack");
+    assert_eq!(spec.bands.len(), 2);
+    assert_eq!(spec.bands[1].outline.len(), 4);
+    assert_eq!(spec.bands[1].chamfer, Some(Chamfer { w: 10.0, h: 10.0 }));
+    // 24000 plus the pyramid's 400*10/3.
+    let want = 24_000.0 + 400.0 * 10.0 / 3.0;
+    assert!((spec.volume() - want).abs() < 1e-9, "{} vs {want}", spec.volume());
+    assert!((spec.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", spec.volume(), mesh.volume());
 }

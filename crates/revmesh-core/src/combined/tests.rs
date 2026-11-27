@@ -480,6 +480,49 @@ fn crossing_holes_in_a_closed_mesh_are_recognised() {
         json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "cylinder").collect();
     assert_eq!(cylinders.len(), 2);
     assert!(cylinders.iter().all(|c| c["operation"] == "cut"));
+    // The same box with x and y swapped: the bores then run along Y and Z, and the Y bore's
+    // profile centre is (x, -z) — the covered mouth must still be found (review finding).
+    let swapped = Mesh::new(mesh.triangles.iter().map(|t| t.map(|p| [p[1], p[0], p[2]])).collect());
+    let swapped = if swapped.volume() < 0.0 { Mesh::new(swapped.triangles.iter().map(|t| [t[0], t[2], t[1]]).collect()) } else { swapped };
+    let (spec2, _) = recognize_combined(&swapped).expect("combined");
+    let holes2: Vec<(Axis, [f64; 2], f64)> = spec2.holes.iter().map(|h| (h.axis, h.centre, h.d)).collect();
+    assert_eq!(holes2, [(Axis::Y, [15.0, -10.0], 6.0), (Axis::Z, [15.0, 20.0], 6.0)], "{holes2:?}");
+}
+
+/// A transverse bore's silhouette rectangle may cover a through bore's own mouth: the mouth is
+/// restored as an opening with the bore's measured ring — but only for through bores, and the
+/// coverage check runs in world coordinates, since a Y profile's second coordinate is -Z
+/// (review findings on roadmap 3.12).
+#[test]
+fn covered_mouths_are_restored_for_through_bores_only() {
+    use super::holes::Bore;
+    use std::f64::consts::TAU;
+    let ring = |cx: f64, cy: f64, r: f64| -> Vec<[f64; 2]> {
+        (0..16).map(|i| f64::from(i) * TAU / 16.0).map(|a| [cx + r * a.cos(), cy + r * a.sin()]).collect()
+    };
+    let size = [40.0, 30.0, 20.0];
+    let tol = 1e-3;
+    // A Z through-bore at (x, y) = (20, 15) and an X through-bore whose rectangle seen along Z
+    // (its span along X by its diameter in Y) covers the Z mouth's centre.
+    let z_bore = Bore { axis: Axis::Z, centre: [20.0, 15.0], r: 3.0, lo: 0.0, hi: 20.0, mouth: ring(20.0, 15.0, 3.0) };
+    let x_bore = Bore { axis: Axis::X, centre: [15.0, 10.0], r: 3.0, lo: 0.0, hi: 40.0, mouth: ring(15.0, 10.0, 3.0) };
+    let mut openings = Vec::new();
+    super::keep_covered_mouths(Axis::Z, &[z_bore.clone(), x_bore.clone()], size, tol, &mut openings);
+    assert_eq!(openings.len(), 1);
+    assert!(z_bore.matches(&openings[0], 2.0 * tol));
+    assert_eq!(openings[0].len(), 16, "the measured mouth ring, not invented corners");
+    // A blind Z bore from the top (lo > 0) is no through bore: its mouth is not restored.
+    let blind = Bore { axis: Axis::Z, centre: [20.0, 15.0], r: 3.0, lo: 15.0, hi: 20.0, mouth: ring(20.0, 15.0, 3.0) };
+    let mut openings = Vec::new();
+    super::keep_covered_mouths(Axis::Z, &[blind, x_bore], size, tol, &mut openings);
+    assert_eq!(openings, Vec::<Vec<[f64; 2]>>::new());
+    // A Y bore's profile centre is (x, -z): at world (x, z) = (20, 10) its mouth is covered by a
+    // Z through-bore's rectangle, and the check must see that in world coordinates.
+    let y_bore = Bore { axis: Axis::Y, centre: [20.0, -10.0], r: 3.0, lo: 0.0, hi: 30.0, mouth: ring(20.0, -10.0, 3.0) };
+    let mut openings = Vec::new();
+    super::keep_covered_mouths(Axis::Y, &[y_bore.clone(), z_bore], size, tol, &mut openings);
+    assert_eq!(openings.len(), 1, "the Y bore's mouth at world z = 10 is covered");
+    assert!(y_bore.matches(&openings[0], 2.0 * tol));
 }
 
 /// A closed 20 x 20 x 10 box with a radius-9 blind hole of `sides` facets drilled 9 deep into its

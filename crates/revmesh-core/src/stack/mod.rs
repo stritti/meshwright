@@ -102,7 +102,7 @@ pub(crate) fn recognize_stack(mesh: &Mesh) -> Result<(StackSpec, Vec3), String> 
     // Each band's section, bands of one section merged. A chamfered top band's walls end below
     // its top, so the section is cut where the walls of the window are.
     let mut bands: Vec<Band> = Vec::new();
-    for w in levels.windows(2) {
+    for (wi, w) in levels.windows(2).enumerate() {
         let (from, to) = (w[0], w[1]);
         let wall_top = facets
             .iter()
@@ -111,7 +111,11 @@ pub(crate) fn recognize_stack(mesh: &Mesh) -> Result<(StackSpec, Vec3), String> 
             .map(|(t, _)| t.iter().map(|p| p[2]).fold(f64::NEG_INFINITY, f64::max))
             .fold(from, f64::max)
             .min(to);
-        let rings = section(&facets, f64::midpoint(from, wall_top), tol)?;
+        // A roof whose chamfer height equals the top band's height consumes its walls: no wall
+        // facet crosses the top window, and the band's footprint is the chamfer planes' bottom
+        // edges instead of a section.
+        let roof = wall_top <= from + tol && wi == levels.len() - 2 && !slanted.is_empty();
+        let rings = if roof { roof_footprint(&slanted, tol)? } else { section(&facets, f64::midpoint(from, wall_top), tol)? };
         let (mut outer, openings): (Vec<Vec<P2>>, Vec<Vec<P2>>) = rings.into_iter().partition(|r| area2(r) > 0.0);
         if outer.len() != 1 {
             return Err(format!("{NOT_STACK}: a section of it is not one outline"));
@@ -315,6 +319,46 @@ fn section(facets: &[Facet], z: f64, tol: f64) -> Result<Vec<Vec<P2>>, String> {
     }
     let rings = chain(pieces, tol).map_err(|_| format!("{NOT_STACK}: a section of it does not close"))?;
     Ok(rings.into_iter().map(|r| drop_collinear(r, tol)).filter(|r| r.len() >= 3).collect())
+}
+
+/// The top band's footprint when the roof's chamfer consumes its walls (its height equals the
+/// band's, so no wall facet crosses the top window): each chamfer plane's bottom edge, chained
+/// into one counter-clockwise ring.
+fn roof_footprint(slanted: &[SlantedPlane], tol: f64) -> Result<Vec<Vec<P2>>, String> {
+    let mut pieces = Vec::new();
+    for g in slanted {
+        let bottoms: Vec<P2> = g.facets.iter().flat_map(|(t, _)| t.iter()).filter(|p| p[2] <= g.zmin + tol).map(|p| [p[0], p[1]]).collect();
+        if bottoms.len() < 2 {
+            return Err(format!("{NOT_STACK}: a slanted face is no chamfer of the top"));
+        }
+        // The bottom edge's direction: horizontal, along the plane.
+        let d = cross(g.n, [0.0, 0.0, 1.0]);
+        let len = length(d);
+        let dir = [d[0] / len, d[1] / len];
+        let proj = |p: P2| p[0] * dir[0] + p[1] * dir[1];
+        let (mut a, mut b) = (bottoms[0], bottoms[0]);
+        let (mut pa, mut pb) = (proj(a), proj(a));
+        for &p in &bottoms[1..] {
+            let q = proj(p);
+            if q < pa {
+                pa = q;
+                a = p;
+            }
+            if q > pb {
+                pb = q;
+                b = p;
+            }
+        }
+        pieces.push((a, b));
+    }
+    let rings = chain(pieces, tol).map_err(|_| format!("{NOT_STACK}: a section of it does not close"))?;
+    let mut rings: Vec<Vec<P2>> = rings.into_iter().map(|r| drop_collinear(r, tol)).filter(|r| r.len() >= 3).collect();
+    for r in &mut rings {
+        if area2(r) < 0.0 {
+            r.reverse();
+        }
+    }
+    Ok(rings)
 }
 
 /// Whether the facet `t` (its normal `n`) lies on the stack's boundary: on a band's wall with the
