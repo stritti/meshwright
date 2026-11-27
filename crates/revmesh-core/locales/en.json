@@ -14,6 +14,8 @@
   "report.deviation.message": "The mesh's faces lie at most this far from the recognised faces: {faces}.",
   "report.unrecognized.title": "Kept as a mesh",
   "report.unrecognized.message": "No parametric features were recognised: {reason}.",
+  "report.slanted.title": "Kept as a mesh — slanted in the file",
+  "report.slanted.message": "Recognised as {summary}, but its axis lies slanted in the file: SolidCraft sketches on its origin planes only, so the part is kept as a mesh.",
   "report.units.title": "Units converted",
   "report.units.message": "The file was read as inches and converted to millimetres.",
   "report.selfcheck.title": "The recognised design failed the app's rebuild check",

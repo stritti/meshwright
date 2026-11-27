@@ -77,12 +77,17 @@
    references (the extracted know-how is packaged in the `revmesh-recognition-knowhow` agent
    skill; the concept → code mapping with the sources is [Comparable tools → Concepts from the
    list, applied to revmesh](/guide/comparison#concepts-from-the-list-applied-to-revmesh)):
-   1. an arbitrary prism axis: detect the two dominant parallel planes with fixed-seed RANSAC
-      (Schnabel et al. 2007) and rotate the mesh so their normal is +Z, instead of trying only
-      X, Y and Z (`recognize/axis.rs`) — today a part rotated in the file stays a mesh.
-      Recognition-side only for now: SolidCraft 0.50.0's design format has origin-plane sketches
-      and translate-only moves, so a slanted prism cannot be written parametrically at the
-      pinned version (needs construction planes or a newer pin)
+   1. (done: `prism_axis` in `recognize/axis.rs` fits the two dominant parallel planes by
+      fixed-seed RANSAC (Schnabel et al. 2007, as `ransac_circle` does for circles) — one facet
+      per 3-point sample, inliers within the tolerance scored by area, the opposite-facing
+      plane as the dominant cluster of the anti-parallel facets, the part required to lie
+      between the two planes and the axis off every world axis — and returns the proper
+      rotation `Frame` taking that axis to +Z; when no principal axis fits, `recognize` runs
+      the Z pipeline in that frame and returns `Recognition::Slanted { prism, frame, offset }`.
+      Recognition-side only: SolidCraft 0.50.0's origin-plane sketches and translate-only moves
+      cannot place a slanted prism at the pinned version, so the import keeps the mesh and
+      reports what was recognised (`revmesh.slanted`); writing it parametrically needs
+      construction planes or a newer pin)
    2. (done: a fixed-seed RANSAC circle in `plate/geometry.rs::ransac_circle` augmenting the
       algebraic `fit_circle` — 3-point minimal samples, inliers within tolerance, the
       iteration count adapted to the inlier ratio — behind `round_hole` in `plate/holes.rs`:

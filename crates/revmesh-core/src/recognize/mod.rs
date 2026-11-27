@@ -11,7 +11,10 @@
 //! Like mesh2cad, which tries a prism along X, Y and Z, [`recognize`] tries each axis: the mesh
 //! is rotated so the axis becomes Z (see [`Axis`]), the Z pipeline runs unchanged, and the result
 //! is rotated back. Z is tried first, so an axis-aligned box keeps the `base_*` plate mesh2cad's
-//! box vocabulary writes for it.
+//! box vocabulary writes for it. When no principal axis fits, the prism's own axis is fitted by
+//! RANSAC (roadmap 6.1, `axis::prism_axis`) and the part is recognised in that frame as
+//! [`Recognition::Slanted`] — kept as a mesh on import, as a slanted prism cannot be written at
+//! the pinned SolidCraft version.
 //!
 //! When no prism fits, a part may still be the intersection of outlines extruded along two or
 //! three axes (a [`CombinedSpec`], see `crate::combined`), as mesh2cad's boolean of extrusions
@@ -25,7 +28,7 @@ mod stack;
 pub(crate) mod tests;
 mod to_design;
 
-pub use axis::Axis;
+pub use axis::{Axis, Frame};
 pub use combined::{CombinedHole, CombinedSpec, Cut, Extrusion};
 pub use spec::{
     ArcSide, Blind, BossChamfer, BossSpec, CutoutSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec,
@@ -126,6 +129,11 @@ pub(crate) fn deviations(mesh: &Mesh, found: &Recognition) -> Vec<(String, f64)>
             }
             out
         }
+        Recognition::Slanted { prism, frame, .. } => match &**prism {
+            // The mesh rotated into the prism's frame is a Z prism there.
+            Recognition::Plate { .. } | Recognition::Profile { .. } => crate::plate::face_deviations(&frame.rotate_mesh(mesh)),
+            _ => Vec::new(),
+        },
         Recognition::Unrecognized { .. } => Vec::new(),
     }
 }
@@ -167,6 +175,20 @@ pub enum Recognition {
         offset: Vec3,
         /// The axis the outlines are stacked along.
         axis: Axis,
+    },
+    /// A prism along an axis slanted in the file (roadmap 6.1): the two dominant parallel
+    /// planes were found by fixed-seed RANSAC (`axis::prism_axis`), the mesh was rotated so
+    /// their normal is +Z, and the Z pipeline recognised it there. SolidCraft's origin-plane
+    /// sketches with translate-only moves cannot place a slanted prism at the pinned version,
+    /// so the import keeps the mesh and reports what was recognised.
+    Slanted {
+        /// What the Z pipeline found in `frame` (a plate or a profile whose corner is at the
+        /// origin there).
+        prism: Box<Recognition>,
+        /// The proper rotation taking the file to that frame (the prism axis becomes +Z).
+        frame: Frame,
+        /// Where the prism's corner was in the file.
+        offset: Vec3,
     },
     /// Nothing the recognisers know; the mesh is kept as it is.
     Unrecognized {
@@ -465,7 +487,9 @@ fn recognize_with(mesh: &Mesh, max_rotated_triangles: usize) -> Recognition {
             Ok(Recognition::Profile { profile, offset, .. }) => {
                 return Recognition::Profile { profile, offset: axis.unrotate(offset).map(crate::mesh::snap_mm), axis };
             }
-            Ok(Recognition::Unrecognized { .. } | Recognition::Combined { .. } | Recognition::Stack { .. }) => {
+            Ok(
+                Recognition::Unrecognized { .. } | Recognition::Combined { .. } | Recognition::Stack { .. } | Recognition::Slanted { .. },
+            ) => {
                 unreachable!("recognize_plate finds prisms or errs")
             }
             // The first axis's reason is the one reported: Z reads most naturally, and it is the
@@ -475,6 +499,30 @@ fn recognize_with(mesh: &Mesh, max_rotated_triangles: usize) -> Recognition {
                     reason = why;
                 }
             }
+        }
+    }
+    // Roadmap 6.1: an arbitrary prism axis when no principal axis fits — the two dominant
+    // parallel planes by fixed-seed RANSAC (`axis::prism_axis`), the mesh rotated so their
+    // normal is +Z. Recognition-side only: a slanted prism cannot be written at the pinned
+    // version (origin-plane sketches, translate-only moves), so it is reported as slanted and
+    // the import keeps the mesh.
+    if mesh.triangles.len() <= max_rotated_triangles
+        && let Some(frame) = axis::prism_axis(mesh, tolerance(scale))
+    {
+        let rotated = frame.rotate_mesh(mesh);
+        if let Ok(found) = crate::plate::recognize_plate(&rotated, false) {
+            let (corner, prism) = match found {
+                Recognition::Plate { plate, offset } => (offset, Recognition::Plate { plate, offset }),
+                Recognition::Profile { profile, offset, .. } => (offset, Recognition::Profile { profile, offset, axis: Axis::Z }),
+                Recognition::Unrecognized { .. }
+                | Recognition::Combined { .. }
+                | Recognition::Stack { .. }
+                | Recognition::Slanted { .. } => {
+                    unreachable!("recognize_plate finds prisms or errs")
+                }
+            };
+            let offset = frame.unrotate(corner).map(crate::mesh::snap_mm);
+            return Recognition::Slanted { prism: Box::new(prism), frame, offset };
         }
     }
     // The prisms' reason stays the one reported: a part that is no intersection of extrusions
