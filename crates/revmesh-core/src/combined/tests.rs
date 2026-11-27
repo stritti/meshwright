@@ -344,6 +344,33 @@ fn a_bore_into_a_slope_stays_an_opening() {
     assert!((spec.volume() - mesh.volume()).abs() < 0.2, "{} vs {}", spec.volume(), mesh.volume());
 }
 
+/// Roadmap 3.12: two round holes crossing inside a combined part. The volume takes the crossing
+/// once (two equal cylinders of radius r at right angles cross in a lens of 16 r^3 / 3), and the
+/// design cuts one cylinder per hole.
+#[test]
+fn crossing_holes_take_the_crossing_once() {
+    use crate::recognize::{CombinedHole, Extrusion};
+    let spec = CombinedSpec {
+        size: [40.0, 30.0, 20.0],
+        extrusions: vec![Extrusion { axis: Axis::Z, outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]], cutouts: vec![] }],
+        cuts: vec![],
+        holes: vec![
+            CombinedHole { axis: Axis::X, centre: [15.0, 10.0], d: 8.0, from: 0.0, to: 40.0 },
+            CombinedHole { axis: Axis::Z, centre: [20.0, 15.0], d: 8.0, from: 0.0, to: 20.0 },
+        ],
+    };
+    let pi = std::f64::consts::PI;
+    let want = 40.0 * 30.0 * 20.0 - pi * 16.0 * 40.0 - pi * 16.0 * 20.0 + 16.0 * 4.0f64.powi(3) / 3.0;
+    assert!((spec.volume() - want).abs() < 1e-6, "{} vs {want}", spec.volume());
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("json");
+    let cylinders: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "cylinder").collect();
+    assert_eq!(cylinders.len(), 2);
+    assert!(cylinders.iter().all(|c| c["operation"] == "cut"));
+    let names: Vec<&str> = json["params"].as_array().expect("params").iter().map(|p| p["name"].as_str().expect("name")).collect();
+    assert!(names.contains(&"hole_1_d") && names.contains(&"hole_2_d"), "{names:?}");
+}
+
 /// A closed 20 x 20 x 10 box with a radius-9 blind hole of `sides` facets drilled 9 deep into its
 /// top: walls from the floor at Z = 1 up to the top.
 fn box_with_blind_bore(sides: u32) -> Mesh {

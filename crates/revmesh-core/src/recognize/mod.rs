@@ -34,7 +34,7 @@ pub use spec::{
     ArcSide, Blind, BossChamfer, BossSpec, CutoutSpec, HoleHead, HoleSpec, OutlinePocketSpec, PadSpec, PlateSpec, PocketSpec, ProfileSpec,
     SideBossSpec, SlotSpec, Wall,
 };
-pub use stack::{Band, StackSpec};
+pub use stack::{Band, Chamfer, StackSpec};
 
 use std::collections::HashMap;
 
@@ -126,6 +126,9 @@ pub(crate) fn deviations(mesh: &Mesh, found: &Recognition) -> Vec<(String, f64)>
                     (band.from, band.to),
                     &prefix,
                 ));
+                // Roadmap 3.12: the top band's chamfer faces are measured against their planes,
+                // labelled `band <k> chamfer <i>`.
+                out.extend(chamfer_deviations(&in_frame, band, &prefix));
             }
             out
         }
@@ -136,6 +139,37 @@ pub(crate) fn deviations(mesh: &Mesh, found: &Recognition) -> Vec<(String, f64)>
         },
         Recognition::Unrecognized { .. } => Vec::new(),
     }
+}
+
+/// The per-face surface deviation of a stack band's chamfer faces (roadmap 3.12), measured
+/// against their chamfer planes in the axis's frame and labelled `band <k> chamfer <i>`.
+#[allow(clippy::many_single_char_names)] // the facet t, its normal n, the side index i, the deviation d
+fn chamfer_deviations(mesh: &Mesh, band: &stack::Band, prefix: &str) -> Vec<(String, f64)> {
+    let Some(c) = band.chamfer else { return Vec::new() };
+    let m = band.outline.len();
+    let tol = crate::plate::tolerance(mesh.bounds().map_or(0.0, |b| b.size().into_iter().fold(0.0, f64::max)));
+    let mut worst: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+    for t in &mesh.triangles {
+        let n = crate::mesh::cross(crate::mesh::sub(t[1], t[0]), crate::mesh::sub(t[2], t[0]));
+        let len = crate::mesh::length(n);
+        let nz = if len > 0.0 { (n[2] / len).abs() } else { 1.0 };
+        if nz <= 1e-4 || nz >= 1.0 - 1e-4 {
+            continue; // a wall or a cap, measured by walls_deviations
+        }
+        let (i, d) = (0..m)
+            .map(|i| {
+                let (a, b) = (band.outline[i], band.outline[(i + 1) % m]);
+                let (q0, nch) = crate::stack::chamfer_plane(a, b, band.to, c);
+                let dev = t.iter().map(|p| crate::mesh::dot(crate::mesh::sub(*p, q0), nch).abs()).fold(0.0, f64::max);
+                (i, dev)
+            })
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+            .unwrap_or((0, f64::INFINITY));
+        if d <= tol {
+            worst.entry(format!("{prefix} chamfer {}", i + 1)).and_modify(|w| *w = w.max(d)).or_insert(d);
+        }
+    }
+    worst.into_iter().collect()
 }
 
 /// What recognition found.

@@ -26,6 +26,7 @@
   "report.update.message": "This import ran with revmesh {current}, but {latest} is out. Install it from https://github.com/stritti/revmesh/releases",
   "summary.plate": "A {x} x {y} x {z} mm plate",
   "summary.stack": "A {x} x {y} x {z} mm part of {n} outlines stacked along {axis}",
+  "summary.chamfer": "a {w} x {h} mm chamfer on its top",
   "summary.combined": "A {x} x {y} x {z} mm part of outlines extruded along {axes}",
   "summary.with": "{plate} with {parts}",
   "summary.list": "{rest} and {last}",

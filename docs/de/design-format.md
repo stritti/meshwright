@@ -118,6 +118,13 @@ nummeriert). SolidCraft fusioniert Bänder, die sich Fläche an Fläche treffen,
 braucht. `plugin/revmesh/tests/stack.stl` (eine Basis, ein L und ein Rhombus) baut auf 34.296 mm³ entlang Z
 und, gedreht, entlang Y neu; `extrude_z1_len = 15` baut auf 46.296 mm³, die Bänder darüber um 5 mm angehoben.
 
+Trägt die Oberkante des obersten Bandes an allen seinen Kanten eine Fase (eine Fase, oder ein Dach, wenn
+die Fasen sich treffen), schreibt die Konstruktion nach dem `move` ein `chamfer`-Feature: seine
+`edge_names` sind für jede Seite `i` `F<id>:side:l<i>|F<id>:top` der Extrusion des obersten Bands, seine
+`edges` die Seitenmitten auf der Oberseite, und `distance` läuft entlang der Oberseite (von der Kante
+hinein), mit `distance2` an der Seite hinab, wenn beide verschieden sind — getrieben von `chamfer`
+(45°) oder `chamfer_w`/`chamfer_h`.
+
 ## Ausschnitte
 
 Die Ausschnitte aus geraden Seiten sind eine Skizze, `CutoutsSketch`, aus geschlossenen Schleifen in

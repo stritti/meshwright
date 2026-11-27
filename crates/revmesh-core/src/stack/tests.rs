@@ -1,7 +1,7 @@
 use super::recognize_stack;
 
 use crate::mesh::Mesh;
-use crate::recognize::{Axis, Recognition, recognize};
+use crate::recognize::{Axis, Chamfer, Recognition, recognize};
 
 fn stack() -> Mesh {
     crate::stl::parse(include_bytes!("../../../../plugin/revmesh/tests/stack.stl")).expect("parses")
@@ -178,4 +178,188 @@ fn too_many_facets_is_no_stack() {
     let facet = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let err = recognize_stack(&Mesh::new(vec![facet; 100_001])).expect_err("too many facets");
     assert!(err.contains("more than 100000 facets"), "{err}");
+}
+
+/// The corner of the outline `ring` (counter-clockwise) at `i`, moved inward by `w`: the
+/// intersection of its two sides' lines offset inward by `w`.
+fn inset_corner(ring: &[[f64; 2]], i: usize, w: f64) -> [f64; 2] {
+    let n = ring.len();
+    let off = |a: [f64; 2], b: [f64; 2]| -> ([f64; 2], [f64; 2]) {
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let len = d[0].hypot(d[1]);
+        let m = [-d[1] / len, d[0] / len]; // inward (left of the CCW side)
+        ([a[0] + m[0] * w, a[1] + m[1] * w], m)
+    };
+    let (p1, m1) = off(ring[(i + n - 1) % n], ring[i]);
+    let (p2, m2) = off(ring[i], ring[(i + 1) % n]);
+    let det = m1[0] * m2[1] - m1[1] * m2[0];
+    let (r1, r2) = (p1[0] * m1[0] + p1[1] * m1[1], p2[0] * m2[0] + p2[1] * m2[1]);
+    [(r1 * m2[1] - r2 * m1[1]) / det, (m1[0] * r2 - m2[0] * r1) / det]
+}
+
+/// A stack of two bands: a base `bw` x `bd` from z 0 to `h0`, and a top band over `outline`
+/// (counter-clockwise) from `h0` to `h0 + h1`, its top edges all chamfered by `c` (roadmap 3.12).
+/// When the chamfers meet (the inset outline degenerates), the top is a roof with no top face.
+fn chamfered_stack(bw: f64, bd: f64, h0: f64, outline: &[[f64; 2]], h1: f64, c: Chamfer) -> Mesh {
+    let big = [[0.0, 0.0], [bw, 0.0], [bw, bd], [0.0, bd]];
+    let (from, to) = (h0, h0 + h1);
+    let at = |p: [f64; 2], z: f64| [p[0], p[1], z];
+    let mut t: Vec<[[f64; 3]; 3]> = Vec::new();
+    // The base: bottom face, walls, and the step at `from` outside the top band's footprint.
+    for [a, b, cc] in crate::synth::triangulate(&big, &[]) {
+        t.push([at(a, 0.0), at(cc, 0.0), at(b, 0.0)]);
+    }
+    for i in 0..4 {
+        let (a, b) = (big[i], big[(i + 1) % 4]);
+        t.push([at(a, 0.0), at(b, 0.0), at(b, from)]);
+        t.push([at(a, 0.0), at(b, from), at(a, from)]);
+    }
+    for [a, b, cc] in crate::synth::triangulate(&big, &[outline.to_vec()]) {
+        t.push([at(a, from), at(b, from), at(cc, from)]);
+    }
+    // The top band's walls from `from` to `to - h`, then the chamfer facets up to the inset.
+    let n = outline.len();
+    for i in 0..n {
+        let (a, b) = (outline[i], outline[(i + 1) % n]);
+        t.push([at(a, from), at(b, from), at(b, to - c.h)]);
+        t.push([at(a, from), at(b, to - c.h), at(a, to - c.h)]);
+    }
+    let inset: Vec<[f64; 2]> = (0..n).map(|i| inset_corner(outline, i, c.w)).collect();
+    let area = (0..n).map(|i| inset[i][0] * inset[(i + 1) % n][1] - inset[(i + 1) % n][0] * inset[i][1]).sum::<f64>() / 2.0;
+    if area > 1e-6 {
+        // A bevel: the chamfer quads from each wall's top edge to the inset edge, and the
+        // remaining top face.
+        for i in 0..n {
+            let (a, b) = (outline[i], outline[(i + 1) % n]);
+            let (ai, bi) = (inset[i], inset[(i + 1) % n]);
+            t.push([at(a, to - c.h), at(b, to - c.h), at(bi, to)]);
+            t.push([at(a, to - c.h), at(bi, to), at(ai, to)]);
+        }
+        for [a, b, cc] in crate::synth::triangulate(&inset, &[]) {
+            t.push([at(a, to), at(b, to), at(cc, to)]);
+        }
+    } else {
+        // A roof: the chamfer facets meet at the inset's centre point.
+        let apex = [inset.iter().map(|p| p[0]).sum::<f64>() / n as f64, inset.iter().map(|p| p[1]).sum::<f64>() / n as f64];
+        for i in 0..n {
+            let (a, b) = (outline[i], outline[(i + 1) % n]);
+            t.push([at(a, to - c.h), at(b, to - c.h), at(apex, to)]);
+        }
+    }
+    Mesh::new(t)
+}
+
+/// Roadmap 3.12: a stack whose top band's top edges carry one chamfer — a bevel here (w = h = 2
+/// on a 30 x 20 top) — is recognised, its volume takes the chamfer off exactly, and the design
+/// writes it as one `Chamfer1`.
+#[test]
+fn recognises_a_bevel_on_the_top_band() {
+    let outline = [[15.0, 10.0], [45.0, 10.0], [45.0, 30.0], [15.0, 30.0]];
+    let mesh = chamfered_stack(60.0, 40.0, 10.0, &outline, 10.0, Chamfer { w: 2.0, h: 2.0 });
+    let (spec, offset) = recognize_stack(&mesh).expect("a stack");
+    assert_eq!(offset, [0.0; 3]);
+    assert_eq!(spec.bands.len(), 2);
+    assert_eq!(spec.bands[1].chamfer, Some(Chamfer { w: 2.0, h: 2.0 }));
+    // 60*40*10 + 30*20*10 less the chamfer: h*(P*w/2 - K*w^2/3) with P = 100, K = 4.
+    let removed = 2.0 * (100.0 * 2.0 / 2.0 - 4.0 * 4.0 / 3.0);
+    assert!((spec.volume() - (24_000.0 + 6_000.0 - removed)).abs() < 1e-9, "{}", spec.volume());
+    assert!((spec.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", spec.volume(), mesh.volume());
+    assert_eq!(spec.describe(Axis::Z), "A 60 x 40 x 20 mm part of 2 outlines stacked along Z with a 2 x 2 mm chamfer on its top");
+    // The design: one Chamfer1 on the top band's top edges, driven by `chamfer` (a 45° one).
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design_on("", [0.0; 3], Axis::Z).to_json()).expect("json");
+    let chamfer = json["features"].as_array().expect("features").iter().find(|f| f["name"] == "Chamfer1").expect("Chamfer1");
+    assert_eq!(chamfer["type"], "chamfer");
+    assert_eq!(chamfer["distance"], "chamfer");
+    assert!(chamfer.get("distance2").is_none());
+    assert_eq!(chamfer["edge_names"].as_array().expect("names").len(), 4);
+    assert_eq!(chamfer["edge_names"][0], "F4:side:l1|F4:top");
+    let value = |name: &str| json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].clone());
+    assert_eq!(value("chamfer"), Some("2 mm".into()));
+    // The deviation report measures the chamfer faces too.
+    let found = Recognition::Stack { spec: spec.clone(), offset, axis: Axis::Z };
+    let devs = crate::recognize::deviations(&mesh, &found);
+    let labels: Vec<&str> = devs.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("band 2 chamfer")), "{labels:?}");
+    for (l, d) in &devs {
+        assert!(*d < 0.01, "{l}: {d}");
+    }
+}
+
+/// Roadmap 3.12: a roof — the chamfers of all top edges meet at a point, so the top has no face
+/// (a 20 x 20 top, w = 10, h = 5) — is recognised through the box's top as the virtual level.
+#[test]
+fn recognises_a_roof_on_the_top_band() {
+    let outline = [[20.0, 10.0], [40.0, 10.0], [40.0, 30.0], [20.0, 30.0]];
+    let mesh = chamfered_stack(60.0, 40.0, 10.0, &outline, 10.0, Chamfer { w: 10.0, h: 5.0 });
+    let (spec, _) = recognize_stack(&mesh).expect("a stack");
+    assert_eq!(spec.bands.len(), 2);
+    assert_eq!(spec.bands[1].chamfer, Some(Chamfer { w: 10.0, h: 5.0 }));
+    // The top slice 5 high less the pyramid to the apex: 20*20*5 - (1/3)*400*5.
+    let want = 24_000.0 + 20.0 * 20.0 * 10.0 - (20.0 * 20.0 * 5.0 - 400.0 * 5.0 / 3.0);
+    assert!((spec.volume() - want).abs() < 1e-9, "{}", spec.volume());
+    assert!((spec.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", spec.volume(), mesh.volume());
+    // The same roof lying along X is found there too, chamfer included.
+    let lying = Axis::X.unrotate_mesh(&mesh);
+    let (lying, _) = recognize_stack(&Axis::X.rotate_mesh(&lying)).expect("a stack along X");
+    assert_eq!(lying.bands.last().and_then(|b| b.chamfer), Some(Chamfer { w: 10.0, h: 5.0 }));
+    assert!((lying.volume() - want).abs() < 1e-9);
+    // Not 45°, so the design drives it with `chamfer_w` and `chamfer_h`.
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design_on("", [0.0; 3], Axis::Z).to_json()).expect("json");
+    let chamfer = json["features"].as_array().expect("features").iter().find(|f| f["name"] == "Chamfer1").expect("Chamfer1");
+    assert_eq!(chamfer["distance"], "chamfer_w");
+    assert_eq!(chamfer["distance2"], "chamfer_h");
+    let value = |name: &str| json["params"].as_array().expect("params").iter().find(|p| p["name"] == name).map(|p| p["expr"].clone());
+    assert_eq!(value("chamfer_w"), Some("10 mm".into()));
+    assert_eq!(value("chamfer_h"), Some("5 mm".into()));
+}
+
+/// A chamfered top on a band whose outline is slanted in the profile plane (a diamond) has faces
+/// tilted to every axis, so the combined recogniser refuses it and the whole `recognize` run
+/// reaches the stack recogniser with the chamfer (roadmap 3.12).
+#[test]
+fn a_chamfered_diamond_top_is_a_stack() {
+    let diamond = [[39.0, 20.0], [30.0, 29.0], [21.0, 20.0], [30.0, 11.0]];
+    let mesh = chamfered_stack(60.0, 40.0, 10.0, &diamond, 10.0, Chamfer { w: 2.0, h: 2.0 });
+    let found = recognize(&mesh);
+    let Recognition::Stack { spec, axis, .. } = found else { panic!("not a stack: {found:?}") };
+    assert_eq!(axis, Axis::Z);
+    assert_eq!(spec.bands[1].chamfer, Some(Chamfer { w: 2.0, h: 2.0 }));
+    // 60*40*10 + (18*18/2)*10 less the chamfer of the diamond's top (P = 4*9*sqrt(2), K = 4).
+    let p = 4.0 * 9.0 * 2.0f64.sqrt();
+    let removed = 2.0 * (p * 2.0 / 2.0 - 4.0 * 4.0 / 3.0);
+    let want = 24_000.0 + 162.0 * 10.0 - removed;
+    assert!((spec.volume() - want).abs() < 1e-9, "{}", spec.volume());
+    assert!((spec.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", spec.volume(), mesh.volume());
+}
+
+/// A chamfer on only some of the top edges, a slanted face below the top and a chamfer on a
+/// non-convex top are no stack (roadmap 3.12 stays exact-or-nothing).
+#[test]
+fn partial_or_wrong_chamfers_are_no_stack() {
+    use crate::combined::silhouette::segment_distance;
+    let outline = [[15.0, 10.0], [45.0, 10.0], [45.0, 30.0], [15.0, 30.0]];
+    // Only three edges chamfered: drop the chamfer facets whose bottom corners lie on side 2.
+    let mut mesh = chamfered_stack(60.0, 40.0, 10.0, &outline, 10.0, Chamfer { w: 2.0, h: 2.0 });
+    let (a2, b2) = (outline[2], outline[3]);
+    mesh.triangles.retain(|t| {
+        let zs: Vec<f64> = t.iter().map(|p| p[2]).collect();
+        let chamfer = zs.iter().any(|z| (*z - 18.0).abs() < 1e-9) && zs.iter().any(|z| (*z - 20.0).abs() < 1e-9);
+        if !chamfer {
+            return true;
+        }
+        let on_side2 = t.iter().filter(|p| (p[2] - 18.0).abs() < 1e-9).map(|p| [p[0], p[1]]).all(|p| segment_distance(p, a2, b2) < 1e-9);
+        !on_side2
+    });
+    let err = recognize_stack(&mesh).expect_err("partial chamfer");
+    assert!(err.contains("leaves an edge sharp"), "{err}");
+    // A slanted face that does not reach the box's top.
+    let mut low = chamfered_stack(60.0, 40.0, 10.0, &outline, 10.0, Chamfer { w: 2.0, h: 2.0 });
+    low.triangles.push([[20.0, 15.0, 12.0], [30.0, 15.0, 12.0], [25.0, 20.0, 14.0]]);
+    let err = recognize_stack(&low).expect_err("slanted below the top");
+    assert!(err.contains("below its top"), "{err}");
+    // A chamfer on a non-convex (L-shaped) top.
+    let l = [[10.0, 10.0], [50.0, 10.0], [50.0, 20.0], [25.0, 20.0], [25.0, 35.0], [10.0, 35.0]];
+    let mesh = chamfered_stack(60.0, 40.0, 10.0, &l, 10.0, Chamfer { w: 2.0, h: 2.0 });
+    let err = recognize_stack(&mesh).expect_err("non-convex top");
+    assert!(err.contains("not convex"), "{err}");
 }

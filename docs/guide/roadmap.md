@@ -23,8 +23,14 @@
    11. (done) chamfers, drafts and the rounds at a boss's foot or a hole's rim
    12. combined extrusions: (done) the intersection of outlines extruded along X, Y and Z, with
        openings through them, straight blind cuts into them and round holes, and (done) unions
-       of outlines stacked along an axis; holes that cross, roofs and bevels on a stack still to
-       do
+       of outlines stacked along an axis; (done) round holes that cross inside a combined part —
+       the bores are split out of their corner-sharing groups by circle consensus
+       (`combined/holes.rs::crossed_bore`), a bore is accepted with a gap in its wall where the
+       gap lies inside another bore's cylinder, and the volume takes the crossing once — and
+       (done) roofs and bevels on a stack: the top band's top edges may all carry one chamfer
+       (`w` in on the top face, `h` down the walls — a bevel when small, a roof when the
+       chamfers meet), recognised in `stack/mod.rs::recognize_chamfer` on a convex top outline
+       and written as one `Chamfer1` with `chamfer` (45°) or `chamfer_w`/`chamfer_h`
 4. **Checking**: compare the rebuilt part with the mesh through SolidCraft's `evaluate` (volume
    and deviation), as mesh2cad does with CadQuery.
 5. **Reworkable sketches** — beyond parity: every sketch fully dimensioned and constrained, so it
@@ -121,7 +127,6 @@
       walls' sagitta, so walls meet their face at 90°) ComplexGen-style topology gates
       alongside exact-or-nothing and the volume check: recognised faces close into loops, walls
       meet their face at 90°
-   plus what is still open in 3.12: roofs and bevels on stacks, holes that cross a combined part
 7. **Import and conversion**:
    1. (done: the manifest requests `evaluate@0.2`; a recognised design is staged
       and rebuilt in the app's private sandbox (`document.inspect`) before it is written, and a

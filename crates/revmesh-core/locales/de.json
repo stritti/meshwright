@@ -26,6 +26,7 @@
   "report.update.message": "Dieser Import lief mit revmesh {current}, aber {latest} ist erschienen. Installieren Sie sie über https://github.com/stritti/revmesh/releases",
   "summary.plate": "Eine {x} x {y} x {z} mm Platte",
   "summary.stack": "Ein {x} x {y} x {z} mm Teil aus {n} gestapelten Konturen entlang {axis}",
+  "summary.chamfer": "einer {w} x {h} mm Fase oben",
   "summary.combined": "Ein {x} x {y} x {z} mm Teil aus Konturen, extrudiert entlang {axes}",
   "summary.with": "{plate} mit {parts}",
   "summary.list": "{rest} und {last}",

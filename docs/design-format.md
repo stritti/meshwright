@@ -117,6 +117,12 @@ overlaps them by 0.02 mm for OpenCascade's fuse, which SolidCraft does not need.
 `plugin/revmesh/tests/stack.stl` (a base, an L and a diamond) rebuilds to 34,296 mm³ along Z and,
 turned, along Y; `extrude_z1_len = 15` rebuilds to 46,296 mm³, the bands above lifted by 5 mm.
 
+When the top band's top edges all carry one chamfer (a bevel, or a roof when the chamfers meet),
+the design writes one `chamfer` feature after the `move`: its `edge_names` are the top band's
+extrusion's `F<id>:side:l<i>|F<id>:top` for every side `i`, its `edges` the sides' middles on the
+top, and its `distance` runs along the top face (in from the edge) with `distance2` down the
+side when the two differ — driven by `chamfer` (a 45° one) or `chamfer_w`/`chamfer_h`.
+
 ## Cut-outs
 
 The cut-outs of straight sides are one sketch, `CutoutsSketch`, of closed loops in world

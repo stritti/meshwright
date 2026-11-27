@@ -24,8 +24,15 @@
    11. (erledigt) Fasen, Formschrägen und die Verrundungen an einem Zapfenfuß oder einem Bohrungsrand
    12. kombinierte Extrusionen: (erledigt) der Schnitt von Konturen, die entlang X, Y und Z extrudiert
        werden, mit Öffnungen durch sie, geraden Sackloch-Schnitten hinein und runden Bohrungen, und
-       (erledigt) Vereinigungen von Konturen, die entlang einer Achse gestapelt sind; sich kreuzende
-       Bohrungen, Dächer und Fasen auf einem Stapel noch offen
+       (erledigt) Vereinigungen von Konturen, die entlang einer Achse gestapelt sind; (erledigt)
+       sich kreuzende runde Bohrungen in einem kombinierten Teil — die Bohrungen werden per
+       Kreis-Konsens aus ihren ecken-teilenden Gruppen gelöst (`combined/holes.rs::crossed_bore`),
+       eine Bohrung mit Lücke in ihrer Wand wird akzeptiert, wenn die Lücke im Zylinder einer
+       anderen Bohrung liegt, und das Volumen rechnet die Kreuzung einmal — und (erledigt) Dächer
+       und Fasen auf einem Stapel: die Oberkanten des obersten Bands dürfen alle eine Fase tragen
+       (`w` auf der Oberseite hinein, `h` an den Wänden hinab — eine Fase, wenn klein, ein Dach,
+       wenn die Fasen sich treffen), erkannt in `stack/mod.rs::recognize_chamfer` an einer konvexen
+       Oberkante und als ein `Chamfer1` mit `chamfer` (45°) oder `chamfer_w`/`chamfer_h` geschrieben
 4. **Prüfung**: das neu aufgebaute Teil mit dem Netz durch SolidCrafts `evaluate` vergleichen (Volumen
    und Abweichung), wie mesh2cad es mit CadQuery tut.
 5. **Nacharbeitbare Skizzen** — jenseits der Parität: jede Skizze vollständig bemaßt und bestimmt, sodass
@@ -118,7 +125,6 @@
       plus der Pfeilhöhe der runden Wände eine Gerade ist, Wände also ihre Fläche rechtwinklig
       treffen) ComplexGen-artige Topologie-Gates neben exact-or-nothing und der Volumen-Prüfung:
       erkannte Flächen schließen zu Schleifen, Wände treffen ihre Fläche rechtwinklig
-   plus was in 3.12 noch offen ist: Dächer und Fasen auf Stapeln, sich kreuzende Bohrungen in einem kombinierten Teil
 7. **Import und Konvertierung**:
    1. (erledigt: das Manifest fordert `evaluate@0.2`; wird eine erkannte Konstruktion
       in der privaten Sandbox der App gestaget und dort neu aufgebaut (`document.inspect`), bevor sie
