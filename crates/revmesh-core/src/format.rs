@@ -217,14 +217,11 @@ pub(crate) fn push_face(
     let emit =
         |triangles: &mut Vec<Triangle>, ring: &[(usize, Vec3)], ids: [usize; 3]| push_checked(triangles, ids.map(|i| vertices[ring[i].0]));
 
-    let n = corners.len();
-    if (0..n).all(|i| {
-        let [a, b, c] = corner(n, i).map(|j| corners[j].1);
-        orient(a, b, c) > 0.0
-    }) {
-        for i in 1..n - 1 {
-            emit(triangles, &corners, [0, i, i + 1])?;
-        }
+    let turn = |ids: [usize; 3]| {
+        let [a, b, c] = ids.map(|i| corners[i].1);
+        orient(a, b, c)
+    };
+    if emit_convex_face(corners.len(), turn, |ids| emit(triangles, &corners, ids))? {
         return Ok(());
     }
 
@@ -243,6 +240,40 @@ pub(crate) fn push_face(
         corners.remove(ear[1]);
     }
     emit(triangles, &corners, [0, 1, 2])
+}
+
+/// Triangulate a convex boundary in linear time, including its collinear edge vertices.
+fn emit_convex_face(
+    count: usize,
+    turn: impl Fn([usize; 3]) -> f64,
+    mut emit: impl FnMut([usize; 3]) -> Result<(), MeshError>,
+) -> Result<bool, MeshError> {
+    if (0..count).any(|i| turn([(i + count - 1) % count, i, (i + 1) % count]) < 0.0) {
+        return Ok(false);
+    }
+    let fan_turn = |i| turn([0, i, i + 1]);
+    let Some(first) = (1..count - 1).find(|&i| fan_turn(i) > 0.0) else { return Ok(false) };
+    let last = (first..count - 1).rfind(|&i| fan_turn(i) > 0.0).unwrap_or(first);
+
+    // Collinear edges at the fan origin produce zero-area wedges. Split the first
+    // and last nonzero wedges along those edges so every boundary segment survives.
+    for i in 1..first {
+        emit([i, i + 1, first + 1])?;
+    }
+    if first == last {
+        for i in first + 1..count {
+            emit([1, i, (i + 1) % count])?;
+        }
+    } else {
+        emit([0, 1, first + 1])?;
+        for i in first + 1..last {
+            emit([0, i, i + 1])?;
+        }
+        for i in last + 1..count {
+            emit([last, i, (i + 1) % count])?;
+        }
+    }
+    Ok(true)
 }
 
 /// Pushes a triangle after checking that all coordinates are finite.
@@ -347,6 +378,42 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Mesh, MeshError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn convex_faces_with_split_edges_keep_every_edge_in_linear_work() {
+        use std::cell::Cell;
+        // Both sides adjacent to the fan origin are subdivided, including the
+        // triangle case where the first and last nonzero fan wedge coincide.
+        for vertices in [vec![[0, 0], [1, 0], [2, 0], [0, 2], [0, 1]], vec![[0, 0], [1, 0], [2, 0], [2, 2], [0, 2], [0, 1]]] {
+            let calls = Cell::new(0);
+            let orient = |[a, b, c]: [usize; 3]| {
+                calls.set(calls.get() + 1);
+                let ([ax, ay], [bx, by], [cx, cy]) = (vertices[a], vertices[b], vertices[c]);
+                f64::from((bx - ax) * (cy - ay) - (by - ay) * (cx - ax))
+            };
+            let mut triangles = Vec::new();
+            assert!(
+                emit_convex_face(vertices.len(), orient, |ids| {
+                    triangles.push(ids);
+                    Ok(())
+                })
+                .expect("triangulates")
+            );
+            assert!(calls.get() <= 3 * vertices.len());
+            assert_eq!(triangles.len(), vertices.len() - 2);
+            let mut edges = std::collections::BTreeSet::new();
+            for ids in triangles {
+                assert!(orient(ids) > 0.0);
+                let [a, b, c] = ids;
+                for (start, end) in [(a, b), (b, c), (c, a)] {
+                    if !edges.remove(&(end, start)) {
+                        assert!(edges.insert((start, end)));
+                    }
+                }
+            }
+            assert_eq!(edges, (0..vertices.len()).map(|i| (i, (i + 1) % vertices.len())).collect());
+        }
+    }
 
     #[test]
     fn concave_faces_keep_area_and_winding_in_obj_and_ply() {
