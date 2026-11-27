@@ -1,0 +1,70 @@
+name: Coverage comment
+
+# Posts the coverage report of a pull request's CI run as one comment on the PR, updated in
+# place on every push. CI's `coverage` job leaves the Markdown and the PR number as the artifact
+# `coverage-comment`; this workflow runs from the default branch with a write token after CI has
+# finished, so it also works for pull requests from forks, whose CI runs get only a read token.
+#
+# It never checks out or runs the PR's code: it only reads the artifact, checks that the PR it
+# names really has the run's head commit, and posts the Markdown as text.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Post coverage comment
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Download the coverage comment
+        id: download
+        run: |
+          if ! gh run download "$RUN_ID" -R "$REPO" -n coverage-comment -D "$RUNNER_TEMP/coverage-comment"; then
+            echo "The run left no coverage comment (the coverage job did not get that far)."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+      - name: Post or update the comment
+        if: steps.download.outputs.found == 'true'
+        run: |
+          dir="$RUNNER_TEMP/coverage-comment"
+          pr=$(head -c 16 "$dir/pr-number" | tr -d '[:space:]')
+          if ! [[ "$pr" =~ ^[0-9]+$ ]]; then
+            echo "::error::the artifact names no pull request number"
+            exit 1
+          fi
+          # The artifact comes from the PR's own run, so it could name any PR: post only on the
+          # one whose head is the commit this run built.
+          pr_head=$(gh api "repos/$REPO/pulls/$pr" --jq .head.sha)
+          if [ "$pr_head" != "$HEAD_SHA" ]; then
+            echo "PR #$pr is now at $pr_head, not $HEAD_SHA; a newer run will comment."
+            exit 0
+          fi
+          marker='<!-- revmesh-coverage -->'
+          body=$(head -c 60000 "$dir/body.md")
+          case "$body" in
+            "$marker"*) ;;
+            *) body="$marker"$'\n'"$body" ;;
+          esac
+          existing=$(gh api --paginate "repos/$REPO/issues/$pr/comments" \
+            --jq "map(select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\")))) | .[].id" | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -f body="$body" > /dev/null
+            echo "Updated the coverage comment on PR #$pr."
+          else
+            gh api -X POST "repos/$REPO/issues/$pr/comments" -f body="$body" > /dev/null
+            echo "Posted the coverage comment on PR #$pr."
+          fi

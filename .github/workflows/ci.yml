@@ -161,6 +161,26 @@ jobs:
         with:
           name: coverage-lcov
           path: lcov.info
+      # The pull request's coverage comment: this job has only a read token (and a fork's PR no
+      # secrets at all), so it leaves the Markdown and the PR number as an artifact, and the
+      # `coverage-comment` workflow posts them with a write token once CI has finished. Also
+      # written when the gate fails, so the comment shows why.
+      - name: Coverage comment body
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p coverage-comment
+          cargo llvm-cov report --workspace --json --summary-only --output-path coverage.json
+          scripts/coverage-markdown.sh coverage.json "$HEAD_SHA" > coverage-comment/body.md
+          echo "$PR_NUMBER" > coverage-comment/pr-number
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        with:
+          name: coverage-comment
+          path: coverage-comment/
+          retention-days: 3
 
   # One required check for branch protection: green only when every gate above is green.
   ci-ok:
