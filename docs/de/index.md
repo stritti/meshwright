@@ -34,7 +34,7 @@ features:
 ---
 
 ::: warning Status: frühe Phase
-Die Pipeline läuft Ende-zu-Ende — Netz rein, bearbeitbare Konstruktion raus, getestet in SolidCraft 0.50.Teile, die noch nicht erkannt werden, bleiben ein Mesh-Body, mit dem Grund im Importbericht. Was genau
+Die Pipeline läuft Ende-zu-Ende — Netz rein, bearbeitbare Konstruktion raus, getestet in SolidCraft 0.51.Teile, die noch nicht erkannt werden, bleiben ein Mesh-Body, mit dem Grund im Importbericht. Was genau
 erkannt wird, steht unter [Was auto erkennt](/de/guide/recognition); was geplant ist, auf der
 [Roadmap](/de/guide/roadmap).
 :::

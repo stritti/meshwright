@@ -99,7 +99,7 @@ fn chords_of_independently_meshed_rims_follow_the_bore() {
     assert_eq!(walls.len(), 1);
 }
 
-/// A 60 x 40 x 8 plate exported from SolidCraft 0.50 with blind holes from the top (Ø6 x 4,
+/// A 60 x 40 x 8 plate exported from SolidCraft 0.51 with blind holes from the top (Ø6 x 4,
 /// Ø3 x 6) and the bottom (Ø8 x 2.5) and an Ø5 hole through.
 #[test]
 fn recognises_blind_holes() {
@@ -180,7 +180,7 @@ fn blind_holes_need_flat_floors() {
     assert!(why.contains("not a flat plate") || why.contains("flat floor"), "{why}");
 }
 
-/// A 60 x 40 x 8 plate exported from SolidCraft 0.50 with a counterbore and a countersink on
+/// A 60 x 40 x 8 plate exported from SolidCraft 0.51 with a counterbore and a countersink on
 /// the top face and a counterbore on the bottom face.
 #[test]
 fn recognises_counterbores_and_countersinks() {
@@ -421,7 +421,7 @@ fn split_hole_rims_stay_round() {
     assert_eq!(found(&mesh).0, expected);
 }
 
-/// A 70 x 40 x 8 plate exported from SolidCraft 0.50 with an Ø8 hole whose top rim is rounded
+/// A 70 x 40 x 8 plate exported from SolidCraft 0.51 with an Ø8 hole whose top rim is rounded
 /// with 1.5 mm and an Ø6 hole whose bottom rim is rounded with 1 mm.
 #[test]
 fn recognises_rounded_hole_rims() {

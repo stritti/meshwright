@@ -1010,7 +1010,7 @@ fn mixed_corner_radii_write_one_fillet_per_radius_group() {
     assert_eq!(fillets[3]["radius"], "outline_fillet_r_4");
 }
 
-/// The design the spike opened in SolidCraft 0.50: a plate with a centred hole and rounded
+/// The design the spike opened in SolidCraft 0.51: a plate with a centred hole and rounded
 /// corners. The golden file was opened in SolidCraft and rebuilt without errors or warnings
 /// after changing `base_x` and `hole_1_d`.
 #[test]

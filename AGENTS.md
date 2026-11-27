@@ -16,7 +16,7 @@ extracted from the literature (`revmesh-recognition-knowhow`).
 
 Every SolidCraft skill opens with the same mandatory conformance gate: before any change that
 touches the plugin boundary, check it against SolidCraft's `docs/plugins.md` — [at the pinned tag
-`v0.50.0`](https://github.com/tangency-labs/solidcraft/blob/v0.50.0/docs/plugins.md) and [at
+`v0.51.1`](https://github.com/tangency-labs/solidcraft/blob/v0.51.1/docs/plugins.md) and [at
 `main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md) — for compatibility
 with the host and for full utilization of the plugin interface.
 

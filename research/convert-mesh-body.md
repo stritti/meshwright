@@ -5,8 +5,8 @@ importer (STL/OBJ/PLY file → new design); the ask is to select a mesh body alr
 design (from SolidCraft's own *File › Open*, or revmesh's mesh fallback) and convert it in place.
 
 Sources checked 2026-11-26: the vendored `crates/revmesh-plugin/wit/plugin.wit`
-(`craft:plugin@0.2.0`, from SolidCraft **v0.50.0**), SolidCraft's `docs/plugins.md` at tag v0.50.0,
-command schemas via `solidcraft-cli 0.50.0 exec engine.describe`, and
+(`craft:plugin@0.2.0`, from SolidCraft **v0.51.1**), SolidCraft's `docs/plugins.md` at tag v0.51.1,
+command schemas via `solidcraft-cli 0.51.1 exec engine.describe`, and
 [gridfinity-solidcraft](https://github.com/tharje/gridfinity-solidcraft)'s package as a working
 `commands@0.2` example (its `edit` entry edits a picked body in the open design).
 
@@ -83,7 +83,7 @@ command schemas via `solidcraft-cli 0.50.0 exec engine.describe`, and
 ## Open questions for the implementation
 
 - `geometry-ref` → body name: confirm the exact field shapes in `document.inspect`'s `bodies` /
-  `selection` on 0.50.0 (the ref is "stable across edits"; the inspect reply uses names).
+  `selection` on 0.51.1 (the ref is "stable across edits"; the inspect reply uses names).
 - `model.mesh`'s `frame`: apply it when positions are in the owning component's coordinates.
 - Verify `timeline.add` accepts every feature kind the design writer emits (plate sketch, extrude,
   holes, fillet, patterns) with a plugin-test case.
