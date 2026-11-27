@@ -564,7 +564,7 @@ fn a_translated_plates_side_boss_is_relative_to_its_corner() {
 /// two cylinders could be written on the wall, so the part is no plate with a side boss.
 #[test]
 fn a_stepped_side_boss_is_refused() {
-    use crate::recognize::{HoleSpec, PlateSpec, Wall, recognize};
+    use crate::recognize::{HoleSpec, PlateSpec, recognize};
     let mut mesh = synth::plate(
         &PlateSpec {
             x: 60.0,
