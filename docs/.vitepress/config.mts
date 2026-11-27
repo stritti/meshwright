@@ -58,7 +58,8 @@ export default defineConfig({
           text: 'Edit this page on GitHub',
         },
         footer: {
-          message: 'Released under the MIT License. Not affiliated with SolidCraft.',
+          message:
+            'Released under the MIT License. Not affiliated with SolidCraft. Listed on the <a href="https://tharje.github.io/solidcraft-plugins/">community SolidCraft plugin list</a>.',
         },
       },
     },
@@ -113,7 +114,8 @@ export default defineConfig({
           text: 'Diese Seite auf GitHub bearbeiten',
         },
         footer: {
-          message: 'Veröffentlicht unter der MIT-Lizenz. Nicht mit SolidCraft verbunden.',
+          message:
+            'Veröffentlicht unter der MIT-Lizenz. Nicht mit SolidCraft verbunden. Gelistet in der <a href="https://tharje.github.io/solidcraft-plugins/">Community-Liste der SolidCraft-Plugins</a>.',
         },
       },
     },
