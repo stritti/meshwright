@@ -21,9 +21,6 @@ hero:
     - theme: alt
       text: GitHub
       link: https://github.com/stritti/revmesh
-    - theme: alt
-      text: Plugin-Liste
-      link: https://tharje.github.io/solidcraft-plugins/
 
 features:
   - title: Bearbeitbar, kein totes Netz
