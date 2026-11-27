@@ -117,8 +117,11 @@
       the design writes one `Fillet<g>` per radius group with `fillet_r_<g>` / `outline_fillet_r_<g>`
       — a single shared radius keeps the plain `fillet_r` / `outline_fillet_r` and `Fillet1`)
       per-corner radii in outlines
-   5. hole rows at any angle (a pattern's direction is not an expression in SolidCraft — write
-      them as single holes or on a rotated sketch)
+   5. (done: `hole_groups` in `crates/revmesh-core/src/recognize/to_design.rs` writes a row whose
+      angle is not 0° or ±90° as single holes, as a pattern's direction is not an expression in
+      SolidCraft; an axis-aligned row stays a `HoleRow<n>` pattern) hole rows at any angle (a
+      pattern's direction is not an expression in SolidCraft — write them as single holes or on
+      a rotated sketch)
    6. (done: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` refuses, before any axis
       is tried, a mesh whose edges are not covered by two facets in opposite directions —
       corners welded on a sub-tolerance grid, an exporter's T-junctions counted by their sub-edges'
@@ -143,9 +146,12 @@
       and `cargo xtask check` take any of them; the plugin-test fixtures `block-60x40x6.obj`,
       `block-60x40x6.ply` and `block-60x40x6-bin.ply` import the STL block unchanged, and
       `obj-bad.obj`/`ply-bad.ply` cover the error cases) OBJ and PLY input next to STL
-   3. double-precision coordinates in mesh bodies beyond the single-precision range (the design
-      is written with `f32` coordinates today, `design/mod.rs`) — parts far from the origin lose
-      precision in the mesh fallback
+   3. (done: the `Positions` serializer of `MeshData` in `crates/revmesh-core/src/design/mod.rs`
+      writes a coordinate as `f32` when it survives that round trip — the precision STL stores it
+      in — and as `f64` otherwise, so parts far from the origin keep their precision in the mesh
+      fallback) double-precision coordinates in mesh bodies beyond the single-precision range (the
+      design is written with `f32` coordinates today, `design/mod.rs`) — parts far from the origin
+      lose precision in the mesh fallback
    4. (done: files up to 32 MiB are accepted (`MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`)
       and recognition is gated at `MAX_RECOGNITION_TRIANGLES` (≈ 335k triangles ≈ 16 MiB of binary
       STL) in `revmesh-core` — `import_mesh` takes the mesh by reference and clones only in the

@@ -43,7 +43,7 @@ to features (sketch dimensions) and are driven by an expression.
 | `cylinder` | `base` (three expressions: the bottom face's centre), `axis: [0, 0, 1]`, `radius`, `height`, `operation: "join"` | SolidCraft's own cylinder primitive saves `radius` as `"(10 mm) / 2"` when given a diameter; revmesh writes `"boss_<n>_d / 2"`. |
 | `move` | `bodies: ["Body1"]`, `translate: [x, y, z]` (three expressions) | Moves the whole body; later features use world coordinates. The extrusion's face names (`F2:side:l1`) stay valid after it. |
 | `pattern` | `features: [ids]`, `pattern: {"type": "rectangular", dir1, count1, spacing1, dir2?, count2?, spacing2?}` or `{"type": "circular", origin: [3 expressions], axis, count, angle: "360 deg"}` | Counts include the original and are expressions; a parameter used as a count must have no unit (`"unit": ""`), SolidCraft refuses a length. Directions and the axis are numbers. |
-| `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flat `x,y,z` positions and flat corner indices; `body_names` lists the bodies. |
+| `mesh_import` | `file`, `meshes: [{name, positions, triangles}]` | Flat `x,y,z` positions and flat corner indices; `body_names` lists the bodies. A position is a single-precision number when it survives that round trip (STL's own precision, so the file stays small), a double otherwise — parts far from the origin keep their precision. |
 
 ## Planes
 
@@ -316,7 +316,9 @@ and `extrude_0`. Holes and fillet picks are in world coordinates. In `solidcraft
 file at (20, 10)) with `extrude_0 = 4`, `extrude_len = 8` and `outline_fillet_r = 4` to
 9,706.85 mm³, both as computed.
 
-A hole pattern is one `hole` feature at the first hole and a `pattern` feature on it. A bolt
+A hole pattern is one `hole` feature at the first hole and a `pattern` feature on it. A row's
+pattern direction is a number vector, not an expression, so a row at an angle other than along X
+or Y is written as single `hole` features instead. A bolt
 circle's first hole is at `[cx + r * cos(angle), cy + r * sin(angle), top]` as expressions and
 its pattern's origin is `[cx, cy, 0]`. `plate-patterns.stl` (a 2 x 2 grid, a row of three, a
 bolt circle of six round a single bore) imports in `solidcraft-cli 0.50.0` to 55,995.49 mm³ as

@@ -1,9 +1,21 @@
-use super::{DesignBuilder, Extent, FORMAT, FeatureKind, Operation, Plane, Profiles, fmt_number, rectangle_sketch};
+use super::{DesignBuilder, Extent, FORMAT, FeatureKind, MeshData, Operation, Plane, Profiles, fmt_number, rectangle_sketch};
+use crate::mesh::Mesh;
 
 #[test]
 fn numbers_drop_trailing_zero() {
     assert_eq!(fmt_number(60.0), "60");
     assert_eq!(fmt_number(2.5), "2.5");
+}
+
+/// Roadmap 7.3: a mesh coordinate that survives a single-precision round trip is written as one
+/// (the precision STL stores it in, so the design stays small), anything finer keeps its full
+/// double-precision value, so parts far from the origin lose nothing in the mesh fallback.
+#[test]
+fn mesh_coordinates_keep_double_precision_beyond_f32() {
+    let stl_precision = f64::from(0.1_f32); // 0.10000000149011612 as a double
+    let mesh = Mesh::new(vec![[[stl_precision, 0.0, 0.0], [1_000_000.001, 0.0, 0.0], [0.5, 0.0, 0.0]]]);
+    let json = serde_json::to_string(&MeshData::new("Body1", mesh)).expect("serializes");
+    assert!(json.contains(r#""positions":[0.1,0.0,0.0,1000000.001,0.0,0.0,0.5,0.0,0.0]"#), "{json}");
 }
 
 #[test]

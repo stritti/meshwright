@@ -115,7 +115,10 @@
       Ecke und das Design schreibt ein `Fillet<g>` pro Radius-Gruppe mit `fillet_r_<g>` /
       `outline_fillet_r_<g>` — ein gemeinsamer Radius behält das schlichte `fillet_r` /
       `outline_fillet_r` und `Fillet1`) pro-Ecken-Radien in Konturen
-   5. Bohrungsreihen in beliebigem Winkel (die Richtung eines Musters ist in SolidCraft kein Ausdruck —
+   5. (erledigt: `hole_groups` in `crates/revmesh-core/src/recognize/to_design.rs` schreibt eine Reihe,
+      deren Winkel nicht 0° oder ±90° ist, als einzelne Bohrungen, da die Richtung eines Musters in
+      SolidCraft kein Ausdruck ist; eine achsparallele Reihe bleibt ein `HoleRow<n>`-Muster)
+      Bohrungsreihen in beliebigem Winkel (die Richtung eines Musters ist in SolidCraft kein Ausdruck —
       als einzelne Bohrungen oder auf einer gedrehten Skizze schreiben)
    6. (done: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` lehnt, bevor eine Achse
       probiert wird, ein Netz ab, dessen Kanten nicht von zwei Facetten in Gegenrichtung bedeckt
@@ -142,9 +145,12 @@
       `block-60x40x6.obj`, `block-60x40x6.ply` und `block-60x40x6-bin.ply` importieren den
       STL-Block unverändert, `obj-bad.obj`/`ply-bad.ply` decken die Fehlerfälle ab) OBJ- und
       PLY-Eingabe neben STL
-   3. doppeltgenaue Koordinaten in Mesh-Bodies jenseits des einfachgenauen Bereichs (die Konstruktion
-      wird heute mit `f32`-Koordinaten geschrieben, `design/mod.rs`) — Teile weit vom Ursprung verlieren
-      im Netz-Fallback an Präzision
+   3. (erledigt: der `Positions`-Serializer von `MeshData` in `crates/revmesh-core/src/design/mod.rs`
+      schreibt eine Koordinate als `f32`, wenn sie den Roundtrip übersteht — die Präzision, in der STL
+      sie speichert — und sonst als `f64`, sodass Teile weit vom Ursprung im Netz-Fallback ihre
+      Präzision behalten) doppeltgenaue Koordinaten in Mesh-Bodies jenseits des einfachgenauen
+      Bereichs (die Konstruktion wird heute mit `f32`-Koordinaten geschrieben, `design/mod.rs`) —
+      Teile weit vom Ursprung verlieren im Netz-Fallback an Präzision
    4. eine höhere Erkennungsgrenze (heute ≈ 335.000 Dreiecke ≈ 16 MiB binäres STL,
       `MAX_RECOGNITION_TRIANGLES` in `revmesh-core`), indem
       die Indexe, die die Erkennung über Flächen und Wände baut, schlanker werden

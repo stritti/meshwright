@@ -272,8 +272,10 @@ pub enum FeatureKind {
 /// `triangles` (three vertex indices each), one vertex per triangle corner as STL has them.
 ///
 /// The mesh is kept as it is and laid out only while the design is written, so a large mesh is
-/// never held twice. Coordinates are written as single-precision numbers, the precision STL
-/// stores them in, which keeps the design small (`0.1` rather than `0.10000000149011612`).
+/// never held twice. A coordinate that survives a single-precision round trip is written as
+/// one (the precision STL stores it in, which keeps the design small: `0.1` rather than
+/// `0.10000000149011612`); any finer coordinate is written as a double, so parts far from the
+/// origin keep their precision in the mesh fallback.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeshData {
     /// The body's name.
@@ -296,10 +298,15 @@ impl Serialize for MeshData {
 
         struct Positions<'a>(&'a Mesh);
         impl Serialize for Positions<'_> {
+            #[allow(clippy::float_cmp)] // exact equality is intended: a coordinate is single-precision exactly when it survives the round trip
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
                 let mut seq = serializer.serialize_seq(Some(self.0.triangles.len() * 9))?;
                 for value in self.0.triangles.iter().flatten().flatten() {
-                    seq.serialize_element(&(*value as f32))?;
+                    if *value == f64::from(*value as f32) {
+                        seq.serialize_element(&(*value as f32))?;
+                    } else {
+                        seq.serialize_element(value)?;
+                    }
                 }
                 seq.end()
             }
