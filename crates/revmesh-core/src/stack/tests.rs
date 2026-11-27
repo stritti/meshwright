@@ -363,3 +363,66 @@ fn partial_or_wrong_chamfers_are_no_stack() {
     let err = recognize_stack(&mesh).expect_err("non-convex top");
     assert!(err.contains("not convex"), "{err}");
 }
+
+/// A closed mesh with no face square to the axis at all (a tetrahedron whose every slanted
+/// facet touches the top) leaves the levels empty: refused with a reason, not a panic on
+/// `levels[0]` (review finding on roadmap 3.12).
+#[test]
+fn a_mesh_with_no_levels_is_no_stack_not_a_panic() {
+    let mesh = Mesh::new(vec![
+        [[0.0, 0.0, 0.0], [0.0, 2.0, 2.0], [2.0, 0.0, 0.0]],
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 2.0]],
+        [[0.0, 0.0, 0.0], [0.0, 0.0, 2.0], [0.0, 2.0, 2.0]],
+        [[2.0, 0.0, 0.0], [0.0, 2.0, 2.0], [0.0, 0.0, 2.0]],
+    ]);
+    let err = recognize_stack(&mesh).expect_err("no levels");
+    assert!(err.contains("does not step along its axis"), "{err}");
+    let found = recognize(&mesh);
+    assert!(!matches!(found, Recognition::Stack { .. }), "{found:?}");
+}
+
+/// The chamfer's volume coefficient at a corner is the tangent of half the *exterior* angle
+/// (Steiner), not its cotangent: on an equilateral triangle each corner contributes tan(60°)
+/// = sqrt(3), so K = 3*sqrt(3) — a rectangle's 90° turns hide the difference (review finding).
+#[test]
+fn a_chamfer_on_a_triangular_top_takes_the_exterior_tangent() {
+    let side = 24.0;
+    let height = side * 3.0f64.sqrt() / 2.0;
+    let outline = [[8.0, 8.0], [32.0, 8.0], [20.0, 8.0 + height]];
+    let mesh = chamfered_stack(40.0, 40.0, 10.0, &outline, 10.0, Chamfer { w: 2.0, h: 2.0 });
+    // With the cotangent instead of the tangent the chamfer would be 9.3 mm³ too big and the
+    // volume gate would refuse the stack.
+    let (spec, _) = recognize_stack(&mesh).expect("a stack");
+    assert_eq!(spec.bands.len(), 2);
+    assert_eq!(spec.bands[1].chamfer, Some(Chamfer { w: 2.0, h: 2.0 }));
+    // The mesh's own volume: h*(P*w/2 - K*w^2/3) with P = 3*side and K = 3*sqrt(3) (tan 60°).
+    let removed = 2.0 * (3.0 * side * 2.0 / 2.0 - 3.0 * 3.0f64.sqrt() * 4.0 / 3.0);
+    let want = 40.0 * 40.0 * 10.0 + side * height / 2.0 * 10.0 - removed;
+    assert!((mesh.volume() - want).abs() < 1e-9, "{} vs {want}", mesh.volume());
+    // The recognised outline's apex is snapped to micrometres, so allow that slack.
+    assert!((spec.volume() - mesh.volume()).abs() < 0.1, "{} vs {}", spec.volume(), mesh.volume());
+}
+
+/// An exporter may tessellate a chamfer face into rows of coplanar triangles whose lower rows
+/// do not reach the top: the plane as a whole does, and the chamfer is recognised still (review
+/// finding on roadmap 3.12).
+#[test]
+fn a_tessellated_chamfer_is_still_recognised() {
+    let outline = [[15.0, 10.0], [45.0, 10.0], [45.0, 30.0], [15.0, 30.0]];
+    let mesh = chamfered_stack(60.0, 40.0, 10.0, &outline, 10.0, Chamfer { w: 2.0, h: 2.0 });
+    let (spec, _) = recognize_stack(&mesh).expect("a stack");
+    let mid = |a: [f64; 3], b: [f64; 3]| [0, 1, 2].map(|i| f64::midpoint(a[i], b[i]));
+    let subdivided = Mesh::new(
+        mesh.triangles
+            .iter()
+            .flat_map(|t| {
+                let (ab, bc, ca) = (mid(t[0], t[1]), mid(t[1], t[2]), mid(t[2], t[0]));
+                [[t[0], ab, ca], [ab, t[1], bc], [ca, bc, t[2]], [ab, bc, ca]]
+            })
+            .collect(),
+    );
+    let (found, _) = recognize_stack(&subdivided).expect("still a stack");
+    assert_eq!(found.bands.len(), spec.bands.len());
+    assert_eq!(found.bands[1].chamfer, Some(Chamfer { w: 2.0, h: 2.0 }));
+    assert!((found.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", found.volume(), mesh.volume());
+}

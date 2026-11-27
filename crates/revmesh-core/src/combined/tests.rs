@@ -371,6 +371,117 @@ fn crossing_holes_take_the_crossing_once() {
     assert!(names.contains(&"hole_1_d") && names.contains(&"hole_2_d"), "{names:?}");
 }
 
+/// A closed 40 x 30 x 20 box with two radius-3 bores crossing at its middle: one along X at
+/// (y, z) = (15, 10), one along Z at (x, y) = (20, 15). Each wall is trimmed where the other
+/// bore's cylinder runs through it, and the two walls share the intersection curve's corners
+/// bit for bit, so the mesh closes.
+fn box_with_crossing_bores() -> Mesh {
+    use std::f64::consts::TAU;
+    const N: usize = 16;
+    let r = 3.0;
+    let sn: Vec<f64> = (0..N).map(|i| (i as f64 * TAU / N as f64).sin()).collect();
+    let cs: Vec<f64> = (0..N).map(|i| (i as f64 * TAU / N as f64).cos()).collect();
+    let ring_x = |i: usize, x: f64| [x, 15.0 + r * cs[i], 10.0 + r * sn[i]];
+    let ring_z = |j: usize, z: f64| [20.0 + r * cs[j], 15.0 + r * sn[j], z];
+    // The X wall's gap at angle i is |x - 20| < r*|sin|; its boundary corners lie on the Z
+    // wall's gap boundary (|z - 10| < r*|cos| at angle j). Patch the Z wall with those corners,
+    // computed from the X table, so both walls share them bit for bit.
+    let mut z_patch: Vec<(usize, f64, [f64; 3])> = Vec::new();
+    for (i, &s) in sn.iter().enumerate() {
+        if s.abs() < 1e-12 {
+            continue;
+        }
+        for x in [20.0 + r * s.abs(), 20.0 - r * s.abs()] {
+            let c = [x, 15.0 + r * cs[i], 10.0 + r * s];
+            for j in 0..N {
+                for s in [1.0, -1.0] {
+                    let z = 10.0 + s * r * cs[j].abs();
+                    let b = [20.0 + r * cs[j], 15.0 + r * sn[j], z];
+                    if (0..3).all(|k| (b[k] - c[k]).abs() < 1e-9) {
+                        z_patch.push((j, z, c));
+                    }
+                }
+            }
+        }
+    }
+    let mut t: Vec<[[f64; 3]; 3]> = Vec::new();
+    // The six faces: the X bore opens on the x faces, the Z bore on the z faces, the y faces are solid.
+    let yz = [[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]];
+    let xz = [[0.0, 0.0], [40.0, 0.0], [40.0, 20.0], [0.0, 20.0]];
+    let xy = [[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]];
+    let mouth_x: Vec<[f64; 2]> = (0..N).map(|i| [15.0 + r * cs[i], 10.0 + r * sn[i]]).collect();
+    let mouth_z: Vec<[f64; 2]> = (0..N).map(|j| [20.0 + r * cs[j], 15.0 + r * sn[j]]).collect();
+    for [a, b, c] in crate::synth::triangulate(&yz, &[mouth_x]) {
+        t.push([[0.0, a[0], a[1]], [0.0, c[0], c[1]], [0.0, b[0], b[1]]]); // x = 0, normal -x
+        t.push([[40.0, a[0], a[1]], [40.0, b[0], b[1]], [40.0, c[0], c[1]]]); // x = 40, normal +x
+    }
+    for [a, b, c] in crate::synth::triangulate(&xz, &[]) {
+        t.push([[a[0], 0.0, a[1]], [b[0], 0.0, b[1]], [c[0], 0.0, c[1]]]); // y = 0, normal -y
+        t.push([[a[0], 30.0, a[1]], [c[0], 30.0, c[1]], [b[0], 30.0, b[1]]]); // y = 30, normal +y
+    }
+    for [a, b, c] in crate::synth::triangulate(&xy, &[mouth_z]) {
+        t.push([[a[0], a[1], 0.0], [c[0], c[1], 0.0], [b[0], b[1], 0.0]]); // z = 0, normal -z
+        t.push([[a[0], a[1], 20.0], [b[0], b[1], 20.0], [c[0], c[1], 20.0]]); // z = 20, normal +z
+    }
+    // The X bore's wall, trimmed where the Z bore's cylinder runs through it.
+    for (i, &s) in sn.iter().enumerate() {
+        let g = r * s.abs();
+        let segments = if g > 1e-12 { vec![(0.0, 20.0 - g), (20.0 + g, 40.0)] } else { vec![(0.0, 40.0)] };
+        let j = (i + 1) % N;
+        for (x0, x1) in segments {
+            let (p, q) = (ring_x(j, x0), ring_x(i, x0));
+            t.push([p, q, ring_x(i, x1)]);
+            t.push([p, ring_x(i, x1), ring_x(j, x1)]);
+        }
+    }
+    // The Z bore's wall, trimmed where the X bore's cylinder runs through it, its gap's boundary
+    // corners taken from the X wall's table.
+    let at_z = |jj: usize, z: f64| {
+        z_patch.iter().find(|(kk, sz, _)| *kk == jj && (*sz - z).abs() < 1e-12).map_or_else(|| ring_z(jj, z), |(_, _, p)| *p)
+    };
+    for (j, &c0) in cs.iter().enumerate() {
+        let h = r * c0.abs();
+        let segments = if h > 1e-12 { vec![(0.0, 10.0 - h), (10.0 + h, 20.0)] } else { vec![(0.0, 20.0)] };
+        let k = (j + 1) % N;
+        for (z0, z1) in segments {
+            let (p, q) = (at_z(k, z0), at_z(j, z0));
+            t.push([p, q, at_z(j, z1)]);
+            t.push([p, at_z(j, z1), at_z(k, z1)]);
+        }
+    }
+    let mut mesh = Mesh::new(t);
+    if mesh.volume() < 0.0 {
+        for tr in &mut mesh.triangles {
+            tr.swap(1, 2);
+        }
+    }
+    mesh
+}
+
+/// Roadmap 3.12, end to end: a closed mesh of two crossing through-bores in a box is recognised
+/// through `recognize_combined` — a transverse bore's silhouette rectangle must not swallow the
+/// other bore's mouth (review finding).
+#[test]
+fn crossing_holes_in_a_closed_mesh_are_recognised() {
+    let mesh = box_with_crossing_bores();
+    assert!(mesh.volume() > 0.0, "{}", mesh.volume());
+    let (spec, offset) = recognize_combined(&mesh).expect("combined");
+    assert_eq!(offset, [0.0; 3]);
+    let holes: Vec<(Axis, [f64; 2], f64, f64, f64)> = spec.holes.iter().map(|h| (h.axis, h.centre, h.d, h.from, h.to)).collect();
+    assert_eq!(holes, [(Axis::X, [15.0, 10.0], 6.0, 0.0, 40.0), (Axis::Z, [20.0, 15.0], 6.0, 0.0, 20.0)]);
+    // Both bore mouths became holes, so the one outline left is the box's side again.
+    assert_eq!(spec.extrusions.iter().map(|e| e.axis).collect::<Vec<_>>(), [Axis::Z]);
+    // 24000 less both bores plus the lens (16 r^3 / 3) exactly once.
+    let pi = std::f64::consts::PI;
+    let want = 40.0 * 30.0 * 20.0 - pi * 9.0 * 40.0 - pi * 9.0 * 20.0 + 16.0 * 27.0 / 3.0;
+    assert!((spec.volume() - want).abs() < 1e-6, "{} vs {want}", spec.volume());
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("json");
+    let cylinders: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "cylinder").collect();
+    assert_eq!(cylinders.len(), 2);
+    assert!(cylinders.iter().all(|c| c["operation"] == "cut"));
+}
+
 /// A closed 20 x 20 x 10 box with a radius-9 blind hole of `sides` facets drilled 9 deep into its
 /// top: walls from the floor at Z = 1 up to the top.
 fn box_with_blind_bore(sides: u32) -> Mesh {

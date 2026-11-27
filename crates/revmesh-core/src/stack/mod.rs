@@ -59,9 +59,12 @@ pub(crate) fn recognize_stack(mesh: &Mesh) -> Result<(StackSpec, Vec3), String> 
         })
         .collect();
     let level = |n: &Vec3| n[2].abs() >= 1.0 - PARALLEL;
-    // Slanted faces are allowed only as the top band's chamfer (checked once the bands are built).
+    // Slanted faces are allowed only as the top band's chamfer (checked once the bands are
+    // built). Facets of one plane count as one face, however finely an exporter tessellated it,
+    // so a chamfer split into rows of triangles still reaches the top as a whole.
     let slanted: Vec<Facet> = facets.iter().filter(|(_, n)| !level(n) && n[2].abs() > PARALLEL).copied().collect();
-    if slanted.iter().any(|(t, _)| t.iter().all(|p| p[2] < size[2] - tol)) {
+    let slanted = plane_groups(&slanted, tol);
+    if slanted.iter().any(|g| g.zmax < size[2] - tol) {
         return Err(format!("{NOT_STACK}: a slanted face lies below its top"));
     }
     // The levels: the heights of the faces square to the axis.
@@ -78,7 +81,7 @@ pub(crate) fn recognize_stack(mesh: &Mesh) -> Result<(StackSpec, Vec3), String> 
     levels.sort_by(f64::total_cmp);
     levels.dedup_by(|a, b| *a - *b <= tol);
     let mut levels: Vec<f64> = levels.into_iter().map(snap_mm).collect();
-    if levels[0] > tol {
+    if levels.is_empty() || levels[0] > tol {
         return Err(format!("{NOT_STACK}: it does not step along its axis"));
     }
     // A roofed top has no face at the box's top; the slanted faces reach it there instead.
@@ -136,6 +139,7 @@ pub(crate) fn recognize_stack(mesh: &Mesh) -> Result<(StackSpec, Vec3), String> 
     if !slanted.is_empty() {
         recognize_chamfer(&slanted, bands.last_mut().expect("at least two bands"), size[2], tol)?;
     }
+
     let spec = StackSpec { size, bands };
     if !facets.iter().all(|(t, n)| on_stack(&spec, t, *n, tol)) {
         return Err(format!("{NOT_STACK}: a face lies on no band's wall or step"));
@@ -162,23 +166,52 @@ pub(crate) fn chamfer_plane(a: P2, b: P2, to: f64, c: Chamfer) -> (Vec3, Vec3) {
     (q0, [n[0] / nl, n[1] / nl, n[2] / nl])
 }
 
-/// Recognise the slanted `facets` as one chamfer of all the top band's top edges (roadmap 3.12: a
+/// Slanted facets lying in one plane (the same unit normal and offset), however finely an
+/// exporter tessellated the face, with the plane's lowest and highest corner.
+struct SlantedPlane {
+    n: Vec3,
+    offset: f64,
+    facets: Vec<Facet>,
+    zmin: f64,
+    zmax: f64,
+}
+
+/// Groups `facets` by the plane they lie in: same unit normal and same offset `n . p`.
+fn plane_groups(facets: &[Facet], tol: f64) -> Vec<SlantedPlane> {
+    let mut groups: Vec<SlantedPlane> = Vec::new();
+    for &(t, n) in facets {
+        let offset = dot(n, t[0]);
+        let (zmin, zmax) = t.iter().map(|p| p[2]).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), z| (lo.min(z), hi.max(z)));
+        match groups.iter_mut().find(|g| length(sub(g.n, n)) <= PARALLEL && (g.offset - offset).abs() <= tol) {
+            Some(g) => {
+                g.facets.push((t, n));
+                g.zmin = g.zmin.min(zmin);
+                g.zmax = g.zmax.max(zmax);
+            }
+            None => groups.push(SlantedPlane { n, offset, facets: vec![(t, n)], zmin, zmax }),
+        }
+    }
+    groups
+}
+
+/// Recognise the slanted `planes` as one chamfer of all the top band's top edges (roadmap 3.12: a
 /// bevel, or a roof when the chamfers of opposite edges meet), storing it on `top`. Every slanted
-/// facet must lie in one top edge's chamfer plane, with one shared `w` and `h`, and every top edge
-/// must carry it; the outline must be convex for the chamfer's volume.
-fn recognize_chamfer(slanted: &[Facet], top: &mut Band, to: f64, tol: f64) -> Result<(), String> {
+/// plane must lie in one top edge's chamfer plane and reach the top, with one shared `w` and `h`,
+/// and every top edge must carry it; the outline must be convex for the chamfer's volume.
+fn recognize_chamfer(slanted: &[SlantedPlane], top: &mut Band, to: f64, tol: f64) -> Result<(), String> {
     let outline = top.outline.clone();
     let n = outline.len();
     let mut chamfer: Option<Chamfer> = None;
     let mut covered = vec![false; n];
-    for (t, nrm) in slanted {
-        let zmin = t.iter().map(|p| p[2]).fold(f64::INFINITY, f64::min);
-        let zmax = t.iter().map(|p| p[2]).fold(f64::NEG_INFINITY, f64::max);
+    for g in slanted {
+        let corners: Vec<Vec3> = g.facets.iter().flat_map(|(t, _)| t.iter().copied()).collect();
+        let zmin = g.zmin;
+        let zmax = g.zmax;
         if (zmax - to).abs() > tol || zmin >= to - tol {
             return Err(format!("{NOT_STACK}: a slanted face is no chamfer of the top"));
         }
-        let bottoms: Vec<P2> = t.iter().filter(|p| p[2] < to - tol).map(|p| [p[0], p[1]]).collect();
-        let tops: Vec<P2> = t.iter().filter(|p| p[2] >= to - tol).map(|p| [p[0], p[1]]).collect();
+        let bottoms: Vec<P2> = corners.iter().filter(|p| p[2] <= zmin + tol).map(|p| [p[0], p[1]]).collect();
+        let tops: Vec<P2> = corners.iter().filter(|p| p[2] >= zmax - tol).map(|p| [p[0], p[1]]).collect();
         if bottoms.is_empty() || tops.is_empty() {
             return Err(format!("{NOT_STACK}: a slanted face is no chamfer of the top"));
         }
@@ -216,10 +249,10 @@ fn recognize_chamfer(slanted: &[Facet], top: &mut Band, to: f64, tol: f64) -> Re
             Some(c) if (c.w - w).abs() <= tol && (c.h - h).abs() <= tol => {}
             _ => return Err(format!("{NOT_STACK}: the top's chamfers differ")),
         }
-        // The facet lies in that edge's chamfer plane and faces out of it.
+        // The plane lies in that edge's chamfer plane and faces out of it.
         let c = chamfer.expect("set or matched above");
         let (q0, nch) = chamfer_plane(a, b, to, c);
-        if t.iter().any(|p| dot(sub(*p, q0), nch).abs() > tol) || dot(*nrm, nch) < SIDE_COS {
+        if corners.iter().any(|p| dot(sub(*p, q0), nch).abs() > tol) || dot(g.n, nch) < SIDE_COS {
             return Err(format!("{NOT_STACK}: a slanted face is no chamfer of the top"));
         }
         covered[i] = true;

@@ -23,7 +23,8 @@ pub struct Chamfer {
 impl Chamfer {
     /// The volume the chamfer takes off a band whose top outline is the convex `outline`, in
     /// mm³: the top slice of height `h` less the inward-offset polygon integrated over it
-    /// (Steiner: the offset by `d` has area `A − P d + K d²`, `K = Σ cot(θ/2)` over the corners).
+    /// (Steiner: the offset by `d` has area `A − P d + K d²`, `K = Σ cot(θ/2)` over the interior
+    /// angles θ — and `turn` below is the exterior angle, so cot(θ/2) = tan(turn/2)).
     #[allow(clippy::many_single_char_names)] // the corners a, c, b and the side vectors d1, d2
     fn removed(&self, outline: &[[f64; 2]]) -> f64 {
         let n = outline.len();
@@ -38,7 +39,7 @@ impl Chamfer {
                 let d1 = [(c[0] - a[0]) / side((i + n - 1) % n), (c[1] - a[1]) / side((i + n - 1) % n)];
                 let d2 = [(b[0] - c[0]) / side(i), (b[1] - c[1]) / side(i)];
                 let turn = (d1[0] * d2[1] - d1[1] * d2[0]).atan2(d1[0] * d2[0] + d1[1] * d2[1]);
-                (turn / 2.0).tan().recip() // cot(θ/2)
+                (turn / 2.0).tan() // tan(turn/2) = cot(θ/2), θ the interior angle
             })
             .sum();
         self.h * (perimeter * self.w / 2.0 - corners * self.w * self.w / 3.0)

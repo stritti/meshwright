@@ -100,10 +100,13 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
         front.extend(bores.iter().filter(|b| b.axis != axis).flat_map(|b| b.across(axis)));
         // One boundary (counter-clockwise) and the openings through it (clockwise).
         let rings = silhouette::loops(&front, tol)?;
-        let (mut outer, openings): (Vec<Vec<P2>>, Vec<Vec<P2>>) = rings.into_iter().partition(|r| area2(r) > 0.0);
+        let (mut outer, mut openings): (Vec<Vec<P2>>, Vec<Vec<P2>>) = rings.into_iter().partition(|r| area2(r) > 0.0);
         if outer.len() != 1 {
             return Err(format!("it is not a combination of extrusions: its silhouette along {} is not one outline", axis.letter()));
         }
+        // A transverse bore's rectangle may cover this axis's own bore mouth (crossing bores,
+        // roadmap 3.12): keep the mouth as an opening anyway.
+        keep_covered_mouths(axis, &bores, size, tol, &mut openings);
         let outline = outer.remove(0);
         let snap = |ring: Vec<P2>| -> Vec<P2> { ring.into_iter().map(|p| p.map(snap_mm)).collect() };
         let outline = snap(outline);
@@ -161,6 +164,34 @@ pub(crate) fn recognize_combined(mesh: &Mesh) -> Result<(CombinedSpec, Vec3), St
         ));
     }
     Ok((spec, bounds.min.map(snap_mm)))
+}
+
+/// Keeps each of the axis's own bore mouths as an opening in `openings` when a transverse bore's
+/// silhouette rectangle covers it (crossing bores, roadmap 3.12).
+fn keep_covered_mouths(axis: Axis, bores: &[holes::Bore], size: [f64; 3], tol: f64, openings: &mut Vec<Vec<P2>>) {
+    let a = axis.index();
+    let [u, _] = axis.profile_axes();
+    for b in bores.iter().filter(|b| b.axis == axis && b.hi >= size[a] - tol) {
+        // The mouth's centre in this silhouette's profile: does a transverse bore's rectangle
+        // (its span along its own axis by its diameter across) cover it?
+        let covered = bores.iter().filter(|t| t.axis != axis).any(|t| {
+            let ta = t.axis.index();
+            let k = usize::from(u != ta); // b.centre[k] runs along t's axis
+            let c = 3 - a - ta;
+            let tc = t.axis.world([0.0; 3], t.centre[0], t.centre[1], 0.0);
+            b.centre[k] >= t.lo - tol && b.centre[k] <= t.hi + tol && (b.centre[1 - k] - tc[c]).abs() <= t.r + tol
+        });
+        if covered && !openings.iter().any(|o| b.matches(o, 2.0 * tol)) {
+            let mut ring: Vec<P2> = (0..16)
+                .map(|i| {
+                    let ang = f64::from(i) * std::f64::consts::TAU / 16.0;
+                    [b.centre[0] + b.r * ang.cos(), b.centre[1] + b.r * ang.sin()]
+                })
+                .collect();
+            ring.reverse(); // an opening winds the other way than the outline
+            openings.push(ring);
+        }
+    }
 }
 
 /// The spec with each bore's round opening or round cut made a hole: a true circle, through the
