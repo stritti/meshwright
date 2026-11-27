@@ -31,7 +31,7 @@ the app's language, so the language is fixed per package: `cargo xtask dist` bui
 locale, localizing `plugin.json` with `revmesh_core::i18n::localize_manifest` (ids
 `manifest.description` and `manifest.<entry>.<option>.title|description`) and building the
 component with `REVMESH_LOCALE=<locale>`. `plugin/revmesh/plugin.json` stays the English source
-and must match `en.json` (a test checks it). Option values such as `auto` and `mesh` are never
+and must match `en.json` (a test checks it). Option values such as `mm` and `inch` are never
 translated, as the plugin parses them.
 
 To add a text, add its id to `en.json` and every other catalog; the tests fail on a message that

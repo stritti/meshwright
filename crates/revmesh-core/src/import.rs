@@ -15,6 +15,14 @@ const SMOOTHING_NOTE: f64 = 1e-4;
 /// Millimetres per inch, for a file the user says is in inches.
 pub const INCH_TO_MM: f64 = 25.4;
 
+/// Above this many triangles the mesh is kept as it is, without recognition: recognition builds
+/// face and wall indexes on top of the mesh (measured: about 250 bytes per triangle in all, so a
+/// 16 MiB binary STL — 50 bytes per triangle on disk, ≈ 335k triangles — peaks at ≈ 90 MiB),
+/// inside the 128 MiB the manifest asks for, but more would not fit. The gate is on the triangle
+/// count, not the file size, because OBJ and PLY hold shared vertices and pack more triangles
+/// into the same bytes. The report says so (code `revmesh.too_large`).
+pub const MAX_RECOGNITION_TRIANGLES: usize = 335_000;
+
 /// The units the mesh file is in. Mesh files are unitless; millimetres are assumed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,12 +34,13 @@ pub enum Units {
     Inch,
 }
 
-/// What the user chose in the import dialog (the entry's `input_schema` in `plugin.json`).
+/// The options from the import dialog (the entry's `input_schema` in `plugin.json`). There is no
+/// mode option any more: the import always tries to recognise the mesh and falls back to the mesh
+/// body where nothing is recognised, the app's self-check fails, or the mesh is too large for
+/// recognition ([`MAX_RECOGNITION_TRIANGLES`]) — the report says which one happened.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ImportOptions {
-    /// What to make of the mesh.
-    pub mode: Mode,
     /// The file's units.
     pub units: Units,
     /// The language of the loss report. Not a dialog option: the plugin sets the locale it was
@@ -45,17 +54,6 @@ impl ImportOptions {
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         if json.trim().is_empty() { Ok(Self::default()) } else { serde_json::from_str(json) }
     }
-}
-
-/// What to make of the mesh.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Mode {
-    /// Recognise features, and keep the mesh where nothing is recognised.
-    #[default]
-    Auto,
-    /// Keep the mesh as a mesh body, without recognition.
-    Mesh,
 }
 
 /// A finished import.
@@ -78,7 +76,7 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
 /// Applies a file's `units` to the mesh read from it: an inch file is scaled to millimetres in
 /// place, and the coordinates are range-checked afterwards, because scaling can push one past
 /// the f32 range the design is written in. Call this before [`import_mesh`], which expects
-/// millimetres; it never copies the mesh, so even a 32 MiB mesh-mode import holds it only once
+/// millimetres; it never copies the mesh, so even a 32 MiB mesh-body import holds it only once
 /// besides the design's own copy.
 pub fn convert_units(mesh: &mut Mesh, units: Units) -> Result<(), MeshError> {
     if units == Units::Inch {
@@ -99,9 +97,20 @@ pub fn convert_units(mesh: &mut Mesh, units: Units) -> Result<(), MeshError> {
 /// borrowed and must already be in millimetres ([`convert_units`] applies the file's units in
 /// place first): it is cloned only when it is kept as a mesh body, so a recognised import holds
 /// no second mesh (the plugin's sandbox fallback can still rebuild one from the same borrow).
+///
+/// The import decides itself what the result is: recognition is tried first, and the mesh is kept
+/// as a mesh body where nothing is recognised, where it has more than
+/// [`MAX_RECOGNITION_TRIANGLES`] triangles, or (after the app's sandbox self-check, see
+/// [`apply_self_check`]) where the recognised design fails to rebuild.
 #[must_use]
 pub fn import_mesh(mesh: &Mesh, file_name: &str, options: &ImportOptions) -> ImportResult {
     let mut result = import_mesh_mm(mesh, file_name, options);
+    push_units_note(&mut result, file_name, options);
+    result
+}
+
+/// The report line an inch file earns (code `revmesh.units`), appended to `result`.
+fn push_units_note(result: &mut ImportResult, file_name: &str, options: &ImportOptions) {
     if options.units == Units::Inch {
         result.report.push(LossItem {
             severity: Severity::Info,
@@ -111,72 +120,79 @@ pub fn import_mesh(mesh: &Mesh, file_name: &str, options: &ImportOptions) -> Imp
             code: "revmesh.units",
         });
     }
-    result
 }
 
 fn import_mesh_mm(mesh: &Mesh, file_name: &str, options: &ImportOptions) -> ImportResult {
     let body = body_name(file_name);
     let locale = options.locale;
-    if options.mode == Mode::Auto {
-        let found = recognize(mesh);
-        let recognised = match &found {
-            Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", *offset), plate.describe_in(locale), plate.volume())),
-            Recognition::Profile { profile, offset, axis } => {
-                Ok((profile.to_design_on("", *offset, *axis), profile.describe_in(locale), profile.volume()))
-            }
-            Recognition::Combined { spec, offset } => Ok((spec.to_design_at("", *offset), spec.describe_in(locale), spec.volume())),
-            Recognition::Stack { spec, offset, axis } => {
-                Ok((spec.to_design_on("", *offset, *axis), spec.describe_in(locale, *axis), spec.volume()))
-            }
-            Recognition::Unrecognized { reason } => Err(reason.clone()),
-        };
-        match recognised {
-            Ok((design, summary, volume)) => {
-                let mut report = LossReport::new(summary);
-                let change = volume / mesh.volume() - 1.0;
-                if change.abs() > SMOOTHING_NOTE {
-                    report.push(LossItem {
-                        severity: Severity::Info,
-                        title: locale.text("report.smoothed.title").into(),
-                        subject: body.clone(),
-                        message: locale
-                            .format("report.smoothed.message", &[("change", &locale.decimal(&format!("{:+.2}", change * 100.0)))]),
-                        code: "revmesh.smoothed",
-                    });
-                }
-                // The per-face surface deviation between the mesh and the recognised faces,
-                // computed in the sandbox for every recognised kind (roadmap 5.4).
-                let deviations = crate::recognize::deviations(mesh, &found);
-                if !deviations.is_empty() {
-                    let faces = deviations
-                        .iter()
-                        .map(|(label, d)| format!("{label}: {} mm", locale.decimal(&crate::design::fmt_number(*d))))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    report.push(LossItem {
-                        severity: Severity::Info,
-                        title: locale.text("report.deviation.title").into(),
-                        subject: body,
-                        message: locale.format("report.deviation.message", &[("faces", &faces)]),
-                        code: "revmesh.deviation",
-                    });
-                }
-                return ImportResult { design, report };
-            }
-            Err(reason) => {
-                let mut result = mesh_import(mesh.clone(), file_name, &body, locale);
-                result.report.push(LossItem {
-                    severity: Severity::Degraded,
-                    title: locale.text("report.unrecognized.title").into(),
-                    subject: body,
-                    message: locale.format("report.unrecognized.message", &[("reason", &reason)]),
-                    code: "revmesh.unrecognized",
+    if mesh.triangles.len() > MAX_RECOGNITION_TRIANGLES {
+        let mut result = mesh_import(mesh.clone(), file_name, &body, locale);
+        result.report.push(LossItem {
+            severity: Severity::Degraded,
+            title: locale.text("report.too_large.title").into(),
+            subject: body,
+            message: locale
+                .format("report.too_large.message", &[("triangles", &mesh.triangles.len()), ("max", &MAX_RECOGNITION_TRIANGLES)]),
+            code: "revmesh.too_large",
+        });
+        return result;
+    }
+    let found = recognize(mesh);
+    let recognised = match &found {
+        Recognition::Plate { plate, offset } => Ok((plate.to_design_at("", *offset), plate.describe_in(locale), plate.volume())),
+        Recognition::Profile { profile, offset, axis } => {
+            Ok((profile.to_design_on("", *offset, *axis), profile.describe_in(locale), profile.volume()))
+        }
+        Recognition::Combined { spec, offset } => Ok((spec.to_design_at("", *offset), spec.describe_in(locale), spec.volume())),
+        Recognition::Stack { spec, offset, axis } => {
+            Ok((spec.to_design_on("", *offset, *axis), spec.describe_in(locale, *axis), spec.volume()))
+        }
+        Recognition::Unrecognized { reason } => Err(reason.clone()),
+    };
+    match recognised {
+        Ok((design, summary, volume)) => {
+            let mut report = LossReport::new(summary);
+            let change = volume / mesh.volume() - 1.0;
+            if change.abs() > SMOOTHING_NOTE {
+                report.push(LossItem {
+                    severity: Severity::Info,
+                    title: locale.text("report.smoothed.title").into(),
+                    subject: body.clone(),
+                    message: locale.format("report.smoothed.message", &[("change", &locale.decimal(&format!("{:+.2}", change * 100.0)))]),
+                    code: "revmesh.smoothed",
                 });
-                return result;
             }
+            // The per-face surface deviation between the mesh and the recognised faces,
+            // computed in the sandbox for every recognised kind (roadmap 5.4).
+            let deviations = crate::recognize::deviations(mesh, &found);
+            if !deviations.is_empty() {
+                let faces = deviations
+                    .iter()
+                    .map(|(label, d)| format!("{label}: {} mm", locale.decimal(&crate::design::fmt_number(*d))))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                report.push(LossItem {
+                    severity: Severity::Info,
+                    title: locale.text("report.deviation.title").into(),
+                    subject: body,
+                    message: locale.format("report.deviation.message", &[("faces", &faces)]),
+                    code: "revmesh.deviation",
+                });
+            }
+            ImportResult { design, report }
+        }
+        Err(reason) => {
+            let mut result = mesh_import(mesh.clone(), file_name, &body, locale);
+            result.report.push(LossItem {
+                severity: Severity::Degraded,
+                title: locale.text("report.unrecognized.title").into(),
+                subject: body,
+                message: locale.format("report.unrecognized.message", &[("reason", &reason)]),
+                code: "revmesh.unrecognized",
+            });
+            result
         }
     }
-    mesh_import(mesh.clone(), file_name, &body, locale)
 }
 
 fn mesh_import(mesh: Mesh, file_name: &str, body: &str, locale: Locale) -> ImportResult {
@@ -244,8 +260,8 @@ pub fn apply_self_check(
 ) -> ImportResult {
     let mut out = match check {
         SelfCheck::Failed(reason) => {
-            let options = ImportOptions { mode: Mode::Mesh, ..options.clone() };
-            let mut fallback = import_mesh(mesh, file_name, &options);
+            let mut fallback = mesh_import(mesh.clone(), file_name, &body_name(file_name), options.locale);
+            push_units_note(&mut fallback, file_name, options);
             fallback.report.push(LossItem {
                 severity: Severity::Degraded,
                 title: options.locale.text("report.selfcheck.title").into(),
@@ -281,7 +297,8 @@ mod tests {
     fn options_default_when_empty() {
         assert_eq!(ImportOptions::from_json("").expect("ok"), ImportOptions::default());
         assert_eq!(ImportOptions::from_json("{}").expect("ok"), ImportOptions::default());
-        assert_eq!(ImportOptions::from_json(r#"{"mode":"mesh"}"#).expect("ok").mode, Mode::Mesh);
+        // The dialog has no mode option any more; a stale `mode` in the options is rejected.
+        assert!(ImportOptions::from_json(r#"{"mode":"mesh"}"#).is_err());
         assert!(ImportOptions::from_json(r#"{"colour":1}"#).is_err());
         assert_eq!(ImportOptions::from_json("").expect("ok").units, Units::Mm);
         assert_eq!(ImportOptions::from_json(r#"{"units":"inch"}"#).expect("ok").units, Units::Inch);
@@ -405,8 +422,6 @@ mod tests {
         assert_eq!(result.report.summary, "Ein Netz aus 4 Dreiecken");
         assert_eq!(result.report.items[0].title, "Als Netz behalten");
         assert!(result.report.items[0].message.starts_with("Es wurden keine parametrischen Features erkannt: "));
-        let mesh = ImportOptions { mode: Mode::Mesh, locale: Locale::De, ..ImportOptions::default() };
-        assert_eq!(import(TETRA, "tetra.stl", &mesh).expect("imports").report.summary, "Ein Netz aus 4 Dreiecken");
 
         let mut spec = PlateSpec {
             x: 60.0,
@@ -453,10 +468,19 @@ mod tests {
         assert_eq!(profile.describe(), "A 60 x 40 x 5 mm plate with a 4-sided outline");
     }
 
+    /// Above [`MAX_RECOGNITION_TRIANGLES`] the import skips recognition and keeps the mesh, with
+    /// the reason in the report — recognition that large could exceed the memory budget.
     #[test]
-    fn mesh_mode_reports_nothing_lost() {
-        let result = import(TETRA, "tetra.stl", &ImportOptions { mode: Mode::Mesh, ..ImportOptions::default() }).expect("imports");
-        assert_eq!(result.report.items, []);
+    fn too_many_triangles_are_kept_as_a_mesh_without_recognition() {
+        let tri = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let mesh = Mesh::new(vec![tri; MAX_RECOGNITION_TRIANGLES + 1]);
+        let result = import_mesh(&mesh, "big.stl", &ImportOptions::default());
+        assert!(design_has_mesh_body(&result.design));
+        assert_eq!(result.report.summary, format!("A mesh of {} triangles", MAX_RECOGNITION_TRIANGLES + 1));
+        let item = result.report.items.iter().find(|i| i.code == "revmesh.too_large").expect("the note");
+        assert_eq!(item.severity, Severity::Degraded);
+        assert!(item.message.contains(&format!("{}", MAX_RECOGNITION_TRIANGLES + 1)), "{}", item.message);
+        assert!(item.message.contains(&format!("{MAX_RECOGNITION_TRIANGLES}")), "{}", item.message);
     }
 
     #[test]
@@ -828,13 +852,13 @@ mod tests {
 
     #[test]
     fn streamed_design_matches_and_writes_single_precision() {
-        let result = import(TETRA, "tetra.stl", &ImportOptions { mode: Mode::Mesh, ..ImportOptions::default() }).expect("imports");
+        let result = import(TETRA, "tetra.stl", &ImportOptions::default()).expect("imports");
         let mut streamed = Vec::new();
         result.design.write_json(&mut streamed).expect("writes");
         assert_eq!(String::from_utf8(streamed).expect("utf-8"), result.design.to_json());
 
         let mesh = Mesh::new(vec![[[0.1, 0.0, 0.0], [0.0, 0.2, 0.0], [0.0, 0.0, 0.3]]]);
-        let json = import_mesh(&mesh, "t.stl", &ImportOptions { mode: Mode::Mesh, ..ImportOptions::default() }).design.to_json();
+        let json = import_mesh(&mesh, "t.stl", &ImportOptions::default()).design.to_json();
         assert!(json.contains(r#""positions":[0.1,0.0,0.0,0.0,0.2,0.0,0.0,0.0,0.3]"#), "{json}");
         assert!(json.contains(r#""triangles":[0,1,2]"#), "{json}");
     }

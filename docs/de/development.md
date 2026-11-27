@@ -31,7 +31,7 @@ Sprache der App nicht mit, daher ist die Sprache pro Paket festgelegt: `cargo xt
 pro Locale, lokalisiert `plugin.json` mit `revmesh_core::i18n::localize_manifest` (IDs
 `manifest.description` und `manifest.<entry>.<option>.title|description`) und baut die Komponente mit
 `REVMESH_LOCALE=<locale>`. `plugin/revmesh/plugin.json` bleibt die englische Quelle und muss zu `en.json`
-passen (ein Test prüft das). Optionswerte wie `auto` und `mesh` werden nie übersetzt, da das Plugin sie
+passen (ein Test prüft das). Optionswerte wie `mm` und `inch` werden nie übersetzt, da das Plugin sie
 parst.
 
 Um einen Text hinzuzufügen, ergänze seine ID in `en.json` und jedem anderen Katalog; die Tests schlagen

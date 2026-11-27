@@ -129,7 +129,7 @@ Probiere: ein **Shell** in SolidCraft macht daraus ein Gehäuse, was das Netz ni
 Die eigenen Testdateien des Plugins in
 [`plugin/revmesh/tests/`](https://github.com/stritti/revmesh/tree/main/plugin/revmesh/tests)
 zeigen jede Feature-Art einzeln. Die meisten wurden in SolidCraft modelliert und exportiert.
-[Was `auto` erkennt](/de/guide/recognition) hat die vollständige Liste.
+[Was der Import erkennt](/de/guide/recognition) hat die vollständige Liste.
 
 ### Senkungen und Kegelsenkungen
 

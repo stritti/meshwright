@@ -72,8 +72,8 @@ For this skill:
     "input_schema": {
       "type": "object",
       "properties": {
-        "mode": { "type": "string", "title": "Import as", "enum": ["auto", "mesh"],
-                  "default": "auto", "description": "…" }
+        "units": { "type": "string", "title": "Units", "enum": ["mm", "inch"],
+                   "default": "mm", "description": "…" }
       }
     }
   }]
@@ -87,8 +87,9 @@ plugin's data across the import. The slot appears under **Model ribbon → Plugi
 ## 2. Implement import-file (reference: `crates/revmesh-plugin/src/lib.rs`)
 
 1. Parse `options` JSON → your options struct; malformed → `invalid-input("options", …)`.
-2. Check `file.size` against your ceiling **before reading** → `limit-exceeded` (this repo:
-   8 MiB `auto`, 32 MiB `mesh`).
+2. Check `file.size` against your ceiling **before reading** → `limit-exceeded` (this repo: a single
+   32 MiB ceiling, `MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`; recognition is gated
+   separately in the core at `MAX_RECOGNITION_TRIANGLES`)
 3. Stream the file: `source::read("", offset, 1 MiB)` loop with `control::cancelled()` and
    `control::progress(...)`; parse incrementally (here `StlReader`).
 4. Do the work in the **core crate** (native-testable): mesh → recognition → `Design` +
@@ -101,7 +102,7 @@ plugin's data across the import. The slot appears under **Model ribbon → Plugi
 impl Guest for Importer {
     fn import_file(_entry: String, file: source::FileInfo, options: String) -> Result<String, PluginError> {
         let options = ImportOptions::from_json(&options).map_err(|e| invalid("options", e))?;
-        let mesh = read_mesh(&file, max_bytes_for(options.mode))?;
+        let mesh = read_mesh(&file, MAX_BYTES)?;
         let result = import_mesh(mesh, &file.name, &options);        // core crate
         let mut out = HostWriter::new();                             // buffers to 1 MiB, then design::write
         let written = result.design.write_json(&mut out)
@@ -140,6 +141,6 @@ keep the mesh and say so in the report.
 
 - `crates/revmesh-plugin/src/lib.rs` (complete importer)
 - `plugin/revmesh/plugin.json` (entry + input_schema + limits)
-- `crates/revmesh-core/src/import.rs` (pipeline, `Mode`, `ImportOptions`, report)
+- `crates/revmesh-core/src/import.rs` (pipeline, `ImportOptions`, report)
 - `crates/revmesh-core/src/report.rs` (loss report), `src/design/` (document model)
 - `docs/design-format.md`, `docs/architecture.md`, `README.md` ("Use")

@@ -282,7 +282,7 @@ mod tests {
     fn size_limit_is_checked_before_the_format() {
         let err = MeshReader::new_with_size_limit(b"ply\n", 100, 8, "x.ply").expect_err("over the limit");
         assert_eq!(err, MeshError::SizeLimit { size: 100, max_bytes: 8 });
-        assert_eq!(err.message(Locale::De), "die Datei ist 100 Bytes groß; dieser Importmodus unterstützt höchstens 8 Bytes");
+        assert_eq!(err.message(Locale::De), "die Datei ist 100 Bytes groß; dieser Import unterstützt höchstens 8 Bytes");
     }
 
     #[test]

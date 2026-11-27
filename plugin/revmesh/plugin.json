@@ -2,7 +2,7 @@
   "id": "revmesh",
   "name": "revmesh",
   "version": "0.2.0",
-  "description": "Opens STL, OBJ and PLY meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history. Project: https://github.com/stritti/revmesh",
+  "description": "Opens STL, OBJ and PLY meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history; anything not recognised is kept as a mesh. Project: https://github.com/stritti/revmesh",
   "updates": {
     "github": "stritti/revmesh"
   },
@@ -32,16 +32,6 @@
           "type": "object",
           "x-solidcraft-icon": "icons/stl.svg",
           "properties": {
-            "mode": {
-              "type": "string",
-              "title": "Import as",
-              "enum": [
-                "auto",
-                "mesh"
-              ],
-              "default": "auto",
-              "description": "auto: recognise features and rebuild the part parametrically (facets become ideal faces; the report notes the deviation); the mesh is kept where nothing is found. File up to 16 MiB. mesh: keep the mesh exactly as it is. File up to 32 MiB"
-            },
             "units": {
               "type": "string",
               "title": "Units",

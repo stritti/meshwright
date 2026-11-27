@@ -4,12 +4,11 @@
    (the same entry is in the Plugins menu: **Model** tab › **Plugins** group label › **revmesh ›
    stl**). SolidCraft's own *File › Open* keeps using its built-in mesh import for `.stl`, so
    revmesh is reached through the Insert tab or the Plugins menu.
-2. The dialog offers **Import as**: `auto` (recognise features and rebuild the part
-   parametrically — facets become ideal faces, the import report notes the deviation; the mesh is
-   kept only where nothing is found; file up to 16 MiB; the default) or `mesh` (keep the mesh
-   exactly as it is; file up to 32 MiB), and **Units**: `mm` (the default — mesh files are unitless
-   and read as millimetres) or `inch`, which is converted to millimetres (× 25.4) and noted in
-   the report.
+2. The dialog only asks for **Units**: `mm` (the default — mesh files are unitless and read as
+   millimetres) or `inch`, which is converted to millimetres (× 25.4) and noted in the report.
+   What the import makes of the file it decides itself: features are recognised and the part is
+   rebuilt parametrically where possible; where nothing is recognised — or the file is too large
+   for recognition — the mesh is kept as it is, and the report says why.
 3. Its button chooses the mesh file (`.stl`, `.obj` or `.ply`). It opens as a new, unsaved
    design.
 4. The **Import report** follows: a summary, one line per kind of change, and everything in
@@ -31,13 +30,15 @@ and the parameters each one gets.
 :::
 
 Which parts are recognised, and which parameters they get, is on
-[What auto recognises](/guide/recognition).
+[What the import recognises](/guide/recognition).
 
 ## Limits
 
-Mesh input (STL, OBJ, PLY): up to 16 MiB in `auto` mode, 32 MiB in `mesh` mode (`AUTO_MAX_BYTES`
-/ `MESH_MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`). Runtime: 128 MiB memory, a 120 s
-deadline and 10¹¹ fuel, as requested in `plugin/revmesh/plugin.json`. The file is streamed in
-1 MiB chunks, so a 16 MiB file peaks at ≈ 90 MiB in memory (binary STL; OBJ and PLY hold shared
-vertices, so they expand less). Measured numbers and the reasoning behind them:
+Mesh input (STL, OBJ, PLY): up to 32 MiB (`MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`).
+Recognition runs up to ≈ 335k triangles — about 16 MiB of binary STL
+(`MAX_RECOGNITION_TRIANGLES` in `crates/revmesh-core/src/import.rs`); a larger file is kept as a
+mesh. Runtime: 128 MiB memory, a 120 s deadline and 10¹⁹ fuel, as requested in
+`plugin/revmesh/plugin.json`. The file is streamed in 1 MiB chunks, so recognition of a 16 MiB
+file peaks at ≈ 90 MiB in memory (binary STL; OBJ and PLY hold shared vertices, so they expand
+less). Measured numbers and the reasoning behind them:
 [Architecture](/architecture#limits-inside-solidcraft).

@@ -183,11 +183,14 @@ mod tests {
     fn the_german_manifest_translates_texts_but_not_values() {
         let mut manifest = plugin_json();
         localize_manifest(&mut manifest, Locale::De);
-        let mode = &manifest["runtime"]["entries"][0]["input_schema"]["properties"]["mode"];
-        assert_eq!(mode["title"], "Importieren als");
-        assert!(mode["description"].as_str().expect("description").starts_with("auto: Features erkennen"));
-        assert_eq!(mode["enum"], serde_json::json!(["auto", "mesh"]));
-        assert_eq!(mode["default"], "auto");
+        let properties = &manifest["runtime"]["entries"][0]["input_schema"]["properties"];
+        // The import decides itself whether to recognise; the dialog only asks for the units.
+        assert!(properties.get("mode").is_none());
+        let units = &properties["units"];
+        assert_eq!(units["title"], "Einheiten");
+        assert!(units["description"].as_str().expect("description").starts_with("Netzdateien sind einheitenlos"));
+        assert_eq!(units["enum"], serde_json::json!(["mm", "inch"]));
+        assert_eq!(units["default"], "mm");
         assert!(manifest["description"].as_str().expect("description").starts_with("Öffnet STL-, OBJ- und PLY-Netze"));
         assert_eq!(manifest["id"], "revmesh");
         // SolidCraft refuses descriptions over 240 characters.
@@ -202,8 +205,8 @@ mod tests {
         let mut no_schema = serde_json::json!({ "runtime": { "entries": [{ "name": "stl" }] } });
         localize_manifest(&mut no_schema, Locale::De);
         assert_eq!(no_schema["runtime"]["entries"][0], serde_json::json!({ "name": "stl" }));
-        let mut unknown = serde_json::json!({ "runtime": { "entries": [{ "name": "obj", "input_schema": { "properties": { "mode": { "title": "Mode" } } } }] } });
+        let mut unknown = serde_json::json!({ "runtime": { "entries": [{ "name": "obj", "input_schema": { "properties": { "units": { "title": "Units" } } } }] } });
         localize_manifest(&mut unknown, Locale::De);
-        assert_eq!(unknown["runtime"]["entries"][0]["input_schema"]["properties"]["mode"]["title"], "Mode");
+        assert_eq!(unknown["runtime"]["entries"][0]["input_schema"]["properties"]["units"]["title"], "Units");
     }
 }

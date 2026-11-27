@@ -86,10 +86,10 @@ of up to 10 minutes, a 64 MiB component and a 256 MiB design. `plugin.json` asks
 Memory decides how large a file can be. The plugin therefore holds nothing twice: the STL is
 parsed chunk by chunk as it is read (`stl::StlReader`), `import_mesh` takes the mesh by reference
 (it clones only in the mesh and unrecognized fallback paths), and the design is serialised
-straight into 1 MiB writes to SolidCraft, with coordinates in single precision. Auto mode
-therefore accepts STL up to 16 MiB — measured peak ≈ 90 MiB at about 250 bytes per triangle,
-inside the 128 MiB the manifest asks for (32 MiB would need index-based face storage); mesh mode
-accepts up to 32 MiB. A rotated X/Y recognition attempt would hold a second mesh copy plus the
+straight into 1 MiB writes to SolidCraft, with coordinates in single precision. The import accepts files up to 32 MiB, but recognition runs only up to
+`MAX_RECOGNITION_TRIANGLES` (≈ 335k triangles, about 16 MiB of binary STL — measured peak ≈ 90 MiB
+at about 250 bytes per triangle, inside the 128 MiB the manifest asks for; more would need
+index-based face storage); a larger mesh is kept as it is. A rotated X/Y recognition attempt would hold a second mesh copy plus the
 face/wall indexes on top of the original (measured up to ~420 bytes per triangle peak on a
 densely banded mesh — 133 MiB at 333k triangles), so `recognize` only tries Z above 200,000
 triangles and a larger part lying along X or Y falls back to a mesh body instead of trapping the
@@ -99,13 +99,13 @@ did).
 
 ## Self-check in the app's sandbox
 
-In auto mode the serialised design is staged in SolidCraft's private sandbox (capability
+A recognised design is staged in SolidCraft's private sandbox (capability
 `evaluate@0.2`) and rebuilt there (`document.inspect`) before it is written to the design file.
 A command failure or a timeline feature with an `error` in the `document.inspect` reply falls
 back to the mesh body, with the reason in the loss report (code `revmesh.selfcheck`); a call error
 (a design the app cannot open, a reply over 1 MiB) is an error for that call only, so the design
 is written unchecked. The reply parsing and the fallback policy live in `revmesh_core::import`
-(`SelfCheck`, `apply_self_check`), tested natively; the plugin only stages and runs. Mesh-mode
+(`SelfCheck`, `apply_self_check`), tested natively; the plugin only stages and runs. Mesh-body
 imports are not checked: the design is the mesh, and holding its JSON twice would break the
 memory budget above.
 

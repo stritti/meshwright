@@ -8,7 +8,7 @@
     {"command": "file.import", "params": {
       "path": "../corner-plate.stl",
       "format": "revmesh.stl",
-      "options": {"mode": "auto", "units": "mm"}
+      "options": {"units": "mm"}
     }},
     {"command": "file.export", "params": {
       "path": "../../target/cli-example/rebuilt-corner-plate.stl",
