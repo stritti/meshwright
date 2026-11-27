@@ -85,6 +85,12 @@ pub enum HoleGroup {
 /// come out as [`HoleGroup::Single`], in their order.
 #[must_use]
 pub fn group_holes(holes: &[HoleSpec]) -> Vec<HoleGroup> {
+    group_holes_with_members(holes).into_iter().map(|(group, _)| group).collect()
+}
+
+/// Like [`group_holes`], with the indices in `holes` of the holes each group stands for.
+#[must_use]
+pub fn group_holes_with_members(holes: &[HoleSpec]) -> Vec<(HoleGroup, Vec<usize>)> {
     // Holes of one diameter, by their index in `holes`.
     let mut buckets: Vec<Vec<usize>> = Vec::new();
     for (i, hole) in holes.iter().enumerate() {
@@ -103,22 +109,33 @@ pub fn group_holes(holes: &[HoleSpec]) -> Vec<HoleGroup> {
     }
     // Each group with the index of its first hole, so that the groups, and the single holes
     // among them, keep the order of `holes`.
-    let mut groups: Vec<(usize, HoleGroup)> = Vec::new();
+    let mut groups: Vec<(usize, HoleGroup, Vec<usize>)> = Vec::new();
     for bucket in buckets {
         let centres: Vec<[f64; 2]> = bucket.iter().map(|&i| [holes[i].x, holes[i].y]).collect();
         let d = holes[bucket[0]].d;
         if let Some(group) = grid(&centres, d).or_else(|| row(&centres, d)).or_else(|| circle(&centres, d)) {
-            groups.push((bucket[0], group));
+            groups.push((bucket[0], group, bucket));
         } else if let Some((extra, group)) = grid_with_outlier(&centres, d) {
+            let extra_hole = bucket[extra];
             let first_grid_hole = bucket[usize::from(extra == 0)];
-            groups.push((first_grid_hole, group));
-            groups.push((bucket[extra], HoleGroup::Single(holes[bucket[extra]].clone())));
+            let mut members = bucket;
+            members.retain(|&i| i != extra_hole);
+            groups.push((first_grid_hole, group, members));
+            groups.push((extra_hole, HoleGroup::Single(holes[extra_hole].clone()), vec![extra_hole]));
         } else {
-            groups.extend(bucket.into_iter().map(|i| (i, HoleGroup::Single(holes[i].clone()))));
+            groups.extend(bucket.into_iter().map(|i| (i, HoleGroup::Single(holes[i].clone()), vec![i])));
         }
     }
-    groups.sort_by_key(|(first, _)| *first);
-    groups.into_iter().map(|(_, group)| group).collect()
+    groups.sort_by_key(|(first, _, _)| *first);
+    groups.into_iter().map(|(_, group, members)| (group, members)).collect()
+}
+
+/// Whether a row's direction is along a profile axis (0° or ±90°): only then is a pattern's
+/// `dir1` an exact axis vector. A pattern's direction is not an expression in SolidCraft, so a
+/// row at any other angle is written as single holes (roadmap 6.5).
+#[must_use]
+pub fn row_is_axis_aligned(angle: f64) -> bool {
+    angle.abs() <= ANGLE_EPS || (angle.abs() - 90.0).abs() <= ANGLE_EPS
 }
 
 /// Whether every one of `centres` lies within the tolerance of one of `predicted`, one each.
@@ -351,6 +368,24 @@ mod tests {
         assert!(matches!(found[..], [HoleGroup::Row { x: 5.0, y: 10.0, angle: 90.0, .. }]), "{found:?}");
         let found = group_holes(&holes(&[(0.0, 20.0), (10.0, 10.0), (20.0, 0.0)], 4.0));
         assert!(matches!(found[..], [HoleGroup::Row { x: 0.0, y: 20.0, angle: -45.0, .. }]), "{found:?}");
+    }
+
+    #[test]
+    fn groups_carry_their_member_holes() {
+        let found = group_holes_with_members(&holes(&[(30.0, 30.0), (10.0, 10.0), (20.0, 20.0), (40.0, 40.0)], 4.0));
+        assert!(matches!(found[..], [(HoleGroup::Row { n: 4, .. }, ref members)] if members == &[0, 1, 2, 3]), "{found:?}");
+    }
+
+    /// Only a row along a profile axis can be a pattern: its `dir1` is then an exact axis
+    /// vector, while any other angle has no expression in SolidCraft (roadmap 6.5).
+    #[test]
+    fn only_axis_aligned_rows_are_patterns() {
+        assert!(row_is_axis_aligned(0.0));
+        assert!(row_is_axis_aligned(90.0));
+        assert!(!row_is_axis_aligned(45.0));
+        assert!(!row_is_axis_aligned(-45.0));
+        assert!(!row_is_axis_aligned(30.0));
+        assert!(!row_is_axis_aligned(0.001));
     }
 
     #[test]

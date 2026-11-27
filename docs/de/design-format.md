@@ -306,7 +306,9 @@ Bohrungen und Verrundungs-Picks sind in Weltkoordinaten. In `solidcraft-cli 0.50
 20.978.79 mm³ neu, und das L-Winkelstück (in der Datei bei (20, 10)) mit `extrude_0 = 4`, `extrude_len = 8` und
 `outline_fillet_r = 4` auf 9.706.85 mm³, beides wie gerechnet.
 
-Ein Bohrungsmuster ist ein `hole`-Feature an der ersten Bohrung und ein `pattern`-Feature darauf. Die erste
+Ein Bohrungsmuster ist ein `hole`-Feature an der ersten Bohrung und ein `pattern`-Feature darauf. Die Richtung
+eines Reihen-Musters ist ein Zahlenvektor, kein Ausdruck, daher wird eine Reihe in einem Winkel, der nicht entlang
+X oder Y verläuft, als einzelne `hole`-Features geschrieben. Die erste
 Bohrung eines Lochkreises liegt bei `[cx + r * cos(angle), cy + r * sin(angle), top]` als Ausdrücke und der
 Ursprung ihres Musters bei `[cx, cy, 0]`. `plate-patterns.stl` (ein 2 x 2 Gitter, eine Reihe aus drei, ein
 Lochkreis aus sechs um eine einzelne Bohrung) importiert in `solidcraft-cli 0.50.0` auf 55.995.49 mm³, wie

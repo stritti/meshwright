@@ -111,8 +111,11 @@
       the design writes one `Fillet<g>` per radius group with `fillet_r_<g>` / `outline_fillet_r_<g>`
       — a single shared radius keeps the plain `fillet_r` / `outline_fillet_r` and `Fillet1`)
       per-corner radii in outlines
-   5. hole rows at any angle (a pattern's direction is not an expression in SolidCraft — write
-      them as single holes or on a rotated sketch)
+   5. (done: `hole_groups` in `crates/revmesh-core/src/recognize/to_design.rs` writes a row whose
+      angle is not 0° or ±90° as single holes, as a pattern's direction is not an expression in
+      SolidCraft; an axis-aligned row stays a `HoleRow<n>` pattern) hole rows at any angle (a
+      pattern's direction is not an expression in SolidCraft — write them as single holes or on
+      a rotated sketch)
    6. (done: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` refuses, before any axis
       is tried, a mesh whose edges are not covered by two facets in opposite directions —
       corners welded on a sub-tolerance grid, an exporter's T-junctions counted by their sub-edges'
