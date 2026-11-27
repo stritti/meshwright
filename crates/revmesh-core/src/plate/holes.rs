@@ -387,10 +387,20 @@ impl Stepped {
 /// left out, and the circle fitted again.
 pub(super) fn round_hole(ring: &[P2], tol: f64) -> Result<(HoleSpec, (P2, f64)), String> {
     let first = round_ring(ring, tol);
-    let Some((centre, r)) = fit_circle(ring) else { return first };
     if first.is_ok() {
         return first;
     }
+    // A densely subdivided rim can bias the initial fit enough that some chord midpoints
+    // look like circle points. Try the straight-edge geometry before using that fit to
+    // decide which points to keep. The angular gate still sees each whole facet.
+    let simplified = drop_collinear(ring, tol);
+    if simplified.len() != ring.len()
+        && let Ok(found) = round_ring(&simplified, tol)
+    {
+        return Ok(found);
+    }
+
+    let Some((centre, r)) = fit_circle(ring) else { return first };
     let n = ring.len();
     let kept: Vec<P2> = (0..n)
         .filter(|&i| {

@@ -1044,6 +1044,60 @@ pub(crate) fn walls_deviations(
     run().unwrap_or_default()
 }
 
+type SplitBoreChords = std::collections::HashMap<[u64; 2], Vec<(P2, P2)>>;
+
+fn point_key(point: P2) -> [u64; 2] {
+    point.map(f64::to_bits)
+}
+
+/// Recover bore chords split by a new wall vertex. Both sub-edges must exist in the
+/// triangulation, line up, and join two points on the same bore. A dent off the chord
+/// or a chord across the whole opening will still fail the wall checks.
+fn split_bore_chords(faces: &Faces, walls: &Walls, tol: f64) -> SplitBoreChords {
+    let mut neighbors: std::collections::HashMap<_, Vec<P2>> = std::collections::HashMap::new();
+    for &(a, b, ..) in &faces.chords {
+        for (point, end) in [(a, b), (b, a)] {
+            if walls.bore_facet(&[end]) {
+                neighbors.entry(point_key(point)).or_default().push(end);
+            }
+        }
+    }
+    neighbors
+        .into_iter()
+        .filter_map(|(key, mut ends)| {
+            ends.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+            ends.dedup();
+            let point = key.map(f64::from_bits);
+            let mut chords = Vec::new();
+            for (i, &a) in ends.iter().enumerate() {
+                for &b in &ends[i + 1..] {
+                    if segment_distance(point, a, b) <= tol && walls.bore_facet(&[a, b]) {
+                        chords.push((a, b));
+                    }
+                }
+            }
+            (!chords.is_empty()).then_some((key, chords))
+        })
+        .collect()
+}
+
+/// A new facet edge can connect points on two split edges. Its supporting endpoints
+/// must lie on the same bore and fit inside one allowed facet span.
+fn follows_split_bore(a: P2, b: P2, split_chords: &SplitBoreChords, walls: &Walls) -> bool {
+    let a_point = [(a, a)];
+    let b_point = [(b, b)];
+    let a_chords = split_chords.get(&point_key(a));
+    let b_chords = split_chords.get(&point_key(b));
+    if a_chords.is_none() && b_chords.is_none() {
+        return false;
+    }
+    let a_support = a_chords.map_or(a_point.as_slice(), Vec::as_slice);
+    let b_support = b_chords.map_or(b_point.as_slice(), Vec::as_slice);
+    a_support
+        .iter()
+        .any(|&(start, end)| b_support.iter().any(|&(other_start, other_end)| walls.bore_facet(&[start, end, other_start, other_end])))
+}
+
 /// The facets and corners between the faces must belong to the walls or to a stepped or blind
 /// hole: anywhere else they are a step, a pocket, a boss, or a wall that leans (a sheared prism
 /// has the same areas and volume as a straight one).
@@ -1089,7 +1143,15 @@ pub(super) fn check_walls(
     }
     let walls = walls_of(corners, radii, arc_sides, cutouts, scale, tol, rim);
     let in_step = |p: Vec3| cutouts.stepped.iter().any(|s| s.holds(p, tol)) || cutouts.blinds.iter().any(|b| b.holds(p, tol));
-    if faces.between.iter().any(|p| !walls.holds([p[0], p[1]]) && !in_step(*p) && !on_rim(*p, 0.0)) {
+    let split_chords = std::cell::OnceCell::new();
+    let split_chords = || {
+        split_chords.get_or_init(|| if cutouts.circles.is_empty() { SplitBoreChords::new() } else { split_bore_chords(faces, &walls, tol) })
+    };
+    let on_split_chord = |p: P2| split_chords().contains_key(&point_key(p));
+    if faces.between.iter().any(|p| {
+        let xy = [p[0], p[1]];
+        !walls.holds(xy) && !in_step(*p) && !on_rim(*p, 0.0) && !on_split_chord(xy)
+    }) {
         return Err(NOT_FLAT.into());
     }
     // A wall facet's edge in a stepped hole's mouth must follow the hole's surface too: its
@@ -1113,8 +1175,9 @@ pub(super) fn check_walls(
     let on_blind_wall = |p: &P2| cutouts.blinds.iter().any(|b| b.foot.on_wall(*p, &b.ring, tol));
     // A wall's bottom corner on a rounded rim lies on the bottom cap, which is part of the
     // rounded surface (at z = 0 every point of the inner rectangle is at distance `r`).
-    if faces.rim.iter().any(|p| !walls.holds(*p) && !on_rim([p[0], p[1], 0.0], 0.0) && !in_step([p[0], p[1], 0.0]) && !on_blind_wall(p))
-        || !faces.chords.iter().all(follows)
+    if faces.rim.iter().any(|p| {
+        !walls.holds(*p) && !on_rim([p[0], p[1], 0.0], 0.0) && !in_step([p[0], p[1], 0.0]) && !on_blind_wall(p) && !on_split_chord(*p)
+    }) || !faces.chords.iter().all(|chord| follows(chord) || follows_split_bore(chord.0, chord.1, split_chords(), &walls))
     {
         return Err("some side walls are not vertical (drafts, chamfers and slanted walls are not recognised yet)".into());
     }
