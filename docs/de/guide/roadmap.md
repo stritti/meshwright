@@ -1,8 +1,8 @@
 # Roadmap
 
 Erledigte Punkte tragen das Release, in dem sie erschienen sind (`vX.Y.Z`); Arbeit, die nach dem
-neuesten Release (v0.2.0) gemerged wurde, ist als **unveröffentlicht** markiert und bekommt ihren Tag,
-sobald release-please das nächste Release (v0.3.0) schneidet. Die Tags liest man aus den
+neuesten Release (v0.3.0) gemerged wurde, ist als **unveröffentlicht** markiert und bekommt ihren Tag,
+sobald release-please das nächste Release (v0.4.0) schneidet. Die Tags liest man aus den
 `chore: release`-Commits und der `CHANGELOG.md` — nie erfinden.
 
 ## Offene Punkte, priorisiert
@@ -16,6 +16,8 @@ sobald release-please das nächste Release (v0.3.0) schneidet. Die Tags liest ma
    ([research/convert-mesh-body.md](https://github.com/stritti/revmesh/blob/main/research/convert-mesh-body.md))
    hat gezeigt, dass das ein zweites `command-plugin`-Paket braucht — ein eigener Feature-Track
    nach der Skizzen-Arbeit.
+
+## Punkte (stabile Nummerierung — referenziert als `roadmap X.Y`)
 
 1. **Gerüst** (erledigt in v0.1.0-beta.1): Plugin-Pipeline, Dokument-Schreiber, Netz-Fallback, Qualitäts-Gates,
    Releases.
@@ -34,7 +36,7 @@ sobald release-please das nächste Release (v0.3.0) schneidet. Die Tags liest ma
    8. (erledigt in v0.1.0-beta.2) Aufsätze und rechteckige Taschen (Stufen und andere Taschen später)
    9. (erledigt in v0.1.0-beta.4) Extrusionen entlang X und Y
    10. (erledigt in v0.1.0-beta.4) Boxen, deren Kanten alle verrundet sind (`edge_fillet_r`), mit Durchgangsbohrungen
-       darin, und (erledigt, unveröffentlicht: ein runder Zapfen an einer Seitenwand wird abgezogen, indem die Wand
+       darin, und (erledigt in v0.3.0: ein runder Zapfen an einer Seitenwand wird abgezogen, indem die Wand
        nach oben gedreht wird (`plate/bosses.rs::strip_side_bosses`), und als `cylinder` geschrieben,
        der an der Wand-`base_*`-Ausdruck mit der Wand-Außennormale als Achse verbunden wird)
        Zapfen an Seitenflächen
@@ -42,10 +44,10 @@ sobald release-please das nächste Release (v0.3.0) schneidet. Die Tags liest ma
    12. kombinierte Extrusionen: (erledigt in v0.1.0-beta.5) der Schnitt von Konturen, die entlang X, Y und Z extrudiert
        werden, mit Öffnungen durch sie, geraden Sackloch-Schnitten hinein und runden Bohrungen, und
        (erledigt in v0.1.0-beta.5) Vereinigungen von Konturen, die entlang einer Achse gestapelt sind;
-       (erledigt, unveröffentlicht) sich kreuzende runde Bohrungen in einem kombinierten Teil — die Bohrungen werden per
+       (erledigt in v0.3.0) sich kreuzende runde Bohrungen in einem kombinierten Teil — die Bohrungen werden per
        Kreis-Konsens aus ihren ecken-teilenden Gruppen gelöst (`combined/holes.rs::crossed_bore`),
        eine Bohrung mit Lücke in ihrer Wand wird akzeptiert, wenn die Lücke im Zylinder einer
-       anderen Bohrung liegt, und das Volumen rechnet die Kreuzung einmal — und (erledigt, unveröffentlicht)
+       anderen Bohrung liegt, und das Volumen rechnet die Kreuzung einmal — und (erledigt in v0.3.0)
        Dächer und Fasen auf einem Stapel: die Oberkanten des obersten Bands dürfen alle eine Fase tragen
        (`w` auf der Oberseite hinein, `h` an den Wänden hinab — eine Fase, wenn klein, ein Dach,
        wenn die Fasen sich treffen), erkannt in `stack/mod.rs::recognize_chamfer` an einer konvexen
@@ -103,7 +105,7 @@ sobald release-please das nächste Release (v0.3.0) schneidet. Die Tags liest ma
    extrahierte Know-how ist im Agent-Skill `revmesh-recognition-knowhow` paketiert; die Konzept → Code
    Kartierung mit den Quellen ist [Vergleichbare Werkzeuge → Konzepte aus der Liste, auf revmesh
    angewendet](/de/guide/comparison#concepts-from-the-list-applied-to-revmesh)):
-   1. (erledigt, unveröffentlicht: `prism_axes` in `recognize/axis.rs` passt die dominanten parallelen
+   1. (erledigt in v0.3.0: `prism_axes` in `recognize/axis.rs` passt die dominanten parallelen
       Ebenenpaare per fixed-seed RANSAC an (Schnabel et al. 2007, wie `ransac_circle` für Kreise) —
       eine Facette pro 3-Punkt-Probe, Inlier innerhalb der Toleranz nach Fläche bewertet, die
       gegenüberliegende Ebene als dominante Menge der antiparallelen Facetten, das Teil muss zwischen
@@ -135,16 +137,16 @@ sobald release-please das nächste Release (v0.3.0) schneidet. Die Tags liest ma
       Fläche geprüft) und in `round_foot` für Zapfenfüße (`plate/bosses.rs`), statt des
       Mittelwerts pro Ecke) analytische Torus-Erkennung für die Verrundungen an Bohrungsrändern und
       Zapfenfüßen
-   4. (erledigt, unveröffentlicht: `outline_shape` in `plate/outline.rs` liefert einen angepassten Radius pro verrundeter
+   4. (erledigt in v0.3.0: `outline_shape` in `plate/outline.rs` liefert einen angepassten Radius pro verrundeter
       Ecke und das Design schreibt ein `Fillet<g>` pro Radius-Gruppe mit `fillet_r_<g>` /
       `outline_fillet_r_<g>` — ein gemeinsamer Radius behält das schlichte `fillet_r` /
       `outline_fillet_r` und `Fillet1`) pro-Ecken-Radien in Konturen
-   5. (erledigt, unveröffentlicht: `hole_groups` in `crates/revmesh-core/src/recognize/to_design.rs` schreibt eine Reihe,
+   5. (erledigt in v0.3.0: `hole_groups` in `crates/revmesh-core/src/recognize/to_design.rs` schreibt eine Reihe,
       deren Winkel nicht 0° oder ±90° ist, als einzelne Bohrungen, da die Richtung eines Musters in
       SolidCraft kein Ausdruck ist; eine achsparallele Reihe bleibt ein `HoleRow<n>`-Muster)
       Bohrungsreihen in beliebigem Winkel (die Richtung eines Musters ist in SolidCraft kein Ausdruck —
       als einzelne Bohrungen oder auf einer gedrehten Skizze schreiben)
-   6. (erledigt, unveröffentlicht: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` lehnt, bevor eine Achse
+   6. (erledigt in v0.3.0: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` lehnt, bevor eine Achse
       probiert wird, ein Netz ab, dessen Kanten nicht von zwei Facetten in Gegenrichtung bedeckt
       sind — Ecken auf einem Sub-Toleranz-Raster verschweißt, T-Junctions eines Exporters über
       ihre Subkanten-Längen gezählt — erkannte Flächen schließen also zu Schleifen; und `check_walls`
@@ -161,7 +163,7 @@ sobald release-please das nächste Release (v0.3.0) schneidet. Die Tags liest ma
       eine Selbstprüfung in der App-Sandbox: die Capability `evaluate@0.2` anfordern, die erzeugte
       Konstruktion stagen und neu aufbauen, und bei Feature-Fehlern mit dem Grund im Bericht auf den
       Mesh-Body zurückfallen
-   2. (erledigt, unveröffentlicht: `plugin.json` akzeptiert `stl`, `obj` und `ply`; `format.rs` erkennt das Format an
+   2. (erledigt in v0.3.0: `plugin.json` akzeptiert `stl`, `obj` und `ply`; `format.rs` erkennt das Format an
       Dateiname oder den ersten Bytes, und `MeshReader` streamt alle drei gepuffert mit denselben
       Größenlimits wie `StlReader`; `obj.rs` und `ply.rs` (ASCII und binary little-endian) parsen
       in dasselbe `Mesh` mit lokalisierten Zeilen-/Datensatz-Fehlern; `import`, `read_mesh` des
@@ -169,10 +171,10 @@ sobald release-please das nächste Release (v0.3.0) schneidet. Die Tags liest ma
       `block-60x40x6.obj`, `block-60x40x6.ply` und `block-60x40x6-bin.ply` importieren den
       STL-Block unverändert, `obj-bad.obj`/`ply-bad.ply` decken die Fehlerfälle ab) OBJ- und
       PLY-Eingabe neben STL
-   3. (erledigt, unveröffentlicht) OBJ, PLY und ASCII-STL akzeptieren endliche Koordinaten mit doppelter
+   3. (erledigt in v0.3.0) OBJ, PLY und ASCII-STL akzeptieren endliche Koordinaten mit doppelter
       Genauigkeit. Der Netz-Fallback erhält Koordinaten auch jenseits des einfachgenauen
       Wertebereichs. Für die parametrische Erkennung gilt der bisherige Koordinatenbereich.
-   4. (erledigt, unveröffentlicht: Dateien bis 32 MiB werden akzeptiert (`MAX_BYTES` in
+   4. (erledigt in v0.3.0: Dateien bis 32 MiB werden akzeptiert (`MAX_BYTES` in
       `crates/revmesh-plugin/src/lib.rs`) und die Erkennung ist bei `MAX_RECOGNITION_TRIANGLES`
       (≈ 335.000 Dreiecke ≈ 16 MiB binäres STL) in `revmesh-core` begrenzt — `import_mesh` nimmt das
       Netz als Referenz und klont nur in den Mesh-/Unrecognized-Fallback-Pfaden, und `Faces.chords`
@@ -180,11 +182,11 @@ sobald release-please das nächste Release (v0.3.0) schneidet. Die Tags liest ma
       bei 16 MiB, innerhalb des 128-MiB-Budgets; mehr bräuchte indexbasierte Flächenspeicherung)
       eine höhere Erkennungsgrenze (heute 335k Dreiecke, `revmesh-core`), indem
       die Indexe, die die Erkennung über Flächen und Wände baut, schlanker werden
-   5. (erledigt, unveröffentlicht: ASCII-STL-Syntaxfehler tragen einen `SyntaxReason` (`stl.rs`), gerendert in der
+   5. (erledigt in v0.3.0: ASCII-STL-Syntaxfehler tragen einen `SyntaxReason` (`stl.rs`), gerendert in der
       Importsprache über `stl.syntax.reason.*` in den Lokalisierungskatalogen; die Dialogoption
       `units` (`plugin.json`) liest Zoll-Dateien als Zoll und skaliert sie direkt auf Millimeter
       (`convert_units`, danach bereichsgeprüft), vermerkt im Bericht als `revmesh.units`)
-   6. (erledigt, unveröffentlicht: die Dialogoption `mode` (`auto`/`mesh`) ist entfallen — `plugin.json` fragt nur
+   6. (erledigt in v0.3.0: die Dialogoption `mode` (`auto`/`mesh`) ist entfallen — `plugin.json` fragt nur
       noch nach `units`; der Import versucht immer die Erkennung und fällt auf den Mesh-Body
       zurück, wo nichts erkannt wird (`revmesh.unrecognized`), die Selbstprüfung der App
       fehlschlägt (`revmesh.selfcheck`) oder das Netz `MAX_RECOGNITION_TRIANGLES` überschreitet

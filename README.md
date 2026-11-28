@@ -204,11 +204,11 @@ cargo xtask check              # checks every rebuild against its source mesh (v
    3. (done) counterbored and countersunk holes; 4. (done) blind holes; 5. (done) slots; 6. (done) bosses on the top face;
    7. (done) polygonal cut-outs; 8. (done) pads and pockets; 9. (done) extrusions along X and Y;
    10. (done) boxes with every edge rounded (`edge_fillet_r`), with through holes in them,
-   and bosses on side faces (done, unreleased); 11. (done) chamfers, drafts
+   and bosses on side faces (done in v0.3.0); 11. (done) chamfers, drafts
    and the rounds at a boss's foot or a hole's rim; 12. combined extrusions: (done) the
    intersection of outlines along X, Y and Z, with openings through them, straight blind cuts
    into them and round holes, and (done) unions of outlines stacked along an axis; holes
-   that cross, roofs and bevels on a stack (done, unreleased).
+   that cross, roofs and bevels on a stack (done in v0.3.0).
 4. **Checking** (done): `cargo xtask check` compares the rebuilt part with the mesh through
    SolidCraft's `eval` (feature errors, volume) and an STL re-export (surface deviation,
    Hausdorff), with mesh2cad's gate, as mesh2cad checks its scripts with CadQuery.

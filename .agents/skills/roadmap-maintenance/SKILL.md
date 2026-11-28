@@ -46,7 +46,7 @@ hand-edit them, only read release tags from them.
 - Keep EN and DE identical in structure and facts: same items, same done/unreleased marks, same
   release tags, same priority order — only the language differs.
 - Release tags come from the `chore: release` commits / `CHANGELOG.md`; while pre-1.0 with `feat`
-  commits since the last tag the next one is the minor bump (today: v0.2.0 → v0.3.0) — confirm
+  commits since the last tag the next one is the minor bump (today: v0.3.0 → v0.4.0) — confirm
   against `release-please-config.json` and the manifest, don't assume.
 
 ## Boundary note

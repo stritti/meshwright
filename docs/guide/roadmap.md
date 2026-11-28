@@ -1,7 +1,7 @@
 # Roadmap
 
 Done items carry the release they shipped in (`vX.Y.Z`); work merged after the latest release
-(v0.2.0) is marked **unreleased** and gets its tag when release-please cuts the next one (v0.3.0).
+(v0.3.0) is marked **unreleased** and gets its tag when release-please cuts the next one (v0.4.0).
 Tags are read from the `chore: release` commits and `CHANGELOG.md` — never invented.
 
 ## Open points, prioritised
@@ -14,6 +14,8 @@ Tags are read from the `chore: release` commits and `CHANGELOG.md` — never inv
    the spike ([research/convert-mesh-body.md](https://github.com/stritti/revmesh/blob/main/research/convert-mesh-body.md))
    showed this needs a second `command-plugin` package — a separate feature track after the
    sketch work.
+
+## Items (stable numbering — referenced as `roadmap X.Y`)
 
 1. **Skeleton** (done in v0.1.0-beta.1): plugin pipeline, document writer, mesh fallback, quality gates,
    releases.
@@ -32,17 +34,17 @@ Tags are read from the `chore: release` commits and `CHANGELOG.md` — never inv
    8. (done in v0.1.0-beta.2) pads and rectangular pockets (steps and other pockets later)
    9. (done in v0.1.0-beta.4) extrusions along X and Y
    10. (done in v0.1.0-beta.4) boxes with every edge rounded (`edge_fillet_r`), with through holes in them, and
-       (done, unreleased: a side wall's round boss is stripped with the wall rotated to face up
+       (done in v0.3.0: a side wall's round boss is stripped with the wall rotated to face up
        (`plate/bosses.rs::strip_side_bosses`) and written as a `cylinder` joined on the wall's
        `base_*` expression with the wall's outward normal as its axis) bosses on side faces
    11. (done in v0.1.0-beta.4–v0.1.0-beta.5) chamfers, drafts and the rounds at a boss's foot or a hole's rim
    12. combined extrusions: (done in v0.1.0-beta.5) the intersection of outlines extruded along X, Y and Z, with
        openings through them, straight blind cuts into them and round holes, and (done in v0.1.0-beta.5) unions
-       of outlines stacked along an axis; (done, unreleased) round holes that cross inside a combined part —
+       of outlines stacked along an axis; (done in v0.3.0) round holes that cross inside a combined part —
        the bores are split out of their corner-sharing groups by circle consensus
        (`combined/holes.rs::crossed_bore`), a bore is accepted with a gap in its wall where the
        gap lies inside another bore's cylinder, and the volume takes the crossing once — and
-       (done, unreleased) roofs and bevels on a stack: the top band's top edges may all carry one chamfer
+       (done in v0.3.0) roofs and bevels on a stack: the top band's top edges may all carry one chamfer
        (`w` in on the top face, `h` down the walls — a bevel when small, a roof when the
        chamfers meet), recognised in `stack/mod.rs::recognize_chamfer` on a convex top outline
        and written as one `Chamfer1` with `chamfer` (45°) or `chamfer_w`/`chamfer_h`
@@ -99,7 +101,7 @@ Tags are read from the `chore: release` commits and `CHANGELOG.md` — never inv
    references (the extracted know-how is packaged in the `revmesh-recognition-knowhow` agent
    skill; the concept → code mapping with the sources is [Comparable tools → Concepts from the
    list, applied to revmesh](/guide/comparison#concepts-from-the-list-applied-to-revmesh)):
-   1. (done, unreleased: `prism_axes` in `recognize/axis.rs` fits the dominant parallel plane pairs by
+   1. (done in v0.3.0: `prism_axes` in `recognize/axis.rs` fits the dominant parallel plane pairs by
       fixed-seed RANSAC (Schnabel et al. 2007, as `ransac_circle` does for circles) — one facet
       per 3-point sample, inliers within the tolerance scored by area, the opposite-facing
       plane as the dominant cluster of the anti-parallel facets, the part required to lie
@@ -129,16 +131,16 @@ Tags are read from the `chore: release` commits and `CHANGELOG.md` — never inv
       (`plate/prism.rs`, with tangency to the bore's wall and to the face checked) and in
       `round_foot` for boss feet (`plate/bosses.rs`), replacing the per-corner averaging) analytic
       torus detection for the rounds at hole rims and boss feet
-   4. (done, unreleased: `outline_shape` in `plate/outline.rs` returns one fitted radius per rounded corner and
+   4. (done in v0.3.0: `outline_shape` in `plate/outline.rs` returns one fitted radius per rounded corner and
       the design writes one `Fillet<g>` per radius group with `fillet_r_<g>` / `outline_fillet_r_<g>`
       — a single shared radius keeps the plain `fillet_r` / `outline_fillet_r` and `Fillet1`)
       per-corner radii in outlines
-   5. (done, unreleased: `hole_groups` in `crates/revmesh-core/src/recognize/to_design.rs` writes a row whose
+   5. (done in v0.3.0: `hole_groups` in `crates/revmesh-core/src/recognize/to_design.rs` writes a row whose
       angle is not 0° or ±90° as single holes, as a pattern's direction is not an expression in
       SolidCraft; an axis-aligned row stays a `HoleRow<n>` pattern) hole rows at any angle (a
       pattern's direction is not an expression in SolidCraft — write them as single holes or on
       a rotated sketch)
-   6. (done, unreleased: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` refuses, before any axis
+   6. (done in v0.3.0: `closed_loops` in `crates/revmesh-core/src/recognize/mod.rs` refuses, before any axis
       is tried, a mesh whose edges are not covered by two facets in opposite directions —
       corners welded on a sub-tolerance grid, an exporter's T-junctions counted by their sub-edges'
       length — so the recognised faces close into loops; and `check_walls` in `plate/prism.rs`
@@ -155,17 +157,17 @@ Tags are read from the `chore: release` commits and `CHANGELOG.md` — never inv
       request the `evaluate@0.2` capability, stage the produced design
       and rebuild it, and on feature errors fall back to the mesh body with the reason in the
       report
-   2. (done, unreleased: `plugin.json` accepts `stl`, `obj` and `ply`; `format.rs` tells the format by
+   2. (done in v0.3.0: `plugin.json` accepts `stl`, `obj` and `ply`; `format.rs` tells the format by
       the file's name or its first bytes, and `MeshReader` streams all three in chunks with the same
       size limits as `StlReader`; `obj.rs` and `ply.rs` (ASCII and binary little-endian) parse
       into the same `Mesh` with localised line/record errors; `import`, the plugin's `read_mesh`
       and `cargo xtask check` take any of them; the plugin-test fixtures `block-60x40x6.obj`,
       `block-60x40x6.ply` and `block-60x40x6-bin.ply` import the STL block unchanged, and
       `obj-bad.obj`/`ply-bad.ply` cover the error cases) OBJ and PLY input next to STL
-   3. (done, unreleased) OBJ, PLY and ASCII STL accept finite double-precision coordinates. The mesh
+   3. (done in v0.3.0) OBJ, PLY and ASCII STL accept finite double-precision coordinates. The mesh
       fallback preserves coordinates beyond the single-precision range. Parametric feature
       recognition uses its existing coordinate range.
-   4. (done, unreleased: files up to 32 MiB are accepted (`MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`)
+   4. (done in v0.3.0: files up to 32 MiB are accepted (`MAX_BYTES` in `crates/revmesh-plugin/src/lib.rs`)
       and recognition is gated at `MAX_RECOGNITION_TRIANGLES` (≈ 335k triangles ≈ 16 MiB of binary
       STL) in `revmesh-core` — `import_mesh` takes the mesh by reference and clones only in the
       mesh/unrecognized fallback paths, and `Faces.chords` is slimmed from (a, b, middle, length)
@@ -173,11 +175,11 @@ Tags are read from the `chore: release` commits and `CHANGELOG.md` — never inv
       would need index-based face storage) a higher recognition ceiling (335k triangles today,
       `revmesh-core`) by slimming the face and wall indexes recognition
       builds
-   5. (done, unreleased: ASCII-STL syntax errors carry a `SyntaxReason` (`stl.rs`) rendered in the import
+   5. (done in v0.3.0: ASCII-STL syntax errors carry a `SyntaxReason` (`stl.rs`) rendered in the import
       language via `stl.syntax.reason.*` in the locale catalogs; the dialog's `units` option
       (`plugin.json`) reads inch files as inches and scales them to millimetres in place
       (`convert_units`, range-checked afterwards), noted in the report as `revmesh.units`).
-   6. (done, unreleased: the import dialog's `mode` option (`auto`/`mesh`) is gone — `plugin.json` only asks
+   6. (done in v0.3.0: the import dialog's `mode` option (`auto`/`mesh`) is gone — `plugin.json` only asks
       for `units`; the import always tries recognition and falls back to the mesh body where
       nothing is recognised (`revmesh.unrecognized`), the app's self-check fails
       (`revmesh.selfcheck`) or the mesh exceeds `MAX_RECOGNITION_TRIANGLES` (`revmesh.too_large`),
