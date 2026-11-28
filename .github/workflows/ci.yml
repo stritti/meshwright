@@ -153,7 +153,7 @@ jobs:
       # Whole workspace, no source excluded; the job fails below 80% line coverage.
       - run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 80
       - run: cargo llvm-cov report --workspace --summary-only >> "$GITHUB_STEP_SUMMARY"
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           fail_ci_if_error: false
