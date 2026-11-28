@@ -520,9 +520,18 @@ fn covered_mouths_are_restored_for_through_bores_only() {
     // Z through-bore's rectangle, and the check must see that in world coordinates.
     let y_bore = Bore { axis: Axis::Y, centre: [20.0, -10.0], r: 3.0, lo: 0.0, hi: 30.0, mouth: ring(20.0, -10.0, 3.0) };
     let mut openings = Vec::new();
-    super::keep_covered_mouths(Axis::Y, &[y_bore.clone(), z_bore], size, tol, &mut openings);
+    super::keep_covered_mouths(Axis::Y, &[y_bore.clone(), z_bore.clone()], size, tol, &mut openings);
     assert_eq!(openings.len(), 1, "the Y bore's mouth at world z = 10 is covered");
     assert!(y_bore.matches(&openings[0], 2.0 * tol));
+    // Unequal radii: the transverse rectangle clips only part of the larger mouth, leaving
+    // crescent openings that do not match the bore — they are replaced by the full ring, not
+    // appended (review finding).
+    let small_x = Bore { axis: Axis::X, centre: [15.0, 5.0], r: 1.0, lo: 0.0, hi: 40.0, mouth: ring(15.0, 5.0, 1.0) };
+    let crescent: Vec<[f64; 2]> = vec![[20.0, 12.0], [23.0, 15.0], [20.0, 18.0]];
+    let mut openings = vec![crescent];
+    super::keep_covered_mouths(Axis::Z, &[z_bore.clone(), small_x], size, tol, &mut openings);
+    assert_eq!(openings.len(), 1, "the crescent is replaced, not appended");
+    assert!(z_bore.matches(&openings[0], 2.0 * tol));
 }
 
 /// A closed 20 x 20 x 10 box with a radius-9 blind hole of `sides` facets drilled 9 deep into its

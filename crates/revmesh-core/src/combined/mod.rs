@@ -186,6 +186,10 @@ fn keep_covered_mouths(axis: Axis, bores: &[holes::Bore], size: [f64; 3], tol: f
             along >= t.lo - tol && along <= t.hi + tol && (across - tc[c]).abs() <= t.r + tol
         });
         if covered && !openings.iter().any(|o| b.matches(o, 2.0 * tol)) {
+            // The rectangle may have clipped only part of the mouth: drop the surviving crescent
+            // openings (their corners all lie in the mouth's disk) before adding the full ring,
+            // or the overlapping cutouts would subtract them twice.
+            openings.retain(|o| !o.iter().all(|p| (p[0] - b.centre[0]).hypot(p[1] - b.centre[1]) <= b.r + tol));
             let mut ring = b.mouth.clone();
             ring.reverse(); // an opening winds the other way than the outline
             openings.push(ring);

@@ -246,7 +246,7 @@ fn coverage_gaps(corners: &[Vec3], centre: P2, min: f64) -> Vec<(f64, f64)> {
     (0..n)
         .filter_map(|i| {
             let (a, b) = (angles[i], angles[(i + 1) % n]);
-            let gap = if i + 1 < n { b - a } else { a + std::f64::consts::TAU - b };
+            let gap = if i + 1 < n { b - a } else { b + std::f64::consts::TAU - a };
             (gap > min).then_some((a, a + gap))
         })
         .collect()
@@ -426,5 +426,21 @@ mod tests {
         full.truncate(16); // the first 8 segments = half the ring
         let (bores, _, _) = find_bores(&full, 1e-3);
         assert!(bores.is_empty(), "{bores:?}");
+    }
+
+    /// A complete ring leaves no gap, not even across the angle wraparound; a missing corner
+    /// leaves its real gap (review finding on the wraparound computation).
+    #[test]
+    fn coverage_gaps_reports_only_real_gaps() {
+        use std::f64::consts::TAU;
+        let centre = [0.0, 0.0];
+        let ring: Vec<Vec3> = (0..16).map(|i| f64::from(i) * TAU / 16.0).map(|a| [3.0 * a.cos(), 3.0 * a.sin(), 0.0]).collect();
+        assert!(coverage_gaps(&ring, centre, MAX_GAP).is_empty(), "a complete ring has no gap");
+        let mut broken = ring;
+        broken.remove(2); // the corner at 45 degrees
+        broken.remove(1); // and at 22.5: a 67.5 degree gap from 0 to 67.5
+        let gaps = coverage_gaps(&broken, centre, MAX_GAP);
+        assert_eq!(gaps.len(), 1, "{gaps:?}");
+        assert!((gaps[0].1 - gaps[0].0 - 3.0 * std::f64::consts::FRAC_PI_8).abs() < 1e-9, "{gaps:?}");
     }
 }
