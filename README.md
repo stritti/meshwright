@@ -203,15 +203,19 @@ cargo xtask check              # checks every rebuild against its source mesh (v
    2. (done) hole rows, grids and bolt circles as SolidCraft patterns;
    3. (done) counterbored and countersunk holes; 4. (done) blind holes; 5. (done) slots; 6. (done) bosses on the top face;
    7. (done) polygonal cut-outs; 8. (done) pads and pockets; 9. (done) extrusions along X and Y;
-   10. (done) boxes with every edge rounded (`edge_fillet_r`), with through holes in them;
-   bosses on side faces still to do; 11. (done) chamfers, drafts
+   10. (done) boxes with every edge rounded (`edge_fillet_r`), with through holes in them,
+   and bosses on side faces (done in v0.3.0); 11. (done) chamfers, drafts
    and the rounds at a boss's foot or a hole's rim; 12. combined extrusions: (done) the
    intersection of outlines along X, Y and Z, with openings through them, straight blind cuts
    into them and round holes, and (done) unions of outlines stacked along an axis; holes
-   that cross, roofs and bevels on a stack still to do.
+   that cross, roofs and bevels on a stack (done in v0.3.0).
 4. **Checking** (done): `cargo xtask check` compares the rebuilt part with the mesh through
    SolidCraft's `eval` (feature errors, volume) and an STL re-export (surface deviation,
    Hausdorff), with mesh2cad's gate, as mesh2cad checks its scripts with CadQuery.
+
+The full roadmap — with the release each done item shipped in and the open points in priority
+order — lives in [docs/guide/roadmap.md](docs/guide/roadmap.md) (German:
+[docs/de/guide/roadmap.md](docs/de/guide/roadmap.md)).
 
 ## Agent skills
 
@@ -231,6 +235,7 @@ three). [AGENTS.md](AGENTS.md) is the short orientation for agents working on th
 | [`solidcraft-importer-workflow`](.agents/skills/solidcraft-importer-workflow/SKILL.md) | implementing an importer slot end to end |
 | [`solidcraft-plugin-testing`](.agents/skills/solidcraft-plugin-testing/SKILL.md) | adding unit, golden, eval or plugin-test coverage |
 | [`revmesh-recognition-knowhow`](.agents/skills/revmesh-recognition-knowhow/SKILL.md) | adding or changing a recogniser or sketch writer — the portable building blocks from the literature (RANSAC, loop fits, dihedral segmentation, extrusion cylinders, sketch constraints, validity gates), mapped to this repo's code |
+| [`roadmap-maintenance`](.agents/skills/roadmap-maintenance/SKILL.md) | keeping the roadmap current — release tags on done items, prioritised open points, EN/DE in sync — on every roadmap-touching change and every release |
 
 Every SolidCraft skill opens with the same mandatory conformance check: before touching the plugin
 boundary, verify compatibility and full utilization against SolidCraft's
