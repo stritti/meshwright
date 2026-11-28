@@ -40,7 +40,7 @@ crates/
     src/import.rs      die ganze Pipeline und die Importoptionen
     tests/data/        Fixtures und Golden Designs
   revmesh-plugin/   die Komponente: craft:plugin@0.2.0, Welt importer-plugin
-    wit/plugin.wit     vendored aus SolidCraft v0.51.1
+    wit/plugin.wit     vendored aus SolidCraft v0.51.2
 plugin/revmesh/     das Paket: plugin.json, icons/ (das SVG, das SolidCraft im Plugins-Menü zeigt), die gebaute .wasm, SolidCraft-Testfälle
 xtask/                 Component-Wrapping, Packaging, Plugin-Tests
 ```
