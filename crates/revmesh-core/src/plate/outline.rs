@@ -233,20 +233,21 @@ pub(super) fn outline_shape(outline: &[P2], tol: f64) -> Result<(Vec<P2>, Vec<f6
                 return Err("the outline has a concave arc side (only convex arc sides are recognised so far)".into());
             }
             if span == n || sweep >= 2.0 * PI - 1e-6 {
-                // A run all the way round one circle is a round outline: two corners, the
-                // farthest pair of the run's (nearly opposite on the circle), with a semicircular
-                // arc side from the first to the second and one back. The sketch's curves are
-                // lines and arcs, so a full circle is written as the two arcs.
-                let mut best = (lo, lo + 1, 0.0);
-                for a in lo..hi {
-                    for b in (a + 1)..=hi {
-                        let d = distance(v[a % n], v[b % n]);
-                        if d > best.2 {
-                            best = (a, b, d);
-                        }
+                // A run all the way round one circle is a round outline: two corners, nearly
+                // opposite on the fitted circle — the run's first corner and the run corner
+                // farthest from it, which the circle's fit already places near its antipode, so
+                // one linear scan finds it — with a semicircular arc side from the first to the
+                // second and one back. The sketch's curves are lines and arcs, so a full circle
+                // is written as the two arcs.
+                let first = v[lo % n];
+                let mut best = (lo + 1, 0.0);
+                for (k, p) in (lo + 1..=hi).map(|k| (k, v[k % n])) {
+                    let d = distance(first, p);
+                    if d > best.1 {
+                        best = (k, d);
                     }
                 }
-                let (mut a, mut b) = (best.0, best.1);
+                let (mut a, mut b) = (lo, best.0);
                 if (b + n - a) % n > n / 2 {
                     std::mem::swap(&mut a, &mut b);
                 }

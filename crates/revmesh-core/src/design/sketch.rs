@@ -578,9 +578,9 @@ pub fn line_arc_tangent(line_from: [f64; 2], corner: [f64; 2], centre: [f64; 2],
 /// shared corner with an arc side turns gently is held tangent to the arc (as a slot's sides
 /// are), which keeps a driving diameter change solvable to first order even for a
 /// semicircular side. Arc side pairs in `arc_equals` share one radius (`Equal`, as a slot's
-/// ends do) and only the first of a pair drives — unless they share their centre point (a full
-/// circle's two semicircles), when the shared centre ties their radii and no `Equal` is
-/// emitted. `arcs` and `arc_params` are parallel to `corners`.
+/// ends do) and only the first of a pair drives — unless they share their centre point and
+/// their two endpoints (a full circle's two semicircles), when the shared centre ties their
+/// radii and no `Equal` is emitted. `arcs` and `arc_params` are parallel to `corners`.
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn polygon_sketch_arcs(
@@ -670,9 +670,14 @@ pub fn polygon_sketch_arcs(
         }
     }
     for &(p, q) in arc_equals {
-        // Arc sides sharing their centre point are tied through it already; an `Equal` between
-        // them would be redundant.
-        if centre_of[p] != centre_of[q] {
+        // Arc sides sharing their centre point and their two endpoints (a full circle's two
+        // semicircles) are tied through the shared centre already; an `Equal` between them
+        // would be redundant. Concentric arcs with their own endpoints keep their `Equal`.
+        let near = |u: [f64; 2], w: [f64; 2]| (u[0] - w[0]).hypot(u[1] - w[1]) <= 1e-9;
+        let (p_from, p_to) = (corners[p], corners[(p + 1) % n]);
+        let (q_from, q_to) = (corners[q], corners[(q + 1) % n]);
+        let same_ends = (near(p_from, q_from) && near(p_to, q_to)) || (near(p_from, q_to) && near(p_to, q_from));
+        if centre_of[p] != centre_of[q] || !same_ends {
             constraints.push(Constraint::Equal { id: format!("k{}", constraints.len() + 1), a: side_curve[p], b: side_curve[q] });
         }
     }

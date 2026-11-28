@@ -415,8 +415,11 @@ fn arc_polygon_dim(corners: &[[f64; 2]], arcs: &[Option<ArcSide>]) -> (Vec<bool>
         }
         dim[opp] = false;
     }
-    // Arc sides about one centre — a full circle's two semicircles — share their radius through
-    // the sketch's shared centre point, so only the first of them drives its `Diameter`.
+    // Arc sides that share their centre and their two endpoints — a full circle's two
+    // semicircles — are one circle: their radii are tied through the sketch's shared centre
+    // point, so only the first drives its `Diameter`. Concentric arcs with their own endpoints
+    // (different radii) keep their own diameters.
+    let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) <= 1e-9;
     for (i, arc_i) in arcs.iter().enumerate() {
         let Some(a) = *arc_i else { continue };
         if !dim[i] {
@@ -424,7 +427,10 @@ fn arc_polygon_dim(corners: &[[f64; 2]], arcs: &[Option<ArcSide>]) -> (Vec<bool>
         }
         for (j, arc_j) in arcs.iter().enumerate().skip(i + 1) {
             let Some(b) = *arc_j else { continue };
-            if (a.centre[0] - b.centre[0]).hypot(a.centre[1] - b.centre[1]) <= 1e-9 * a.r.max(b.r).max(1.0) {
+            let (p, q) = (corners[i], corners[(i + 1) % n]);
+            let (s, t) = (corners[j], corners[(j + 1) % n]);
+            let same_ends = (near(p, s) && near(q, t)) || (near(p, t) && near(q, s));
+            if same_ends && (a.centre[0] - b.centre[0]).hypot(a.centre[1] - b.centre[1]) <= 1e-9 * a.r.max(b.r).max(1.0) {
                 dim[j] = false;
                 let known = arc_equals.iter().any(|&(x, y)| (x, y) == (i, j) || (x, y) == (j, i));
                 if !known {

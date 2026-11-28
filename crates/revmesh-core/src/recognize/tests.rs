@@ -1360,6 +1360,52 @@ fn a_round_outline_becomes_two_arcs_about_one_centre() {
     assert!(!params.contains(&"arc_2_d"), "one diameter parameter drives the circle: {params:?}");
 }
 
+/// Concentric arc sides with their own endpoints — a shield: semicircles of radius 5 and 10
+/// about one centre, joined by two radial sides — are no full circle: both keep their own
+/// `Diameter` parameter (`arc_2_d` and `arc_4_d`) and share only the centre point; an `Equal`
+/// between them would wrongly tie their different radii (codex finding on #128).
+#[test]
+fn concentric_arc_sides_keep_their_own_diameters() {
+    let centre = [0.0, 0.0];
+    let spec = ProfileSpec {
+        outline_pockets: vec![],
+        corners: vec![[-10.0, 0.0], [-5.0, 0.0], [5.0, 0.0], [10.0, 0.0]],
+        z: 4.0,
+        holes: vec![],
+        slots: vec![],
+        pads: vec![],
+        pockets: vec![],
+        bosses: vec![],
+        cutouts: vec![],
+        arcs: vec![None, Some(ArcSide { centre, r: 5.0 }), None, Some(ArcSide { centre, r: 10.0 })],
+        outline_fillet_rs: Vec::new(),
+    };
+    assert!(!spec.is_round());
+    let mesh = synth::profile(&spec, 16, [0.0; 3]);
+    let reread = crate::stl::parse(&crate::stl::write_binary(&mesh)).expect("round trip");
+    let Recognition::Profile { profile, .. } = recognize(&reread) else { panic!("the shield is a profile") };
+    let arcs = profile.arc_sides();
+    let (Some(inner), Some(outer)) = (arcs[1], arcs[3]) else { panic!("two arc sides") };
+    assert!(distance_ish(inner.centre, outer.centre) && (inner.r - 5.0).abs() < 1e-3 && (outer.r - 10.0).abs() < 1e-3);
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("valid");
+    let sketch = &json["features"][0]["sketch"];
+    let curves = sketch["curves"].as_array().expect("curves");
+    let arc_curves: Vec<&serde_json::Value> = curves.iter().filter(|c| c["type"] == "arc").collect();
+    assert_eq!(arc_curves.len(), 2, "{curves:?}");
+    assert_eq!(arc_curves[0]["c"], arc_curves[1]["c"], "both arcs share the one centre point: {curves:?}");
+    let constraints = sketch["constraints"].as_array().expect("constraints");
+    let diameters = constraints.iter().filter(|c| c["type"] == "diameter").count();
+    assert_eq!(diameters, 2, "each concentric arc drives its own Diameter: {constraints:?}");
+    assert!(constraints.iter().all(|c| c["type"] != "equal"), "no Equal ties the different radii: {constraints:?}");
+    let params: Vec<&str> = json["params"].as_array().expect("params").iter().filter_map(|p| p["name"].as_str()).collect();
+    assert!(params.contains(&"arc_2_d") && params.contains(&"arc_4_d"), "{params:?}");
+}
+
+/// Whether two points are equal to a nanometre (the corners compared are the same entries).
+fn distance_ish(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] - b[0]).hypot(a[1] - b[1]) <= 1e-9
+}
+
 /// A hole with a rounded bottom rim beneath a step carries a bottom-facing blind depth; it
 /// must be drilled from the bottom face, like a bottom counterbore — the Round head's origin
 /// must not be dropped (codex finding on #71). The rim fillet sits on the bore's bottom edge.
