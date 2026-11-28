@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.3.0](https://github.com/stritti/revmesh/compare/v0.2.0...v0.3.0) (2026-11-28)
+
+
+### Features
+
+* **ci:** headless CLI example — install dist zip, file.import an example STL, verify rebuilt volume ([#104](https://github.com/stritti/revmesh/issues/104)) ([efb9f6b](https://github.com/stritti/revmesh/commit/efb9f6be343a3e627b05b9bfefed2d91d5847f65))
+* **design:** mesh coordinates beyond f32 range keep double precision (roadmap 7.3) ([#120](https://github.com/stritti/revmesh/issues/120)) ([052296a](https://github.com/stritti/revmesh/commit/052296aa3c847b633654aed6c2a28d28df5de04b))
+* drop the auto/mesh import choice; the plugin picks the result itself ([#114](https://github.com/stritti/revmesh/issues/114)) ([8da8de1](https://github.com/stritti/revmesh/commit/8da8de1fa84a9bfff372b142b69c0d27260687d3))
+* **import:** raise the auto ceiling to 16 MiB, localise STL syntax errors, add a units option ([#97](https://github.com/stritti/revmesh/issues/97)) ([f1f72a7](https://github.com/stritti/revmesh/commit/f1f72a77a618c7123982191407d77b72be2fdd40))
+* OBJ and PLY input next to STL (roadmap 7.2) ([#105](https://github.com/stritti/revmesh/issues/105)) ([c54cbcb](https://github.com/stritti/revmesh/commit/c54cbcbb967241997fb0c0a98fdfd73577aad602))
+* **patterns:** hole rows at any angle are written as single holes (roadmap 6.5) ([#119](https://github.com/stritti/revmesh/issues/119)) ([e56a99a](https://github.com/stritti/revmesh/commit/e56a99a28336a3f36403921153b89c196d1727d4))
+* per-corner radii in outlines (roadmap 6.4) ([#110](https://github.com/stritti/revmesh/issues/110)) ([3235183](https://github.com/stritti/revmesh/commit/3235183eed2da999884c4b21177e26d4b13917de))
+* **plugin:** also place the stl importer in the Insert ribbon tab ([#95](https://github.com/stritti/revmesh/issues/95)) ([2b1383f](https://github.com/stritti/revmesh/commit/2b1383f584cdcc488444ae0aaa4ed96402c3335b))
+* **plugin:** show the project link in the plugin card description ([#98](https://github.com/stritti/revmesh/issues/98)) ([cb9f702](https://github.com/stritti/revmesh/commit/cb9f7025a9edd778c94837cbd0040b658ca2eb43))
+* recognise prisms along an arbitrary axis by RANSAC (roadmap 6.1) ([#117](https://github.com/stritti/revmesh/issues/117)) ([99d06dd](https://github.com/stritti/revmesh/commit/99d06ddbebd94cde5634fecda7012f7ddb21c2e4))
+* **recognize:** ComplexGen-style topology gates — closed edge loops, walls at 90° ([#101](https://github.com/stritti/revmesh/issues/101)) ([53a0cc4](https://github.com/stritti/revmesh/commit/53a0cc472a4949ccdc7c5981c29c4ad1d491d3c2))
+* **recognize:** crossing holes in combined parts, roofs and bevels on stacks (roadmap 3.12) ([#118](https://github.com/stritti/revmesh/issues/118)) ([5d3857d](https://github.com/stritti/revmesh/commit/5d3857d837e3ed74ebe88d4dfc4d150375b4232e))
+* round bosses on side walls (roadmap 3.10) ([#112](https://github.com/stritti/revmesh/issues/112)) ([dbcf20b](https://github.com/stritti/revmesh/commit/dbcf20b139ff50af7e829b0307c8bf6742fea6eb))
+* **scripts:** add scripts/measure-stl.py and document script-based install in README/docs ([#108](https://github.com/stritti/revmesh/issues/108)) ([93ea701](https://github.com/stritti/revmesh/commit/93ea701c7eb2a1a60e08f5c86eb6c9380fd098b2))
+
+
+### Bug Fixes
+
+* **import:** preserve concave faces and wide mesh coordinates ([#121](https://github.com/stritti/revmesh/issues/121)) ([b254c9c](https://github.com/stritti/revmesh/commit/b254c9c28d91537c871fea443bf6b36fd05fb20b))
+* **plate:** recognize subdivided through-hole walls ([#123](https://github.com/stritti/revmesh/issues/123)) ([3510e00](https://github.com/stritti/revmesh/commit/3510e009969469b17be9d183e94f1902cbcfa38c))
+* **recognize:** one two-pointer sweep over a line's events in closed_loops ([#107](https://github.com/stritti/revmesh/issues/107)) ([0830c59](https://github.com/stritti/revmesh/commit/0830c59955e172d74b3761febdbc58b69756d64f))
+
+
+### Documentation
+
+* add DE/EN locales to the docs site and enlarge the home hero image ([#96](https://github.com/stritti/revmesh/issues/96)) ([f502bf8](https://github.com/stritti/revmesh/commit/f502bf867ed943d4c3ede481acb1e3961e977ef9))
+* add hero image so the plugin-list card has a picture ([#115](https://github.com/stritti/revmesh/issues/115)) ([b5ee0f1](https://github.com/stritti/revmesh/commit/b5ee0f1def36014135264b3f37035037cce98e4e))
+* add research/mesh2cad-parity.md and fix stale 8 MiB ceiling in DE docs ([#103](https://github.com/stritti/revmesh/issues/103)) ([7335b9e](https://github.com/stritti/revmesh/commit/7335b9ee94cd2f1b5aab666a39535e18845daacd))
+* document SolidCraft compatibility and runtime limits in README and docs site ([#100](https://github.com/stritti/revmesh/issues/100)) ([d93c5df](https://github.com/stritti/revmesh/commit/d93c5df8964fcf8b014a0b9871ba2fe8bc9bfbe5))
+* move the plugin-list mention from the hero button to the footer ([#116](https://github.com/stritti/revmesh/issues/116)) ([8d37b94](https://github.com/stritti/revmesh/commit/8d37b94e0c12764dc18ef10cb4270832aee8f87a))
+* spike for issue [#70](https://github.com/stritti/revmesh/issues/70) — convert a mesh body in the open design ([#109](https://github.com/stritti/revmesh/issues/109)) ([d41c52c](https://github.com/stritti/revmesh/commit/d41c52c2d0c97a2f084d38e29892daeaa3f18458))
+
 ## [0.2.0](https://github.com/stritti/revmesh/compare/v0.1.0...v0.2.0) (2026-11-26)
 
 
