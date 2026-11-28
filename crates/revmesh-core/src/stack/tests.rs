@@ -496,4 +496,18 @@ fn a_roof_that_consumes_the_top_bands_walls_is_a_stack() {
     let want = 24_000.0 + 400.0 * 10.0 / 3.0;
     assert!((spec.volume() - want).abs() < 1e-9, "{} vs {want}", spec.volume());
     assert!((spec.volume() - mesh.volume()).abs() < 1e-6, "{} vs {}", spec.volume(), mesh.volume());
+    // Lying along X, a symmetric roof is one chamfer feature over all edges — splitting the
+    // edges would let the first chamfer consume the top face before the second applies (review
+    // finding).
+    let lying = Axis::X.unrotate_mesh(&mesh);
+    let (spec_x, frame_at) = recognize_stack(&Axis::X.rotate_mesh(&lying)).expect("a stack along X");
+    let json: serde_json::Value =
+        serde_json::from_str(&spec_x.to_design_on("", Axis::X.unrotate(frame_at), Axis::X).to_json()).expect("json");
+    let chamfers: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "chamfer").collect();
+    assert_eq!(chamfers.len(), 1, "{chamfers:?}");
+    assert_eq!(chamfers[0]["name"], "Chamfer1");
+    assert_eq!(chamfers[0]["distance"], "chamfer");
+    assert!(chamfers[0].get("distance2").is_none());
+    assert_eq!(chamfers[0]["edge_names"].as_array().expect("names").len(), 4);
 }

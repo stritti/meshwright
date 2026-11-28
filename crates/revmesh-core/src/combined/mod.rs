@@ -174,7 +174,8 @@ fn keep_covered_mouths(axis: Axis, bores: &[holes::Bore], size: [f64; 3], tol: f
     // Only a through bore's mouth opens on both end faces; a blind one is a cut instead.
     for b in bores.iter().filter(|b| b.axis == axis && b.lo <= tol && b.hi >= size[a] - tol) {
         // Does a transverse bore's rectangle (its span along its own axis by its diameter
-        // across) cover the mouth's centre? Compare in world coordinates: a Y profile's second
+        // across) intersect the mouth's disk — not only contain its centre, as offset crossing
+        // bores clip the mouth's edge? Compare in world coordinates: a Y profile's second
         // coordinate is -Z.
         let covered = bores.iter().filter(|t| t.axis != axis).any(|t| {
             let ta = t.axis.index();
@@ -183,7 +184,7 @@ fn keep_covered_mouths(axis: Axis, bores: &[holes::Bore], size: [f64; 3], tol: f
             let along = axis.profile_world([0.0; 3], k, b.centre[k]);
             let across = axis.profile_world([0.0; 3], 1 - k, b.centre[1 - k]);
             let tc = t.axis.world([0.0; 3], t.centre[0], t.centre[1], 0.0);
-            along >= t.lo - tol && along <= t.hi + tol && (across - tc[c]).abs() <= t.r + tol
+            along + b.r >= t.lo - tol && along - b.r <= t.hi + tol && (across - tc[c]).abs() <= b.r + t.r + tol
         });
         if covered && !openings.iter().any(|o| b.matches(o, 2.0 * tol)) {
             // The rectangle may have clipped only part of the mouth: drop the surviving crescent

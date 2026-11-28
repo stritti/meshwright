@@ -218,34 +218,39 @@ impl StackSpec {
 fn chamfer_features(b: &mut DesignBuilder, axis: Axis, at: Vec3, top: &Band, top_extrude: u32, w_expr: &str, h_expr: &str) {
     let m = top.outline.len();
     let top_up = axis.dir()[2];
-    let mut top_first: (Vec<String>, Vec<Vec3>) = (Vec::new(), Vec::new());
-    let mut side_first: (Vec<String>, Vec<Vec3>) = (Vec::new(), Vec::new());
+    let mut all: (Vec<String>, Vec<Vec3>, Vec<bool>) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..m {
         let (a, b) = (top.outline[i], top.outline[(i + 1) % m]);
         let d = [b[0] - a[0], b[1] - a[1]];
         let len = d[0].hypot(d[1]);
         let side_up = axis.unrotate([d[1] / len, -d[0] / len, 0.0])[2];
-        let name = format!("F{top_extrude}:side:l{}|F{top_extrude}:top", i + 1);
-        let point = axis.world(at, f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), top.to);
-        if side_up > top_up {
-            side_first.0.push(name);
-            side_first.1.push(point);
-        } else {
-            top_first.0.push(name);
-            top_first.1.push(point);
-        }
+        all.0.push(format!("F{top_extrude}:side:l{}|F{top_extrude}:top", i + 1));
+        all.1.push(axis.world(at, f64::midpoint(a[0], b[0]), f64::midpoint(a[1], b[1]), top.to));
+        all.2.push(side_up > top_up);
     }
-    let symmetric = w_expr == h_expr;
+    // A symmetric (45°) chamfer needs no swapping: one feature over all edges — splitting them
+    // would let the first chamfer consume the top face before the second applies (review finding).
+    if w_expr == h_expr {
+        b.feature(
+            "Chamfer1",
+            vec![],
+            FeatureKind::Chamfer { edge_names: all.0, edges: all.1, distance: w_expr.to_owned(), distance2: None },
+        );
+        return;
+    }
     let mut n = 0;
-    for (names, points, first, second) in [
-        (top_first.0, top_first.1, w_expr.to_owned(), h_expr.to_owned()),
-        (side_first.0, side_first.1, h_expr.to_owned(), w_expr.to_owned()),
-    ] {
+    for side_first in [false, true] {
+        let names: Vec<String> = all.0.iter().zip(&all.2).filter(|&(_, &s)| s == side_first).map(|(n, _)| n.clone()).collect();
+        let points: Vec<Vec3> = all.1.iter().zip(&all.2).filter(|&(_, &s)| s == side_first).map(|(p, _)| *p).collect();
         if names.is_empty() {
             continue;
         }
         n += 1;
-        let distance2 = if symmetric { None } else { Some(second) };
-        b.feature(format!("Chamfer{n}"), vec![], FeatureKind::Chamfer { edge_names: names, edges: points, distance: first, distance2 });
+        let (first, second) = if side_first { (h_expr, w_expr) } else { (w_expr, h_expr) };
+        b.feature(
+            format!("Chamfer{n}"),
+            vec![],
+            FeatureKind::Chamfer { edge_names: names, edges: points, distance: first.to_owned(), distance2: Some(second.to_owned()) },
+        );
     }
 }
