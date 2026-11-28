@@ -10,6 +10,13 @@ Conventional Commit messages on `main`:
 3. The `publish-plugin` job builds the plugin and attaches `revmesh-x.y.z.zip` (English),
    `revmesh-x.y.z-de.zip` (German) and `SHA256SUMS.txt` to the release.
 
+If that attach fails once, later pushes do not retry it — `publish-plugin` used to run only when
+release-please had just created the release, which is how `v0.3.0` ended up without zips. The
+workflow now also runs on the release's own `published` event and can be started by hand
+(**Actions → release-please → Run workflow**, input `tag`: the release to backfill, e.g. `v0.3.0`;
+empty: the tag release-please just created). Re-running the failed `publish-plugin` job of the
+release's workflow run works as well.
+
 ## One-time setup: the release token
 
 Pull requests and commits made with a workflow's own `GITHUB_TOKEN` start no other workflows.

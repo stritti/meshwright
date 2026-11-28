@@ -3,7 +3,16 @@ name: release-please
 on:
   push:
     branches: [main]
+  # Also fires when release-please publishes the release, so the zips land on the release even
+  # when the publish-plugin job failed in the push run (v0.3.0 lost its assets that way).
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to (re-)attach the plugin zips to, e.g. v0.3.0; empty: the tag release-please just created"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -17,6 +26,7 @@ permissions:
 
 jobs:
   release-please:
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
@@ -61,12 +71,16 @@ jobs:
 
   publish-plugin:
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    # Also on the release's own "published" event and on manual dispatch (inputs.tag), so a
+    # failed attach can be retried and an older release backfilled.
+    if: ${{ always() && (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') }}
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name || needs.release-please.outputs.tag_name }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ env.RELEASE_TAG }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask dist
       - name: Attach the plugin to the release
@@ -75,4 +89,4 @@ jobs:
         run: |
           cd target/dist
           sha256sum *.zip > SHA256SUMS.txt
-          gh release upload "${{ needs.release-please.outputs.tag_name }}" *.zip SHA256SUMS.txt --clobber
+          gh release upload "$RELEASE_TAG" *.zip SHA256SUMS.txt --clobber
