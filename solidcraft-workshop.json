@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "id": "revmesh",
+  "name": "revmesh",
+  "kind": "plugin",
+  "version": "0.3.0",
+  "licence": "MIT",
+  "min_app_version": "0.51.2",
+  "summary": "Opens STL, OBJ and PLY meshes in SolidCraft as editable, parametric designs instead of a dead triangle mesh.",
+  "description": "README.md",
+  "category": "importers",
+  "tags": [
+    "stl",
+    "obj",
+    "ply",
+    "importer",
+    "mesh",
+    "reverse-engineering",
+    "cad",
+    "3d-printing"
+  ],
+  "permissions": [],
+  "files": [
+    {
+      "asset": "revmesh-0.3.0.zip",
+      "role": "package"
+    },
+    {
+      "path": "docs/public/examples/nema17-motor-plate.png",
+      "role": "image"
+    }
+  ]
+}

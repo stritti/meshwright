@@ -10,6 +10,10 @@ Conventional Commit messages on `main`:
 3. The `publish-plugin` job builds the plugin and attaches `revmesh-x.y.z.zip` (English),
    `revmesh-x.y.z-de.zip` (German) and `SHA256SUMS.txt` to the release.
 
+The SolidCraft Workshop listing (`solidcraft-workshop.json` at the root) is published from this
+repository: bump its `version` and the package `asset` name with every release, so the listing
+always points at the newest release zip.
+
 ## One-time setup: the release token
 
 Pull requests and commits made with a workflow's own `GITHUB_TOKEN` start no other workflows.

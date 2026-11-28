@@ -10,6 +10,10 @@ Conventional-Commit-Nachrichten auf `main` erstellt:
 3. Der `publish-plugin`-Job baut das Plugin und hängt `revmesh-x.y.z.zip` (Englisch),
    `revmesh-x.y.z-de.zip` (Deutsch) und `SHA256SUMS.txt` an den Release an.
 
+Das SolidCraft-Workshop-Listing (`solidcraft-workshop.json` im Root) wird aus diesem Repository
+veröffentlicht: `version` und der Package-`asset`-Name müssen bei jedem Release mitgezogen werden,
+sodass das Listing immer auf das neueste Release-Zip zeigt.
+
 ## Einmalige Einrichtung: das Release-Token
 
 Pull Requests und Commits, die mit dem eigenen `GITHUB_TOKEN` eines Workflows erstellt werden, starten
