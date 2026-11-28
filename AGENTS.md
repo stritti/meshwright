@@ -5,14 +5,15 @@ duplicate them.
 
 ## Agent skills
 
-Eight [Agent Skills](https://agentskills.io) for professional WebAssembly-in-Rust development of
+Nine [Agent Skills](https://agentskills.io) for professional WebAssembly-in-Rust development of
 SolidCraft plugins are mirrored into the four locations skills-compatible agents scan:
 `.agents/skills/`, `.github/skills/`, `.claude/skills/`, `.vibe/skills/`. Edit `.agents/skills/`
 (the canonical copy) and copy the change to the other three. Overview table: the
 [README](README.md#agent-skills) "Agent skills" section. The skills cover scaffolding a plugin,
 the `craft:plugin` WIT worlds, the wasm build/packaging pipeline, runtime limits and streaming,
-host calls and error mapping, the importer workflow, testing, and the recognition know-how
-extracted from the literature (`revmesh-recognition-knowhow`).
+host calls and error mapping, the importer workflow, testing, the recognition know-how
+extracted from the literature (`revmesh-recognition-knowhow`), and keeping the roadmap itself
+evaluated and up to date (`roadmap-maintenance`).
 
 Every SolidCraft skill opens with the same mandatory conformance gate: before any change that
 touches the plugin boundary, check it against SolidCraft's `docs/plugins.md` — [at the pinned tag

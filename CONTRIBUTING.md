@@ -117,6 +117,12 @@ zip to the GitHub release. Breaking changes (`feat!:` or a `BREAKING CHANGE:` fo
 minor version while revmesh is below 1.0. Maintainers: the setup is in
 [docs/releasing.md](docs/releasing.md).
 
+When a commit implements or changes a roadmap item, reference it in the message — `(roadmap 3.12)`
+as in the git history — and update the roadmap in the same pull request: mark the item done (with
+its release once the release PR merges) and re-prioritise the open points. How the roadmap is
+kept current at every occasion is described in the `roadmap-maintenance` agent skill
+(`.agents/skills/roadmap-maintenance/`).
+
 ### Beta phase
 
 revmesh is in its beta phase: releases are pre-releases, versioned `0.1.0-beta.1`,
