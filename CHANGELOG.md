@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/stritti/revmesh/compare/v0.3.0...v0.3.1) (2026-11-28)
+
+
+### Documentation
+
+* tag done roadmap items with their releases, prioritise open points, add roadmap-maintenance skill ([#126](https://github.com/stritti/revmesh/issues/126)) ([7af4743](https://github.com/stritti/revmesh/commit/7af47433b7f820e48cd684bc2144fd24a3433a7e))
+
 ## [0.3.0](https://github.com/stritti/revmesh/compare/v0.2.0...v0.3.0) (2026-11-28)
 
 
