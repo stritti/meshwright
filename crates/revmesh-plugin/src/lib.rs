@@ -134,9 +134,8 @@ fn read_mesh(file: &source::FileInfo, max_bytes: u64, locale: Locale) -> Result<
 
 /// Stages the serialised design in the app's private sandbox (capability `evaluate@0.2`) in 1 MiB
 /// pieces, runs `document.inspect` on it — which opens the design and evaluates its history — and
-/// discards the session. What the reply says becomes the [`SelfCheck`]. A call error (a design the
-/// app cannot open, a reply over 1 MiB) is an error for that call only, so the design is then
-/// reported as unchecked rather than failed.
+/// discards the session. A design the host cannot read fails the check. Other call errors,
+/// such as exceeding the reply size limit, leave the result unchecked.
 fn self_check(design_json: &[u8]) -> SelfCheck {
     let mut staged = true;
     for chunk in design_json.chunks(CHUNK) {
@@ -154,6 +153,7 @@ fn self_check(design_json: &[u8]) -> SelfCheck {
     evaluate::reset();
     match outcome {
         Ok(reply) => SelfCheck::from_inspect_reply(&reply),
+        Err(PluginError::InvalidInput(FieldFailure { field, reason })) => SelfCheck::from_invalid_input(&field, reason),
         Err(error) => {
             log::log(log::Level::Warn, &format!("the sandbox self-check could not run: {error:?}"));
             SelfCheck::Unavailable

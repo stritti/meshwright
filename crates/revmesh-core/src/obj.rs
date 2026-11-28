@@ -3,7 +3,7 @@
 //! Only what a mesh needs: `v x y z` vertex lines (extra values after the coordinates, e.g.
 //! colours, are ignored) and `f` face lines. Face indices may carry
 //! texture/normal parts (`f 1/1/1 2/2/2 3/3/3`), may be negative (counting back from the last
-//! vertex), and faces with more than three corners are triangulated as a fan. Every other line
+//! vertex), and faces with more than three corners are triangulated. Every other line
 //! (`#`, `o`, `g`, `s`, `vt`, `vn`, `usemtl`, `mtllib`, …) is skipped.
 //!
 //! [`ObjReader`] reads the file in chunks, as the plugin receives it, so the file never has to be
@@ -12,7 +12,7 @@
 
 use std::fmt;
 
-use crate::format::{MeshError, extend_reserved, fmt_num, push_checked, push_reserved, welded_vertices};
+use crate::format::{MeshError, extend_reserved, fmt_num, push_face, push_reserved, welded_vertices};
 use crate::i18n::Locale;
 use crate::mesh::{Mesh, Triangle, Vec3};
 
@@ -29,6 +29,8 @@ pub enum ObjReason {
     BadCoordinate,
     /// A `f` entry that is not a vertex index.
     BadFace,
+    /// A polygon face could not be triangulated.
+    InvalidPolygon,
     /// A vertex index outside the vertices read so far.
     IndexOutOfRange(usize),
     /// A face with fewer than three corners.
@@ -42,6 +44,7 @@ impl ObjReason {
         match self {
             Self::VertexNotThree => locale.text("obj.syntax.reason.vertex_not_three").to_owned(),
             Self::BadCoordinate => locale.text("obj.syntax.reason.bad_coordinate").to_owned(),
+            Self::InvalidPolygon => locale.text("obj.syntax.reason.invalid_polygon").to_owned(),
             Self::BadFace => locale.text("obj.syntax.reason.bad_face").to_owned(),
             Self::IndexOutOfRange(n) => locale.format("obj.syntax.reason.index_out_of_range", &[("n", n)]),
             Self::FaceTooSmall(n) => locale.format("obj.syntax.reason.face_too_small", &[("n", n)]),
@@ -54,6 +57,7 @@ impl fmt::Display for ObjReason {
         match self {
             Self::VertexNotThree => f.write_str("a vertex line has three coordinates"),
             Self::BadCoordinate => f.write_str("bad coordinate"),
+            Self::InvalidPolygon => f.write_str("face could not be triangulated"),
             Self::BadFace => f.write_str("a face lists vertex indices"),
             Self::IndexOutOfRange(n) => write!(f, "vertex index {n} is out of range"),
             Self::FaceTooSmall(n) => write!(f, "a face has fewer than three corners, this one has {n}"),
@@ -154,11 +158,7 @@ fn obj_line(text: &str, line: usize, vertices: &mut Vec<Vec3>, triangles: &mut V
             if indices.len() < 3 {
                 return Err(MeshError::Obj { line, reason: ObjReason::FaceTooSmall(indices.len()) });
             }
-            for k in 1..indices.len() - 1 {
-                let triangle = [vertices[indices[0]], vertices[indices[k]], vertices[indices[k + 1]]];
-                push_checked(triangles, triangle)?;
-            }
-            Ok(())
+            push_face(triangles, vertices, &indices, || MeshError::Obj { line, reason: ObjReason::InvalidPolygon })
         }
         // Every other keyword (comments, groups, materials, texture and normal coords, …).
         _ => Ok(()),

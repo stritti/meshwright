@@ -73,20 +73,13 @@ pub fn import(bytes: &[u8], file_name: &str, options: &ImportOptions) -> Result<
     Ok(import_mesh(&mesh, file_name, options))
 }
 
-/// Applies a file's `units` to the mesh read from it: an inch file is scaled to millimetres in
-/// place, and the coordinates are range-checked afterwards, because scaling can push one past
-/// the f32 range the design is written in. Call this before [`import_mesh`], which expects
-/// millimetres; it never copies the mesh, so even a 32 MiB mesh-body import holds it only once
-/// besides the design's own copy.
+/// Converts inch coordinates to millimetres in place and rejects a conversion that overflows.
 pub fn convert_units(mesh: &mut Mesh, units: Units) -> Result<(), MeshError> {
     if units == Units::Inch {
         mesh.scale_in_place(INCH_TO_MM);
         for (i, triangle) in mesh.triangles.iter().enumerate() {
             if triangle.iter().flatten().any(|v| !v.is_finite()) {
                 return Err(MeshError::NonFinite { triangle: i + 1 });
-            }
-            if triangle.iter().flatten().any(|v| v.abs() > f64::from(f32::MAX)) {
-                return Err(MeshError::OutOfRange { triangle: i + 1 });
             }
         }
     }
@@ -236,6 +229,12 @@ pub enum SelfCheck {
 }
 
 impl SelfCheck {
+    /// SolidCraft's error while opening the staged design or invoking its inspection.
+    #[must_use]
+    pub fn from_invalid_input(field: &str, reason: String) -> Self {
+        if field == "design" { Self::Failed(reason) } else { Self::Unavailable }
+    }
+
     /// What a `document.inspect` reply says: a failed command is a top-level `error`, and a
     /// timeline feature that failed to evaluate carries its own `error` (SolidCraft's control
     /// protocol serialises it as `null` when the feature is fine). Anything else means the design
@@ -334,6 +333,12 @@ mod tests {
     }
 
     #[test]
+    fn an_invalid_staged_design_fails_the_self_check() {
+        assert_eq!(SelfCheck::from_invalid_input("design", "cannot read design".into()), SelfCheck::Failed("cannot read design".into()));
+        assert_eq!(SelfCheck::from_invalid_input("evaluate", "no design is open".into()), SelfCheck::Unavailable);
+    }
+
+    #[test]
     fn a_failed_self_check_falls_back_to_the_mesh_and_keeps_the_update_notice() {
         use crate::recognize::{HoleSpec, PlateSpec};
         let spec = PlateSpec {
@@ -413,15 +418,27 @@ mod tests {
     }
 
     #[test]
-    fn inch_conversion_range_checks_the_scaled_coordinates() {
-        // 1e38 parses fine (below f32::MAX), but 25.4e38 does not survive the f32 write.
-        let mesh = Mesh { triangles: vec![[[0.0, 0.0, 0.0], [1.0e38, 0.0, 0.0], [0.0, 1.0, 0.0]]] };
-        assert!(matches!(convert_units(&mut mesh.clone(), Units::Mm), Ok(())));
-        assert_eq!(convert_units(&mut mesh.clone(), Units::Inch), Err(MeshError::OutOfRange { triangle: 1 }));
-        let bytes = stl::write_binary(&mesh);
-        let err = import(&bytes, "big.stl", &ImportOptions { units: Units::Inch, ..ImportOptions::default() })
-            .expect_err("1e38 inches overflow the f32 range");
-        assert!(matches!(err, MeshError::OutOfRange { triangle: 1 }), "{err}");
+    fn wide_coordinates_survive_parsing_and_inch_conversion() {
+        let options = ImportOptions { units: Units::Inch, ..ImportOptions::default() };
+        for (file, data) in [
+            ("wide.obj", "v 0 0 0\nv 1e39 0 0\nv 0 1 0\nf 1 2 3\n"),
+            (
+                "wide.stl",
+                "solid s\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1e39 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid s\n",
+            ),
+            (
+                "wide.ply",
+                "ply\nformat ascii 1.0\nelement vertex 3\nproperty double x\nproperty double y\nproperty double z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1e39 0 0\n0 1 0\n3 0 1 2\n",
+            ),
+        ] {
+            let result = import(data.as_bytes(), file, &options).expect("wide finite coordinates import");
+            let json: serde_json::Value = serde_json::from_str(&result.design.to_json()).expect("valid JSON");
+            let x = json["features"][0]["meshes"][0]["positions"][3].as_f64().expect("finite coordinate");
+            assert!((x / 2.54e40 - 1.0).abs() < 1e-12, "{file}: {x}");
+        }
+
+        let mut huge = Mesh::new(vec![[[0.0; 3], [1e308, 0.0, 0.0], [0.0, 1.0, 0.0]]]);
+        assert_eq!(convert_units(&mut huge, Units::Inch), Err(MeshError::NonFinite { triangle: 1 }));
     }
 
     #[test]

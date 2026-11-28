@@ -36,8 +36,7 @@ pub enum StlError {
         /// 1-based number of the triangle.
         triangle: usize,
     },
-    /// A corner coordinate is finite but too large for a single-precision float, the precision
-    /// meshes are written in (an ASCII file can hold `1e39`; binary files cannot).
+    /// Legacy error for coordinates beyond the former single-precision import range.
     OutOfRange {
         /// 1-based number of the triangle.
         triangle: usize,
@@ -289,9 +288,6 @@ fn push_checked(triangles: &mut Vec<Triangle>, triangle: Triangle) -> Result<(),
     if triangle.iter().flatten().any(|v| !v.is_finite()) {
         return Err(StlError::NonFinite { triangle: triangles.len() + 1 });
     }
-    if triangle.iter().flatten().any(|v| v.abs() > f64::from(f32::MAX)) {
-        return Err(StlError::OutOfRange { triangle: triangles.len() + 1 });
-    }
     if triangles.len() == triangles.capacity() {
         triangles.try_reserve(1).map_err(|_| StlError::Allocation)?;
     }
@@ -512,11 +508,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_coordinates_beyond_single_precision() {
+    fn reads_ascii_coordinates_beyond_single_precision() {
         let text = TETRA.replacen("vertex 0 10 0", "vertex 0 1e39 0", 1);
-        assert_eq!(parse(text.as_bytes()), Err(StlError::OutOfRange { triangle: 1 }));
-        let text = TETRA.replacen("vertex 0 10 0", "vertex 0 3e38 0", 1);
-        assert!(parse(text.as_bytes()).is_ok(), "within f32 range");
+        assert!(parse(text.as_bytes()).is_ok());
     }
 
     #[test]
