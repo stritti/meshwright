@@ -10,6 +10,13 @@ Conventional-Commit-Nachrichten auf `main` erstellt:
 3. Der `publish-plugin`-Job baut das Plugin und hängt `revmesh-x.y.z.zip` (Englisch),
    `revmesh-x.y.z-de.zip` (Deutsch) und `SHA256SUMS.txt` an den Release an.
 
+Schlägt das Anhängen einmal fehl, holt ein späterer Push es nicht nach — `publish-plugin` lief
+bisher nur, wenn release-please gerade den Release erstellt hatte; so kam `v0.3.0` ohne Zips
+zustande. Der Workflow läuft jetzt auch beim `published`-Event des Releases selbst und lässt sich
+von Hand starten (**Actions → release-please → Run workflow**, Eingabe `tag`: der nachzutragende
+Release, z. B. `v0.3.0`; leer: der soeben erstellte Tag). Den fehlgeschlagenen
+`publish-plugin`-Job des Release-Laufs erneut zu starten, geht ebenfalls.
+
 ## Einmalige Einrichtung: das Release-Token
 
 Pull Requests und Commits, die mit dem eigenen `GITHUB_TOKEN` eines Workflows erstellt werden, starten
