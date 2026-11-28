@@ -344,6 +344,214 @@ fn a_bore_into_a_slope_stays_an_opening() {
     assert!((spec.volume() - mesh.volume()).abs() < 0.2, "{} vs {}", spec.volume(), mesh.volume());
 }
 
+/// Roadmap 3.12: two round holes crossing inside a combined part. The volume takes the crossing
+/// once (two equal cylinders of radius r at right angles cross in a lens of 16 r^3 / 3), and the
+/// design cuts one cylinder per hole.
+#[test]
+fn crossing_holes_take_the_crossing_once() {
+    use crate::recognize::{CombinedHole, Extrusion};
+    let spec = CombinedSpec {
+        size: [40.0, 30.0, 20.0],
+        extrusions: vec![Extrusion { axis: Axis::Z, outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]], cutouts: vec![] }],
+        cuts: vec![],
+        holes: vec![
+            CombinedHole { axis: Axis::X, centre: [15.0, 10.0], d: 8.0, from: 0.0, to: 40.0 },
+            CombinedHole { axis: Axis::Z, centre: [20.0, 15.0], d: 8.0, from: 0.0, to: 20.0 },
+        ],
+    };
+    let pi = std::f64::consts::PI;
+    let want = 40.0 * 30.0 * 20.0 - pi * 16.0 * 40.0 - pi * 16.0 * 20.0 + 16.0 * 4.0f64.powi(3) / 3.0;
+    assert!((spec.volume() - want).abs() < 1e-6, "{} vs {want}", spec.volume());
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("json");
+    let cylinders: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "cylinder").collect();
+    assert_eq!(cylinders.len(), 2);
+    assert!(cylinders.iter().all(|c| c["operation"] == "cut"));
+    let names: Vec<&str> = json["params"].as_array().expect("params").iter().map(|p| p["name"].as_str().expect("name")).collect();
+    assert!(names.contains(&"hole_1_d") && names.contains(&"hole_2_d"), "{names:?}");
+}
+
+/// A closed 40 x 30 x 20 box with two radius-3 bores crossing at its middle: one along X at
+/// (y, z) = (15, 10), one along Z at (x, y) = (20, 15). Each wall is trimmed where the other
+/// bore's cylinder runs through it, and the two walls share the intersection curve's corners
+/// bit for bit, so the mesh closes.
+fn box_with_crossing_bores() -> Mesh {
+    use std::f64::consts::TAU;
+    const N: usize = 16;
+    let r = 3.0;
+    let sn: Vec<f64> = (0..N).map(|i| (i as f64 * TAU / N as f64).sin()).collect();
+    let cs: Vec<f64> = (0..N).map(|i| (i as f64 * TAU / N as f64).cos()).collect();
+    let ring_x = |i: usize, x: f64| [x, 15.0 + r * cs[i], 10.0 + r * sn[i]];
+    let ring_z = |j: usize, z: f64| [20.0 + r * cs[j], 15.0 + r * sn[j], z];
+    // The X wall's gap at angle i is |x - 20| < r*|sin|; its boundary corners lie on the Z
+    // wall's gap boundary (|z - 10| < r*|cos| at angle j). Patch the Z wall with those corners,
+    // computed from the X table, so both walls share them bit for bit.
+    let mut z_patch: Vec<(usize, f64, [f64; 3])> = Vec::new();
+    for (i, &s) in sn.iter().enumerate() {
+        if s.abs() < 1e-12 {
+            continue;
+        }
+        for x in [20.0 + r * s.abs(), 20.0 - r * s.abs()] {
+            let c = [x, 15.0 + r * cs[i], 10.0 + r * s];
+            for j in 0..N {
+                for s in [1.0, -1.0] {
+                    let z = 10.0 + s * r * cs[j].abs();
+                    let b = [20.0 + r * cs[j], 15.0 + r * sn[j], z];
+                    if (0..3).all(|k| (b[k] - c[k]).abs() < 1e-9) {
+                        z_patch.push((j, z, c));
+                    }
+                }
+            }
+        }
+    }
+    let mut t: Vec<[[f64; 3]; 3]> = Vec::new();
+    // The six faces: the X bore opens on the x faces, the Z bore on the z faces, the y faces are solid.
+    let yz = [[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]];
+    let xz = [[0.0, 0.0], [40.0, 0.0], [40.0, 20.0], [0.0, 20.0]];
+    let xy = [[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]];
+    let mouth_x: Vec<[f64; 2]> = (0..N).map(|i| [15.0 + r * cs[i], 10.0 + r * sn[i]]).collect();
+    let mouth_z: Vec<[f64; 2]> = (0..N).map(|j| [20.0 + r * cs[j], 15.0 + r * sn[j]]).collect();
+    for [a, b, c] in crate::synth::triangulate(&yz, &[mouth_x]) {
+        t.push([[0.0, a[0], a[1]], [0.0, c[0], c[1]], [0.0, b[0], b[1]]]); // x = 0, normal -x
+        t.push([[40.0, a[0], a[1]], [40.0, b[0], b[1]], [40.0, c[0], c[1]]]); // x = 40, normal +x
+    }
+    for [a, b, c] in crate::synth::triangulate(&xz, &[]) {
+        t.push([[a[0], 0.0, a[1]], [b[0], 0.0, b[1]], [c[0], 0.0, c[1]]]); // y = 0, normal -y
+        t.push([[a[0], 30.0, a[1]], [c[0], 30.0, c[1]], [b[0], 30.0, b[1]]]); // y = 30, normal +y
+    }
+    for [a, b, c] in crate::synth::triangulate(&xy, &[mouth_z]) {
+        t.push([[a[0], a[1], 0.0], [c[0], c[1], 0.0], [b[0], b[1], 0.0]]); // z = 0, normal -z
+        t.push([[a[0], a[1], 20.0], [b[0], b[1], 20.0], [c[0], c[1], 20.0]]); // z = 20, normal +z
+    }
+    // The X bore's wall, trimmed where the Z bore's cylinder runs through it: each strip between
+    // angles i and i+1 ends at its own two gap stations, so the gap's boundary edge from the
+    // corner at i to the corner at i+1 is shared with the Z wall's strip.
+    for i in 0..N {
+        let j = (i + 1) % N;
+        let (gi, gj) = (r * sn[i].abs(), r * sn[j].abs());
+        let (a, b) = (ring_x(i, 0.0), ring_x(j, 0.0));
+        let (d, c) = (ring_x(i, 20.0 - gi), ring_x(j, 20.0 - gj));
+        t.push([b, a, d]);
+        t.push([b, d, c]);
+        let (a2, b2) = (ring_x(i, 20.0 + gi), ring_x(j, 20.0 + gj));
+        let (d2, c2) = (ring_x(i, 40.0), ring_x(j, 40.0));
+        t.push([b2, a2, d2]);
+        t.push([b2, d2, c2]);
+    }
+    // The Z bore's wall, trimmed where the X bore's cylinder runs through it, its gap's boundary
+    // corners taken from the X wall's table.
+    let at_z = |jj: usize, z: f64| {
+        z_patch.iter().find(|(kk, sz, _)| *kk == jj && (*sz - z).abs() < 1e-12).map_or_else(|| ring_z(jj, z), |(_, _, p)| *p)
+    };
+    for j in 0..N {
+        let k = (j + 1) % N;
+        let (hj, hk) = (r * cs[j].abs(), r * cs[k].abs());
+        let (a, b) = (at_z(j, 0.0), at_z(k, 0.0));
+        let (d, c) = (at_z(j, 10.0 - hj), at_z(k, 10.0 - hk));
+        t.push([b, a, d]);
+        t.push([b, d, c]);
+        let (a2, b2) = (at_z(j, 10.0 + hj), at_z(k, 10.0 + hk));
+        let (d2, c2) = (at_z(j, 20.0), at_z(k, 20.0));
+        t.push([b2, a2, d2]);
+        t.push([b2, d2, c2]);
+    }
+    let mut mesh = Mesh::new(t);
+    if mesh.volume() < 0.0 {
+        for tr in &mut mesh.triangles {
+            tr.swap(1, 2);
+        }
+    }
+    mesh
+}
+
+/// Roadmap 3.12, end to end: a closed mesh of two crossing through-bores in a box is recognised
+/// through `recognize_combined` — a transverse bore's silhouette rectangle must not swallow the
+/// other bore's mouth (review finding).
+#[test]
+fn crossing_holes_in_a_closed_mesh_are_recognised() {
+    let mesh = box_with_crossing_bores();
+    assert!(mesh.volume() > 0.0, "{}", mesh.volume());
+    // The fixture is a closed solid: the full pipeline's topology gate passes and reaches the
+    // combined recogniser (review finding on the wall trimming).
+    let found = recognize(&mesh);
+    assert!(matches!(found, Recognition::Combined { .. }), "{found:?}");
+    let (spec, offset) = recognize_combined(&mesh).expect("combined");
+    assert_eq!(offset, [0.0; 3]);
+    let holes: Vec<(Axis, [f64; 2], f64, f64, f64)> = spec.holes.iter().map(|h| (h.axis, h.centre, h.d, h.from, h.to)).collect();
+    assert_eq!(holes, [(Axis::X, [15.0, 10.0], 6.0, 0.0, 40.0), (Axis::Z, [20.0, 15.0], 6.0, 0.0, 20.0)]);
+    // Both bore mouths became holes, so the one outline left is the box's side again.
+    assert_eq!(spec.extrusions.iter().map(|e| e.axis).collect::<Vec<_>>(), [Axis::Z]);
+    // 24000 less both bores plus the lens (16 r^3 / 3) exactly once.
+    let pi = std::f64::consts::PI;
+    let want = 40.0 * 30.0 * 20.0 - pi * 9.0 * 40.0 - pi * 9.0 * 20.0 + 16.0 * 27.0 / 3.0;
+    assert!((spec.volume() - want).abs() < 1e-6, "{} vs {want}", spec.volume());
+    let json: serde_json::Value = serde_json::from_str(&spec.to_design("").to_json()).expect("json");
+    let cylinders: Vec<&serde_json::Value> =
+        json["features"].as_array().expect("features").iter().filter(|f| f["type"] == "cylinder").collect();
+    assert_eq!(cylinders.len(), 2);
+    assert!(cylinders.iter().all(|c| c["operation"] == "cut"));
+    // The same box with x and y swapped: the bores then run along Y and Z, and the Y bore's
+    // profile centre is (x, -z) — the covered mouth must still be found (review finding).
+    let swapped = Mesh::new(mesh.triangles.iter().map(|t| t.map(|p| [p[1], p[0], p[2]])).collect());
+    let swapped = if swapped.volume() < 0.0 { Mesh::new(swapped.triangles.iter().map(|t| [t[0], t[2], t[1]]).collect()) } else { swapped };
+    let (spec2, _) = recognize_combined(&swapped).expect("combined");
+    let holes2: Vec<(Axis, [f64; 2], f64)> = spec2.holes.iter().map(|h| (h.axis, h.centre, h.d)).collect();
+    assert_eq!(holes2, [(Axis::Y, [15.0, -10.0], 6.0), (Axis::Z, [15.0, 20.0], 6.0)], "{holes2:?}");
+}
+
+/// A transverse bore's silhouette rectangle may cover a through bore's own mouth: the mouth is
+/// restored as an opening with the bore's measured ring — but only for through bores, and the
+/// coverage check runs in world coordinates, since a Y profile's second coordinate is -Z
+/// (review findings on roadmap 3.12).
+#[test]
+fn covered_mouths_are_restored_for_through_bores_only() {
+    use super::holes::Bore;
+    use std::f64::consts::TAU;
+    let ring = |cx: f64, cy: f64, r: f64| -> Vec<[f64; 2]> {
+        (0..16).map(|i| f64::from(i) * TAU / 16.0).map(|a| [cx + r * a.cos(), cy + r * a.sin()]).collect()
+    };
+    let size = [40.0, 30.0, 20.0];
+    let tol = 1e-3;
+    // A Z through-bore at (x, y) = (20, 15) and an X through-bore whose rectangle seen along Z
+    // (its span along X by its diameter in Y) covers the Z mouth's centre.
+    let z_bore = Bore { axis: Axis::Z, centre: [20.0, 15.0], r: 3.0, lo: 0.0, hi: 20.0, mouth: ring(20.0, 15.0, 3.0) };
+    let x_bore = Bore { axis: Axis::X, centre: [15.0, 10.0], r: 3.0, lo: 0.0, hi: 40.0, mouth: ring(15.0, 10.0, 3.0) };
+    let mut openings = Vec::new();
+    super::keep_covered_mouths(Axis::Z, &[z_bore.clone(), x_bore.clone()], size, tol, &mut openings);
+    assert_eq!(openings.len(), 1);
+    assert!(z_bore.matches(&openings[0], 2.0 * tol));
+    assert_eq!(openings[0].len(), 16, "the measured mouth ring, not invented corners");
+    // A blind Z bore from the top (lo > 0) is no through bore: its mouth is not restored.
+    let blind = Bore { axis: Axis::Z, centre: [20.0, 15.0], r: 3.0, lo: 15.0, hi: 20.0, mouth: ring(20.0, 15.0, 3.0) };
+    let mut openings = Vec::new();
+    super::keep_covered_mouths(Axis::Z, &[blind, x_bore], size, tol, &mut openings);
+    assert_eq!(openings, Vec::<Vec<[f64; 2]>>::new());
+    // A Y bore's profile centre is (x, -z): at world (x, z) = (20, 10) its mouth is covered by a
+    // Z through-bore's rectangle, and the check must see that in world coordinates.
+    let y_bore = Bore { axis: Axis::Y, centre: [20.0, -10.0], r: 3.0, lo: 0.0, hi: 30.0, mouth: ring(20.0, -10.0, 3.0) };
+    let mut openings = Vec::new();
+    super::keep_covered_mouths(Axis::Y, &[y_bore.clone(), z_bore.clone()], size, tol, &mut openings);
+    assert_eq!(openings.len(), 1, "the Y bore's mouth at world z = 10 is covered");
+    assert!(y_bore.matches(&openings[0], 2.0 * tol));
+    // Unequal radii: the transverse rectangle clips only part of the larger mouth, leaving
+    // crescent openings that do not match the bore — they are replaced by the full ring, not
+    // appended (review finding).
+    let small_x = Bore { axis: Axis::X, centre: [15.0, 5.0], r: 1.0, lo: 0.0, hi: 40.0, mouth: ring(15.0, 5.0, 1.0) };
+    let crescent: Vec<[f64; 2]> = vec![[20.0, 12.0], [23.0, 15.0], [20.0, 18.0]];
+    let mut openings = vec![crescent];
+    super::keep_covered_mouths(Axis::Z, &[z_bore.clone(), small_x], size, tol, &mut openings);
+    assert_eq!(openings.len(), 1, "the crescent is replaced, not appended");
+    assert!(z_bore.matches(&openings[0], 2.0 * tol));
+    // Offset crossing bores: the rectangle clips the mouth's edge without containing its
+    // centre (r=1 X bore at (y, z) = (18, 10) vs. the r=3 Z mouth at (20, 15)) — disk/rectangle
+    // intersection, not centre containment (review finding).
+    let offset_x = Bore { axis: Axis::X, centre: [18.0, 10.0], r: 1.0, lo: 0.0, hi: 40.0, mouth: ring(18.0, 10.0, 1.0) };
+    let mut openings = Vec::new();
+    super::keep_covered_mouths(Axis::Z, &[z_bore.clone(), offset_x], size, tol, &mut openings);
+    assert_eq!(openings.len(), 1, "an edge-clipped mouth is restored too");
+    assert!(z_bore.matches(&openings[0], 2.0 * tol));
+}
+
 /// A closed 20 x 20 x 10 box with a radius-9 blind hole of `sides` facets drilled 9 deep into its
 /// top: walls from the floor at Z = 1 up to the top.
 fn box_with_blind_bore(sides: u32) -> Mesh {

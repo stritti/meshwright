@@ -7,6 +7,12 @@
 //! corners all lie on one circle round the axis, facing its centre, and going right round it.
 //! They are set aside; the rest of the part shows each bore as a round opening through an outline
 //! (a through hole) or a round cut from a face (a blind hole), which then becomes the hole.
+//!
+//! Roadmap 3.12: two bores may cross inside the part. The crossing leaves a gap in each bore's
+//! wall (where the other's cylinder runs through it), and the two walls share corners along
+//! their intersection curve, so their facets may land in one group. Such a group is split by
+//! circle consensus, and a bore is accepted with a gap when the gap's arc lies inside another
+//! bore's cylinder — the bores cross there.
 
 #![allow(clippy::many_single_char_names)] // points a, b, c, p, q, as in the geometry
 
@@ -42,6 +48,8 @@ pub(super) struct Bore {
     pub(super) r: f64,
     pub(super) lo: f64,
     pub(super) hi: f64,
+    /// The mouth ring on the +axis face, in the axis's profile coordinates, counter-clockwise.
+    pub(super) mouth: Vec<P2>,
 }
 
 impl Bore {
@@ -79,6 +87,13 @@ impl Bore {
     pub(super) fn matches(&self, ring: &[P2], tol: f64) -> bool {
         ring.len() >= MIN_CORNERS && ring.iter().all(|p| ((p[0] - self.centre[0]).hypot(p[1] - self.centre[1]) - self.r).abs() <= tol)
     }
+
+    /// Whether the world point `p` lies strictly inside the bore's cylinder, within its span:
+    /// where another bore crosses this one, its wall's gap lies inside the other's cylinder.
+    fn inside(&self, p: Vec3, tol: f64) -> bool {
+        let q = self.axis.rotate(p);
+        (q[0] - self.centre[0]).hypot(q[1] - self.centre[1]) < self.r - tol && q[2] > self.lo + tol && q[2] < self.hi - tol
+    }
 }
 
 /// The bores among `facets`, the facets left over, and the bores' walls with each one's axis.
@@ -95,6 +110,33 @@ pub(super) fn find_bores(facets: &[Facet], tol: f64) -> (Vec<Bore>, Vec<Facet>, 
                     taken[i] = Some(axis);
                 }
                 bores.push(bore);
+            }
+        }
+    }
+    // Roadmap 3.12: bores that cross each other have a gap in their wall, and their facets may
+    // share a group (they meet along the intersection curve). Split such groups by circle
+    // consensus and take a bore whose gaps all lie inside another bore's cylinder.
+    for axis in [Axis::X, Axis::Y, Axis::Z] {
+        loop {
+            let a = axis.index();
+            let candidates: Vec<usize> =
+                (0..facets.len()).filter(|&i| taken[i].is_none() && facets[i].1[a].abs() <= BORE_PARALLEL).collect();
+            if candidates.is_empty() {
+                break;
+            }
+            let mut progress = false;
+            for group in groups(facets, &candidates) {
+                if let Some((bore, members)) = crossed_bore(facets, &group, axis, tol, &bores) {
+                    for &i in &members {
+                        taken[i] = Some(axis);
+                    }
+                    bores.push(bore);
+                    progress = true;
+                    break; // re-group what is left of the candidates
+                }
+            }
+            if !progress {
+                break;
             }
         }
     }
@@ -182,7 +224,100 @@ fn bore(facets: &[Facet], group: &[usize], axis: Axis, tol: f64) -> Option<Bore>
     };
     let lo = corners.iter().map(|q| q[2]).fold(f64::INFINITY, f64::min);
     let hi = corners.iter().map(|q| q[2]).fold(f64::NEG_INFINITY, f64::max);
-    (round(None) && round(Some(lo)) && round(Some(hi))).then_some(Bore { axis, centre, r, lo, hi })
+    let mouth = mouth_ring(&corners, centre, hi, tol);
+    (round(None) && round(Some(lo)) && round(Some(hi))).then_some(Bore { axis, centre, r, lo, hi, mouth })
+}
+
+/// The corners at height `w` (within `tol`), as a ring round `centre`, counter-clockwise.
+fn mouth_ring(corners: &[Vec3], centre: P2, w: f64, tol: f64) -> Vec<P2> {
+    let mut ring: Vec<(f64, P2)> =
+        corners.iter().filter(|q| (q[2] - w).abs() <= tol).map(|q| ((q[1] - centre[1]).atan2(q[0] - centre[0]), [q[0], q[1]])).collect();
+    ring.sort_by(|a, b| a.0.total_cmp(&b.0));
+    ring.dedup_by(|a, b| (a.0 - b.0).abs() <= 1e-9);
+    ring.into_iter().map(|(_, p)| p).collect()
+}
+
+/// The angles about `centre` that `corners` (already in the axis's profile frame) leave
+/// uncovered, each as its `(start, end)` arc in radians, only those wider than `min`.
+fn coverage_gaps(corners: &[Vec3], centre: P2, min: f64) -> Vec<(f64, f64)> {
+    let mut angles: Vec<f64> = corners.iter().map(|q| (q[1] - centre[1]).atan2(q[0] - centre[0])).collect();
+    angles.sort_by(f64::total_cmp);
+    let n = angles.len();
+    (0..n)
+        .filter_map(|i| {
+            let (a, b) = (angles[i], angles[(i + 1) % n]);
+            let gap = if i + 1 < n { b - a } else { b + std::f64::consts::TAU - a };
+            (gap > min).then_some((a, a + gap))
+        })
+        .collect()
+}
+
+/// Whether the arc of the cylinder about `centre` of radius `r` along `axis`, from angle `a0` to
+/// `a1` at heights within `[lo, hi]`, lies inside another bore's cylinder: the bores cross there.
+#[allow(clippy::too_many_arguments)] // the arc's circle, span and angles, and the other bores
+fn gap_covered(axis: Axis, centre: P2, r: f64, lo: f64, hi: f64, a0: f64, a1: f64, others: &[Bore], tol: f64) -> bool {
+    // Interior samples across the gap's arc and the bore's span: the wall is missing at every
+    // height there, so each sample must lie strictly inside another bore of a different axis.
+    (1..=3).all(|i| {
+        let ang = a0 + (a1 - a0) * (f64::from(i) - 0.5) / 3.0;
+        (1..=3).all(|j| {
+            let w = lo + (hi - lo) * (f64::from(j) - 0.5) / 3.0;
+            let p = axis.unrotate([centre[0] + r * ang.cos(), centre[1] + r * ang.sin(), w]);
+            others.iter().any(|b| b.axis != axis && b.inside(p, tol))
+        })
+    })
+}
+
+/// The group as a bore another bore crosses (roadmap 3.12), if it is one: its facets' corners lie
+/// on one circle round `axis` and face its centre, its ends go all the way round (the mouths stay
+/// complete rings), and every gap wider than [`MAX_GAP`] in its wall lies inside another bore's
+/// cylinder. Returns the bore and the group's facets that belong to it — the group may mix axes,
+/// as crossing bores share corners along their intersection curve, so the circle consensus
+/// (a fixed-seed RANSAC, as a rim loop's in roadmap 6.2) picks the facets of one bore out of it.
+fn crossed_bore(facets: &[Facet], group: &[usize], axis: Axis, tol: f64, others: &[Bore]) -> Option<(Bore, Vec<usize>)> {
+    let corners: Vec<Vec3> = group.iter().flat_map(|&i| facets[i].0).map(|p| axis.rotate(p)).collect();
+    let flat: Vec<P2> = corners.iter().map(|q| [q[0], q[1]]).collect();
+    if flat.len() < MIN_CORNERS {
+        return None;
+    }
+    let (centre, r, _) = crate::plate::ransac_circle(&flat, tol)?;
+    let on_circle = |p: Vec3| {
+        let q = axis.rotate(p);
+        ((q[0] - centre[0]).hypot(q[1] - centre[1]) - r).abs() <= tol
+    };
+    let members: Vec<usize> = group.iter().copied().filter(|&i| facets[i].0.iter().all(|&p| on_circle(p))).collect();
+    let mcorners: Vec<Vec3> = members.iter().flat_map(|&i| facets[i].0).map(|p| axis.rotate(p)).collect();
+    if mcorners.len() < MIN_CORNERS {
+        return None;
+    }
+    // Facing the centre: a hole, not a boss (as `bore`).
+    for &i in &members {
+        let (t, n) = facets[i];
+        let m = axis.rotate(n);
+        let q = t.map(|p| axis.rotate(p));
+        let mid = [(q[0][0] + q[1][0] + q[2][0]) / 3.0, (q[0][1] + q[1][1] + q[2][1]) / 3.0];
+        if m[0] * (centre[0] - mid[0]) + m[1] * (centre[1] - mid[1]) <= 0.0 {
+            return None;
+        }
+    }
+    let lo = mcorners.iter().map(|q| q[2]).fold(f64::INFINITY, f64::min);
+    let hi = mcorners.iter().map(|q| q[2]).fold(f64::NEG_INFINITY, f64::max);
+    // The ends are square to the axis and go right round: a crossed bore's mouths stay complete.
+    let ends_round = |at: f64| {
+        let cs: Vec<Vec3> = mcorners.iter().copied().filter(|q| (q[2] - at).abs() <= tol).collect();
+        coverage_gaps(&cs, centre, MAX_GAP).is_empty()
+    };
+    if !ends_round(lo) || !ends_round(hi) {
+        return None;
+    }
+    let mouth = mouth_ring(&mcorners, centre, hi, tol);
+    // Every gap in the wall lies inside another bore's cylinder: the bores cross there.
+    for (a0, a1) in coverage_gaps(&mcorners, centre, MAX_GAP) {
+        if !gap_covered(axis, centre, r, lo, hi, a0, a1, others, tol) {
+            return None;
+        }
+    }
+    Some((Bore { axis, centre, r, lo, hi, mouth }, members))
 }
 
 #[cfg(test)]
@@ -219,5 +354,93 @@ mod tests {
         assert_eq!((bores[0].lo, bores[0].hi), (2.0, 10.0));
         assert_eq!(rest.len(), 30);
         assert!(rest.iter().all(|(_, n)| n[2].abs() > 0.99));
+    }
+
+    /// One facet with its corners and its unit normal.
+    fn facet(t: [Vec3; 3]) -> Facet {
+        let n = crate::mesh::cross(crate::mesh::sub(t[1], t[0]), crate::mesh::sub(t[2], t[0]));
+        let len = crate::mesh::length(n);
+        (t, n.map(|c| c / len))
+    }
+
+    /// A bore's wall strip: the ring of `n` angles about the axis, at the stations `xs`, wound so
+    /// that the normals point inwards (toward the axis). `ring` gives the corner at angle `i` and
+    /// station `x`; the corners at `patch` are replaced by exact literals, so two bores can share
+    /// them bit for bit along their intersection curve.
+    fn wall(ring: impl Fn(usize, f64) -> Vec3, n: usize, xs: &[f64], patch: &[(usize, f64, Vec3)]) -> Vec<Facet> {
+        let at = |i: usize, x: f64| {
+            patch.iter().find(|(k, sx, _)| *k == i && (*sx - x).abs() < 1e-12).map_or_else(|| ring(i, x), |(_, _, p)| *p)
+        };
+        let mut out = Vec::new();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            for w in xs.windows(2) {
+                let (x0, x1) = (w[0], w[1]);
+                out.push(facet([at(i, x0), at(i, x1), at(j, x0)]));
+                out.push(facet([at(j, x0), at(i, x1), at(j, x1)]));
+            }
+        }
+        out
+    }
+
+    /// Roadmap 3.12: two bores crossing inside the part — along X at (y, z) = (15, 10), r 3, and
+    /// along Z at (x, y) = (20, 15), r 3. Their walls share the corners (20, 18, 10) and
+    /// (20, 12, 10) along their intersection curve, so one group holds both; both are found.
+    #[test]
+    fn crossing_bores_are_found() {
+        use std::f64::consts::TAU;
+        let ring_x = |i: usize, x: f64| {
+            let t = i as f64 * TAU / 16.0;
+            [x, 15.0 + 3.0 * t.cos(), 10.0 + 3.0 * t.sin()]
+        };
+        let ring_z = |i: usize, z: f64| {
+            let t = i as f64 * TAU / 16.0;
+            [20.0 + 3.0 * t.cos(), 15.0 + 3.0 * t.sin(), z]
+        };
+        let mut facets = wall(ring_x, 16, &[0.0, 20.0, 40.0], &[(8, 20.0, [20.0, 12.0, 10.0])]);
+        facets.extend(wall(ring_z, 16, &[0.0, 10.0, 20.0], &[(4, 10.0, [20.0, 18.0, 10.0]), (12, 10.0, [20.0, 12.0, 10.0])]));
+        let (bores, _, _) = find_bores(&facets, 1e-3);
+        let mut found: Vec<(Axis, [f64; 2], f64, f64, f64)> = bores.iter().map(|b| (b.axis, b.centre, b.r, b.lo, b.hi)).collect();
+        found.sort_by_key(|(a, ..)| a.index());
+        let want = [(Axis::X, [15.0, 10.0], 3.0, 0.0, 40.0), (Axis::Z, [20.0, 15.0], 3.0, 0.0, 20.0)];
+        assert_eq!(found.len(), 2, "{bores:?}");
+        for ((axis, centre, r, lo, hi), (wa, wc, wr, wlo, whi)) in found.iter().zip(want) {
+            assert_eq!(axis, &wa);
+            assert!((centre[0] - wc[0]).abs() < 1e-9 && (centre[1] - wc[1]).abs() < 1e-9 && (r - wr).abs() < 1e-9, "{bores:?}");
+            assert_eq!((*lo, *hi), (wlo, whi));
+        }
+    }
+
+    /// A wall that stops short of going round its axis (a bore breaking out of a face) is no bore,
+    /// crossed or not: its mouth is no complete ring, so even the gap-tolerant pass refuses it.
+    #[test]
+    fn a_partial_wall_is_no_bore() {
+        use std::f64::consts::TAU;
+        let ring = |i: usize, z: f64| {
+            let t = i as f64 * TAU / 8.0;
+            [10.0 + 3.0 * t.cos(), 10.0 + 3.0 * t.sin(), z]
+        };
+        // Eight segments of 45 degrees, but only the first half of the ring is meshed: the
+        // mouths leave a 180 degree gap, past MAX_GAP.
+        let mut full = wall(ring, 16, &[0.0, 10.0], &[]);
+        full.truncate(16); // the first 8 segments = half the ring
+        let (bores, _, _) = find_bores(&full, 1e-3);
+        assert!(bores.is_empty(), "{bores:?}");
+    }
+
+    /// A complete ring leaves no gap, not even across the angle wraparound; a missing corner
+    /// leaves its real gap (review finding on the wraparound computation).
+    #[test]
+    fn coverage_gaps_reports_only_real_gaps() {
+        use std::f64::consts::TAU;
+        let centre = [0.0, 0.0];
+        let ring: Vec<Vec3> = (0..16).map(|i| f64::from(i) * TAU / 16.0).map(|a| [3.0 * a.cos(), 3.0 * a.sin(), 0.0]).collect();
+        assert!(coverage_gaps(&ring, centre, MAX_GAP).is_empty(), "a complete ring has no gap");
+        let mut broken = ring;
+        broken.remove(2); // the corner at 45 degrees
+        broken.remove(1); // and at 22.5: a 67.5 degree gap from 0 to 67.5
+        let gaps = coverage_gaps(&broken, centre, MAX_GAP);
+        assert_eq!(gaps.len(), 1, "{gaps:?}");
+        assert!((gaps[0].1 - gaps[0].0 - 3.0 * std::f64::consts::FRAC_PI_8).abs() < 1e-9, "{gaps:?}");
     }
 }

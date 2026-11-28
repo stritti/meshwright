@@ -24,7 +24,7 @@ it in one command (CI job `example-cli`). Or unpack the zip into the per-user pl
 `~/Library/Application Support/SolidCraft/plugins/` (macOS).
 
 revmesh 0.2.x targets SolidCraft 0.51: the plugin interface is vendored unchanged from SolidCraft
-v0.51.1 and CI tests against `solidcraft-cli` 0.51.1 (see
+v0.51.2 and CI tests against `solidcraft-cli` 0.51.2 (see
 [Compatibility](https://github.com/stritti/revmesh#compatibility) in the README). SolidCraft's
 plugin support is experimental, so a different SolidCraft version may refuse the package or need a
 different revmesh — keep both up to date.
