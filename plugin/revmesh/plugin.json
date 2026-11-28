@@ -1,7 +1,7 @@
 {
   "id": "revmesh",
   "name": "revmesh",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Opens STL, OBJ and PLY meshes as editable designs: recognises plates, holes and fillets and rebuilds them as a parametric history; anything not recognised is kept as a mesh. Project: https://github.com/stritti/revmesh",
   "updates": {
     "github": "stritti/revmesh"
