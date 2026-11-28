@@ -252,6 +252,22 @@ impl Walls {
         })
     }
 
+    /// Whether all points are on one bore and fit within a single possible facet span.
+    pub(super) fn bore_facet(&self, points: &[P2]) -> bool {
+        let Some(a) = points.first() else { return false };
+        let key = ((a[0] / self.cell).floor() as i64, (a[1] / self.cell).floor() as i64);
+        self.cells.get(&key).is_some_and(|candidates| {
+            candidates.iter().any(|&k| {
+                let Wall::Circle(_, r) = self.pieces[k] else { return false };
+                let max_span = 2.0 * r * (super::MAX_HOLE_STEP / 2.0).sin() + self.tol;
+                points
+                    .iter()
+                    .enumerate()
+                    .all(|(i, &p)| self.holds_piece(k, p) && points[i + 1..].iter().all(|&q| distance(p, q) <= max_span))
+            })
+        })
+    }
+
     /// How far `p` lies from the nearest wall piece, with that piece's index — for the import
     /// report's per-face deviation (a facet chord of a round wall bows inward by its sagitta).
     /// The walls are looked up in the cells around `p` and around each of `near` (a chord's

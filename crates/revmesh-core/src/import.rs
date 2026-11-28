@@ -313,6 +313,29 @@ mod tests {
     const TETRA: &[u8] = include_bytes!("../tests/data/tetra.stl");
 
     #[test]
+    fn subdividing_offset_pockets_preserves_the_parametric_design() {
+        let source = include_bytes!("../../../plugin/revmesh/tests/offset-pockets.stl");
+        let mesh = stl::parse(source).expect("fixture parses");
+        let subdivided = Mesh::new(
+            mesh.triangles
+                .iter()
+                .flat_map(|&[a, b, c]| {
+                    let midpoint = |a: [f64; 3], b: [f64; 3]| std::array::from_fn(|axis| f64::midpoint(a[axis], b[axis]));
+                    let (ab, bc, ca) = (midpoint(a, b), midpoint(b, c), midpoint(c, a));
+                    [[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]
+                })
+                .collect(),
+        );
+        let options = ImportOptions::default();
+        let original = import(source, "pockets.stl", &options).expect("fixture imports");
+        for (bytes, name) in [(stl::write_binary(&subdivided), "pockets.stl"), (crate::obj::write(&subdivided), "pockets.obj")] {
+            let result = import(&bytes, name, &options).expect("subdivision imports");
+            assert!(!design_has_mesh_body(&result.design), "{name}: {:?}", result.report);
+            assert_eq!(result.design, original.design, "{name}");
+        }
+    }
+
+    #[test]
     fn options_default_when_empty() {
         assert_eq!(ImportOptions::from_json("").expect("ok"), ImportOptions::default());
         assert_eq!(ImportOptions::from_json("{}").expect("ok"), ImportOptions::default());
