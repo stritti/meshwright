@@ -26,7 +26,7 @@ Plugin-Ordner des Nutzers: `~/.local/share/solidcraft/plugins/` (Linux),
 (macOS).
 
 revmesh 0.2.x ist auf SolidCraft 0.51 ausgerichtet: Die Plugin-Schnittstelle ist unverändert aus
-SolidCraft v0.51.1 übernommen und CI testet gegen `solidcraft-cli` 0.51.1 (siehe
+SolidCraft v0.51.2 übernommen und CI testet gegen `solidcraft-cli` 0.51.2 (siehe
 [Kompatibilität](https://github.com/stritti/revmesh#compatibility) im README). Die
 Plugin-Unterstützung von SolidCraft ist experimentell, daher kann eine andere SolidCraft-Version
 das Paket ablehnen oder ein anderes revmesh brauchen — halte beides aktuell.

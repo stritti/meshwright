@@ -52,7 +52,7 @@ when set), `%LOCALAPPDATA%\SolidCraft\plugins\` (Windows), `~/Library/Applicatio
 
 | revmesh | SolidCraft |
 |---|---|
-| 0.2.x (current) | 0.51.x — the plugin interface (`crates/revmesh-plugin/wit/plugin.wit`) is vendored unchanged from SolidCraft **v0.51.1**, and CI runs the plugin tests against `solidcraft-cli` 0.51.1 |
+| 0.2.x (current) | 0.51.x — the plugin interface (`crates/revmesh-plugin/wit/plugin.wit`) is vendored unchanged from SolidCraft **v0.51.2**, and CI runs the plugin tests against `solidcraft-cli` 0.51.2 |
 
 SolidCraft's plugin runtime is experimental, so a different SolidCraft version may refuse the
 package or need a different revmesh — keep both up to date. The
@@ -234,7 +234,7 @@ three). [AGENTS.md](AGENTS.md) is the short orientation for agents working on th
 
 Every SolidCraft skill opens with the same mandatory conformance check: before touching the plugin
 boundary, verify compatibility and full utilization against SolidCraft's
-[`docs/plugins.md` at the pinned tag `v0.51.1`](https://github.com/tangency-labs/solidcraft/blob/v0.51.1/docs/plugins.md)
+[`docs/plugins.md` at the pinned tag `v0.51.2`](https://github.com/tangency-labs/solidcraft/blob/v0.51.2/docs/plugins.md)
 and [`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md).
 
 ## Contributing

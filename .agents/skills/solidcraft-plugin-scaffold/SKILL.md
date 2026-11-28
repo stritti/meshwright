@@ -17,7 +17,7 @@ via **Preferences › Plugins › Install plugin…**. This repo is the referenc
 This skill touches SolidCraft's plugin boundary, so before committing any change here, check it
 against the host's own documentation: `docs/plugins.md` in
 [tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft) at the pinned release
-[tag `v0.51.1`](https://github.com/tangency-labs/solidcraft/blob/v0.51.1/docs/plugins.md)
+[tag `v0.51.2`](https://github.com/tangency-labs/solidcraft/blob/v0.51.2/docs/plugins.md)
 (`SOLIDCRAFT_VERSION` in `.github/workflows/ci.yml`, matching the vendored
 `crates/revmesh-plugin/wit/plugin.wit`) and at
 [`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md) for what is

@@ -85,7 +85,7 @@ Guidelines:
 
 - When `SOLIDCRAFT_VERSION` moves (weekly check or update PR), re-read `docs/plugins.md` in
   [tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft) at the new release tag
-  (today: [`v0.51.1`](https://github.com/tangency-labs/solidcraft/blob/v0.51.1/docs/plugins.md))
+  (today: [`v0.51.2`](https://github.com/tangency-labs/solidcraft/blob/v0.51.2/docs/plugins.md))
   and diff [`main`](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md):
   confirm the re-vendored plugin is still compatible (capabilities, worlds, limits, manifest
   fields) and uses every interface feature the new host offers that applies. The same two-part

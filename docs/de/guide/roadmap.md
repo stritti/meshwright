@@ -81,7 +81,7 @@
    1. eine beliebige Prismen-Achse: die zwei dominanten parallelen Ebenen mit fixed-seed RANSAC
       erkennen (Schnabel et al. 2007) und das Netz so drehen, dass ihre Normale +Z ist, statt nur X, Y
       und Z zu probieren (`recognize/axis.rs`) — heute bleibt ein in der Datei gedrehtes Teil ein Netz.
-      Nur auf Erkennungsseite zunächst: SolidCraft 0.51.1s Design-Format hat Skizzen auf
+      Nur auf Erkennungsseite zunächst: SolidCraft 0.51.2s Design-Format hat Skizzen auf
       Ursprungsebenen und translate-only-Verschiebungen, daher kann ein schräges Prisma in der
       gepinnten Version nicht parametrisch geschrieben werden (braucht Konstruktionsebenen oder einen
       neueren Pin)
